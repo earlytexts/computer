@@ -1,9 +1,10 @@
 {
   "tasks": {
-    "start": "deno run --allow-net --allow-read --allow-env src/main.ts",
-    "dev": "deno run --watch --allow-net --allow-read --allow-env src/main.ts",
-    "test": "deno test --allow-read tests",
-    "check": "deno check src/main.ts tests && deno lint && deno fmt --check"
+    "start": "deno run --allow-net --allow-read --allow-write --allow-env src/main.ts",
+    "dev": "deno run --watch --allow-net --allow-read --allow-write --allow-env src/main.ts",
+    "build": "deno run --allow-read --allow-write --allow-env src/build.ts",
+    "test": "deno test --allow-read --allow-write tests",
+    "check": "deno check src/main.ts src/build.ts tests && deno lint && deno fmt --check"
   },
   "nodeModulesDir": "auto",
   "imports": {
@@ -11,9 +12,9 @@
     "@std/assert": "jsr:@std/assert@^1.0.0"
   },
   "fmt": {
-    "exclude": ["tests/fixtures/"]
+    "exclude": ["tests/fixtures/", "artefacts/"]
   },
   "lint": {
-    "exclude": ["tests/fixtures/"]
+    "exclude": ["tests/fixtures/", "artefacts/"]
   }
 }

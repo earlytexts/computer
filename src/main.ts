@@ -1,5 +1,11 @@
+import {
+  artefactsFresh,
+  buildArtefacts,
+  loadServeArtefacts,
+  scanCorpus,
+  writeArtefacts,
+} from "./lib/artefacts.ts";
 import { loadCatalog } from "./lib/catalog.ts";
-import { buildIndex } from "./lib/search.ts";
 import { createHandler } from "./server.ts";
 import { createRateLimiter } from "./ratelimit.ts";
 
@@ -10,23 +16,32 @@ const env = (name: string): string | undefined => {
 
 const corpusDir = env("CORPUS_DIR") ??
   decodeURIComponent(new URL("../../corpus", import.meta.url).pathname);
+const artefactsDir = env("ARTEFACTS_DIR") ??
+  decodeURIComponent(new URL("../artefacts", import.meta.url).pathname);
 
 const t0 = performance.now();
 const { catalog, warnings } = await loadCatalog(corpusDir);
 const t1 = performance.now();
-const searchIndex = buildIndex(catalog);
+
+const scan = await scanCorpus(corpusDir);
+if (await artefactsFresh(artefactsDir, scan)) {
+  console.log(`Artefacts: ${artefactsDir} (fresh)`);
+} else {
+  console.log(`Artefacts: ${artefactsDir} (stale or missing; rebuilding)`);
+  await writeArtefacts(artefactsDir, buildArtefacts(catalog, warnings, scan));
+}
+const artefacts = await loadServeArtefacts(artefactsDir);
 const t2 = performance.now();
 
-const workCount = catalog.authors.reduce((n, a) => n + a.works.length, 0);
+const { stats } = artefacts.manifest;
 console.log(
   `Corpus: ${corpusDir}\n` +
-    `Loaded ${workCount} works by ${catalog.authors.length} authors in ${
+    `Loaded ${stats.works} works by ${stats.authors} authors in ${
       Math.round(t1 - t0)
     }ms; ` +
-    `indexed ${searchIndex.units.length} blocks ` +
-    `(${searchIndex.tokens.length} distinct tokens) in ${
-      Math.round(t2 - t1)
-    }ms.`,
+    `search ready in ${Math.round(t2 - t1)}ms ` +
+    `(${stats.units} blocks, ${stats.tokens} tokens, ` +
+    `${stats.surfaces} surface forms).`,
 );
 if (warnings.length > 0) {
   console.warn(`${warnings.length} corpus warnings:`);
@@ -39,4 +54,4 @@ const limiter = createRateLimiter({
 });
 
 const port = Number(env("PORT") ?? 8420);
-Deno.serve({ port }, createHandler({ catalog, searchIndex, limiter }));
+Deno.serve({ port }, createHandler({ catalog, artefacts, limiter }));

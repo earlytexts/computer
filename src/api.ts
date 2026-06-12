@@ -23,12 +23,14 @@ import {
   pathKey,
 } from "./lib/compare.ts";
 import { diffBlocks } from "./lib/diff.ts";
+import { readUnitBlock, type ServeArtefacts } from "./lib/artefacts.ts";
 import {
-  makeSnippet,
+  matchRanges,
   parseQuery,
   search,
-  type SearchIndex,
+  type SearchMode,
 } from "./lib/search.ts";
+import { blockText, highlightBlock } from "./lib/text.ts";
 import type {
   AlignedRow,
   AuthorMeta,
@@ -247,6 +249,7 @@ export const compareSectionResponse = (
 
 export type SearchParams = {
   q: string;
+  mode?: string;
   author?: string;
   work?: string;
   edition?: string;
@@ -256,44 +259,48 @@ export type SearchParams = {
 
 const MAX_PER_PAGE = 100;
 
-export const searchResponse = (
-  catalog: Catalog,
-  index: SearchIndex,
+export const searchResponse = async (
+  artefacts: ServeArtefacts,
   params: SearchParams,
-): SearchResponse => {
+): Promise<SearchResponse> => {
   const q = params.q.trim();
+  const mode: SearchMode = params.mode === "exact" ? "exact" : "normalised";
   const page = Math.max(1, Math.floor(params.page ?? 1));
   const perPage = Math.min(
     MAX_PER_PAGE,
     Math.max(1, Math.floor(params.perPage ?? 20)),
   );
-  const hits = q === "" ? [] : search(index, parseQuery(q), {
+  const hits = q === "" ? [] : search(artefacts, parseQuery(q), {
     author: params.author,
     work: params.work,
     edition: params.edition,
-  });
+  }, mode);
   const pages = Math.max(1, Math.ceil(hits.length / perPage));
   const pageHits = hits.slice((page - 1) * perPage, page * perPage);
+  const { units, manifest } = artefacts;
   return {
     q,
+    mode,
     total: hits.length,
     page,
     pages,
-    results: pageHits.map((hit) => {
-      const author = catalog.byAuthor.get(hit.unit.author);
+    results: await Promise.all(pageHits.map(async (hit) => {
+      const block = await readUnitBlock(artefacts, hit.unitIndex);
+      const ranges = matchRanges(blockText(block), hit.positions);
+      const ref = manifest.editions[units.edition[hit.unitIndex]];
+      const sectionPath = units.sectionPath[hit.unitIndex];
       return {
-        author: hit.unit.author,
-        authorName: author?.surname ?? hit.unit.author,
-        work: hit.unit.work,
-        workBreadcrumb: author?.works
-          .find((w) => w.slug === hit.unit.work)?.breadcrumb ?? hit.unit.work,
-        edition: hit.unit.edition,
-        sectionPath: hit.unit.sectionPath,
-        sectionTitle: hit.unit.sectionTitle,
-        blockId: hit.unit.blockId,
+        author: ref.author,
+        authorName: ref.authorName,
+        work: ref.work,
+        workBreadcrumb: ref.workBreadcrumb,
+        edition: ref.edition,
+        sectionPath: sectionPath === "" ? [] : sectionPath.split("/"),
+        sectionTitle: units.sectionTitle[hit.unitIndex],
+        blockId: units.blockId[hit.unitIndex],
         score: hit.score,
-        snippet: makeSnippet(hit),
+        block: highlightBlock(block, ranges),
       };
-    }),
+    })),
   };
 };

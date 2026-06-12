@@ -10,12 +10,12 @@
  *   /authors/:author/works/:work/editions/:edition/sections/*  one section + navigation
  *   /authors/:author/works/:work/compare/:a/:b                 aligned section lists
  *   /authors/:author/works/:work/compare/:a/:b/sections/*      block-level diff of a section
- *   /search?q=&author=&work=&edition=&page=&perPage=           full-text search
+ *   /search?q=&mode=&author=&work=&edition=&page=&perPage=     full-text search
  */
 
 import type { Catalog } from "./lib/catalog.ts";
 import { findEdition, findWork } from "./lib/catalog.ts";
-import type { SearchIndex } from "./lib/search.ts";
+import type { ServeArtefacts } from "./lib/artefacts.ts";
 import {
   catalogResponse,
   compareResponse,
@@ -29,7 +29,7 @@ import { clientKey, type RateLimiter } from "./ratelimit.ts";
 
 export type Api = {
   catalog: Catalog;
-  searchIndex: SearchIndex;
+  artefacts: ServeArtefacts;
   limiter?: RateLimiter;
 };
 
@@ -44,7 +44,7 @@ const json = (value: unknown, status = 200): Response =>
 
 const notFound = (): Response => json({ error: "not found" }, 404);
 
-const route = (api: Api, url: URL): Response => {
+const route = async (api: Api, url: URL): Promise<Response> => {
   const segments = url.pathname.split("/").map(decodeURIComponent)
     .filter((s) => s !== "").map((s) => s.toLowerCase());
 
@@ -60,14 +60,17 @@ const route = (api: Api, url: URL): Response => {
   }
   if (segments[0] === "search" && segments.length === 1) {
     const params = url.searchParams;
-    return json(searchResponse(api.catalog, api.searchIndex, {
-      q: params.get("q") ?? "",
-      author: params.get("author") ?? undefined,
-      work: params.get("work") ?? undefined,
-      edition: params.get("edition") ?? undefined,
-      page: Number(params.get("page")) || undefined,
-      perPage: Number(params.get("perPage")) || undefined,
-    }));
+    return json(
+      await searchResponse(api.artefacts, {
+        q: params.get("q") ?? "",
+        mode: params.get("mode") ?? undefined,
+        author: params.get("author") ?? undefined,
+        work: params.get("work") ?? undefined,
+        edition: params.get("edition") ?? undefined,
+        page: Number(params.get("page")) || undefined,
+        perPage: Number(params.get("perPage")) || undefined,
+      }),
+    );
   }
 
   if (
@@ -117,7 +120,8 @@ const route = (api: Api, url: URL): Response => {
 };
 
 export const createHandler =
-  (api: Api) => (req: Request, info?: Deno.ServeHandlerInfo): Response => {
+  (api: Api) =>
+  async (req: Request, info?: Deno.ServeHandlerInfo): Promise<Response> => {
     const remoteAddr = info === undefined || info.remoteAddr.transport !== "tcp"
       ? undefined
       : info.remoteAddr.hostname;
@@ -136,7 +140,7 @@ export const createHandler =
       return json({ error: "method not allowed" }, 405);
     }
     try {
-      return route(api, new URL(req.url));
+      return await route(api, new URL(req.url));
     } catch (error) {
       console.error(error);
       return json({ error: "internal error" }, 500);

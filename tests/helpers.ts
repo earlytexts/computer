@@ -1,21 +1,51 @@
 import { type Catalog, loadCatalog } from "../src/lib/catalog.ts";
-import { buildIndex, type SearchIndex } from "../src/lib/search.ts";
+import {
+  type Artefacts,
+  buildArtefacts,
+  type CorpusScan,
+  loadServeArtefacts,
+  scanCorpus,
+  type ServeArtefacts,
+  writeArtefacts,
+} from "../src/lib/artefacts.ts";
 
 export const fixtureCorpus = decodeURIComponent(
   new URL("fixtures/corpus", import.meta.url).pathname,
 );
 
-type TestData = {
+export type TestData = {
   catalog: Catalog;
-  searchIndex: SearchIndex;
+  /** In-memory build output (includes text blobs and token streams). */
+  built: Artefacts;
+  /** The same artefacts written to a temp dir and loaded back. */
+  artefacts: ServeArtefacts;
+  scan: CorpusScan;
   warnings: string[];
 };
 
 let loaded: Promise<TestData> | undefined;
 
-/** Load the fixture corpus and its search index once per test process. */
+/** Build the fixture corpus's artefacts once per test process. */
 export const testData = (): Promise<TestData> =>
   loaded ??= (async () => {
     const { catalog, warnings } = await loadCatalog(fixtureCorpus);
-    return { catalog, searchIndex: buildIndex(catalog), warnings };
+    const scan = await scanCorpus(fixtureCorpus);
+    const built = buildArtefacts(catalog, warnings, scan);
+    const dir = await Deno.makeTempDir({ prefix: "computer-artefacts-" });
+    await writeArtefacts(dir, built);
+    const artefacts = await loadServeArtefacts(dir);
+    return { catalog, built, artefacts, scan, warnings };
   })();
+
+/** A unit's extracted text, sliced from the built text blob. */
+export const unitText = (data: TestData, unitIndex: number): string => {
+  const { units, manifest } = data.artefacts;
+  const ref = manifest.editions[units.edition[unitIndex]];
+  const edition = data.built.editions.find((e) =>
+    e.author === ref.author && e.work === ref.work && e.edition === ref.edition
+  )!;
+  return edition.text.slice(
+    units.blobOffset[unitIndex],
+    units.blobOffset[unitIndex] + units.blobLength[unitIndex],
+  );
+};

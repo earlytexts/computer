@@ -18,8 +18,8 @@ import type {
 } from "../src/types.ts";
 
 const request = async (path: string, method = "GET"): Promise<Response> => {
-  const { catalog, searchIndex } = await testData();
-  return createHandler({ catalog, searchIndex })(
+  const { catalog, artefacts } = await testData();
+  return await createHandler({ catalog, artefacts })(
     new Request(`http://localhost${path}`, { method }),
   );
 };
@@ -135,16 +135,43 @@ Deno.test("compare of a section yields word-level diffs", async () => {
   assert(compared.diffs.some((diff) => diff.type === "deleted"));
 });
 
-Deno.test("search returns ranked, snippeted results", async () => {
+/** Collect the text of highlight elements anywhere in a block. */
+const markedText = (value: unknown): string[] => {
+  if (Array.isArray(value)) return value.flatMap(markedText);
+  if (typeof value !== "object" || value === null) return [];
+  const el = value as Record<string, unknown>;
+  if (el.type === "highlight") {
+    return [
+      (el.content as { content: string }[]).map((n) => n.content).join(""),
+    ];
+  }
+  return markedText(el.content);
+};
+
+Deno.test("search returns full formatted blocks with marks", async () => {
   const found = await getJson<SearchResponse>(
     `/search?q=${encodeURIComponent('"liberty of the press"')}`,
   );
   assert(found.total > 0);
-  assertEquals(found.results[0].author, "test");
-  assertEquals(found.results[0].authorName, "Test");
-  assertEquals(found.results[0].work, "tw");
-  assert(found.results[0].snippet.some((part) => part.marked));
-  assertEquals(found.results[0].workBreadcrumb, "Test Work");
+  assertEquals(found.mode, "normalised");
+  const first = found.results[0];
+  assertEquals(first.author, "test");
+  assertEquals(first.authorName, "Test");
+  assertEquals(first.work, "tw");
+  assertEquals(first.workBreadcrumb, "Test Work");
+  // the whole block comes back, formatted, with the phrase marked
+  assert(first.block.content.length > 0);
+  assertEquals(markedText(first.block.content), ["liberty of the press"]);
+});
+
+Deno.test("search mode selects the matching layer", async () => {
+  const normalised = await getJson<SearchResponse>("/search?q=encrease");
+  assertEquals(normalised.total, 3);
+  const exact = await getJson<SearchResponse>("/search?q=encrease&mode=exact");
+  assertEquals(exact.mode, "exact");
+  assertEquals(exact.total, 1);
+  assertEquals(exact.results[0].edition, "1750");
+  assertEquals(markedText(exact.results[0].block.content), ["encrease"]);
 });
 
 Deno.test("search filters and paginates", async () => {
@@ -196,10 +223,10 @@ Deno.test("non-GET methods are rejected", async () => {
 });
 
 Deno.test("requests beyond the rate limit get a 429", async () => {
-  const { catalog, searchIndex } = await testData();
+  const { catalog, artefacts } = await testData();
   const handler = createHandler({
     catalog,
-    searchIndex,
+    artefacts,
     limiter: createRateLimiter({ ratePerSecond: 1, burst: 2 }),
   });
   const get = () => handler(new Request("http://localhost/catalog"));

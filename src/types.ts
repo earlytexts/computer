@@ -175,7 +175,12 @@ export type CompareSectionResponse = {
 
 /* ------------------------------- search ------------------------------ */
 
-export type SnippetPart = { text: string; marked: boolean };
+/**
+ * How query words are matched: at the "normalised" layer old and modern
+ * spellings find each other ("shew"/"show"); "exact" matches the spelling
+ * as written (case-insensitively).
+ */
+export type SearchMode = "exact" | "normalised";
 
 export type SearchResult = {
   author: string; // author slug
@@ -187,11 +192,17 @@ export type SearchResult = {
   sectionTitle: string;
   blockId: string;
   score: number;
-  snippet: SnippetPart[];
+  /**
+   * The complete matched block, fully formatted, with the matched tokens
+   * wrapped in `highlight` inline elements (rendered as <mark> by Markit's
+   * renderHTML). Render it like any other block.
+   */
+  block: Block;
 };
 
 export type SearchResponse = {
   q: string;
+  mode: SearchMode;
   total: number;
   page: number;
   pages: number;
