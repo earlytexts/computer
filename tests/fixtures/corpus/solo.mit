@@ -1,0 +1,37 @@
+# Test.SOLO
+
+[metadata]
+title = "A Solitary Treatise"
+breadcrumb = "Solo Treatise"
+published = [1740]
+copytext = ["1740"]
+
+{#title}
+^1 A SOLITARY TREATISE.
+
+## 1
+
+[metadata]
+title = "Part 1"
+breadcrumb = "Part 1"
+
+{#title}
+^1 PART I.
+
+### 1
+
+[metadata]
+title = "Part 1, Section 1"
+breadcrumb = "Section 1"
+
+{#1}
+Of the understanding, and of the passions; a deep and abstruse philosophy.
+
+### 2
+
+[metadata]
+title = "Part 1, Section 2"
+breadcrumb = "Section 2"
+
+{#1}
+The mind never perceives any real connexion among distinct existences.
