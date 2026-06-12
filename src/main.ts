@@ -19,27 +19,25 @@ const corpusDir = env("CORPUS_DIR") ??
 const artefactsDir = env("ARTEFACTS_DIR") ??
   decodeURIComponent(new URL("../artefacts", import.meta.url).pathname);
 
+// The server runs entirely from the on-disk artefacts; the corpus is compiled
+// into memory only when the artefacts are stale and need rebuilding.
 const t0 = performance.now();
-const { catalog, warnings } = await loadCatalog(corpusDir);
-const t1 = performance.now();
-
 const scan = await scanCorpus(corpusDir);
 if (await artefactsFresh(artefactsDir, scan)) {
   console.log(`Artefacts: ${artefactsDir} (fresh)`);
 } else {
   console.log(`Artefacts: ${artefactsDir} (stale or missing; rebuilding)`);
+  const { catalog, warnings } = await loadCatalog(corpusDir);
   await writeArtefacts(artefactsDir, buildArtefacts(catalog, warnings, scan));
 }
 const artefacts = await loadServeArtefacts(artefactsDir);
-const t2 = performance.now();
+const t1 = performance.now();
 
-const { stats } = artefacts.manifest;
+const { stats, warnings } = artefacts.manifest;
 console.log(
   `Corpus: ${corpusDir}\n` +
-    `Loaded ${stats.works} works by ${stats.authors} authors in ${
-      Math.round(t1 - t0)
-    }ms; ` +
-    `search ready in ${Math.round(t2 - t1)}ms ` +
+    `Ready in ${Math.round(t1 - t0)}ms: ` +
+    `${stats.works} works by ${stats.authors} authors ` +
     `(${stats.units} blocks, ${stats.tokens} tokens, ` +
     `${stats.surfaces} surface forms).`,
 );
@@ -54,4 +52,4 @@ const limiter = createRateLimiter({
 });
 
 const port = Number(env("PORT") ?? 8420);
-Deno.serve({ port }, createHandler({ catalog, artefacts, limiter }));
+Deno.serve({ port }, createHandler({ artefacts, limiter }));

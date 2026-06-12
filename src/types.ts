@@ -2,9 +2,9 @@
  * The HTTP API contract between the computer and its clients.
  *
  * This file is self-contained (it imports only @earlytexts/markit types) so
- * that clients can vendor an identical copy. The davidhume site keeps one at
- * src/lib/types.ts; its `deno task contract` checks the two files are
- * byte-identical. Change them together.
+ * that clients can import it directly alongside the client in client.ts.
+ * Sites map `@earlytexts/computer/` to this `src/` directory (see their
+ * deno.json) rather than vendoring a copy.
  */
 
 import type { Block } from "@earlytexts/markit";

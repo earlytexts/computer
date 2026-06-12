@@ -1,21 +1,22 @@
 /**
- * Pure builders for every API response: each takes the loaded catalog (and,
- * for search, the index) plus request parameters, and returns a serializable
- * value from types.ts, or undefined for "not found". The HTTP server is a
- * thin shell around these.
+ * Pure builders for every API response: each takes the loaded artefacts (the
+ * catalog metadata tree and, where block text is needed, a BlockStore that
+ * reads it from blocks.jsonl) plus request parameters, and returns a
+ * serializable value from types.ts, or undefined for "not found". The HTTP
+ * server is a thin shell around these.
  */
 
+import type { Block } from "@earlytexts/markit";
 import {
-  type Author,
-  type Catalog,
-  type Edition,
-  findEdition,
-  findSection,
-  flattenSections,
-  type Section,
-  sectionTree,
-  type Work,
-} from "./lib/catalog.ts";
+  type AuthorEntry,
+  type BlockStore,
+  type CatalogArtefact,
+  type EditionEntry,
+  findEditionEntry,
+  type ServeArtefacts,
+  type SkeletonSection,
+  type WorkEntry,
+} from "./lib/artefacts.ts";
 import {
   type AlignedSection,
   alignSections,
@@ -23,7 +24,7 @@ import {
   pathKey,
 } from "./lib/compare.ts";
 import { diffBlocks } from "./lib/diff.ts";
-import { readUnitBlock, type ServeArtefacts } from "./lib/artefacts.ts";
+import { readUnitBlock } from "./lib/artefacts.ts";
 import {
   matchRanges,
   parseQuery,
@@ -33,11 +34,9 @@ import {
 import { blockText, highlightBlock } from "./lib/text.ts";
 import type {
   AlignedRow,
-  AuthorMeta,
   CatalogResponse,
   CompareResponse,
   CompareSectionResponse,
-  EditionMeta,
   EditionResponse,
   FullTextResponse,
   SearchResponse,
@@ -45,46 +44,11 @@ import type {
   SectionRef,
   SectionResponse,
   SectionSummary,
-  WorkMeta,
 } from "./types.ts";
 
-const authorMeta = (author: Author): AuthorMeta => ({
-  slug: author.slug,
-  forename: author.forename,
-  surname: author.surname,
-  title: author.title,
-  birth: author.birth,
-  death: author.death,
-  published: author.published,
-  nationality: author.nationality,
-  sex: author.sex,
-});
+/* --------------------------- skeleton helpers ------------------------- */
 
-const editionMeta = (edition: Edition): EditionMeta => ({
-  authorSlug: edition.authorSlug,
-  workSlug: edition.workSlug,
-  slug: edition.slug,
-  isMain: edition.isMain,
-  title: edition.title,
-  breadcrumb: edition.breadcrumb,
-  imported: edition.imported,
-  published: edition.published,
-  copytext: edition.copytext,
-  sourceUrl: edition.sourceUrl,
-  sourceDesc: edition.sourceDesc,
-});
-
-const workMeta = (work: Work): WorkMeta => ({
-  authorSlug: work.authorSlug,
-  slug: work.slug,
-  title: work.title,
-  breadcrumb: work.breadcrumb,
-  imported: work.imported,
-  published: work.published,
-  editions: work.editions.map(editionMeta),
-});
-
-const sectionSummary = (section: Section): SectionSummary => ({
+const sectionSummary = (section: SkeletonSection): SectionSummary => ({
   slug: section.slug,
   path: section.path,
   title: section.title,
@@ -93,20 +57,44 @@ const sectionSummary = (section: Section): SectionSummary => ({
   children: section.children.map(sectionSummary),
 });
 
-const sectionContent = (section: Section): SectionContent => ({
+const sectionContent = async (
+  store: BlockStore,
+  section: SkeletonSection,
+): Promise<SectionContent> => ({
   slug: section.slug,
   path: section.path,
   title: section.title,
   breadcrumb: section.breadcrumb,
   imported: section.imported,
-  blocks: section.doc.blocks,
-  children: section.children.map(sectionContent),
+  blocks: await store.blocks(section.units),
+  children: await Promise.all(
+    section.children.map((child) => sectionContent(store, child)),
+  ),
 });
 
-const sectionRef = (section: Section): SectionRef => ({
+const sectionRef = (section: SkeletonSection): SectionRef => ({
   path: section.path,
   breadcrumb: section.breadcrumb,
 });
+
+/** Find a section in an edition's skeleton by its slug path. */
+const findSkeleton = (
+  sections: SkeletonSection[],
+  path: string[],
+): SkeletonSection | undefined => {
+  let current = sections;
+  let found: SkeletonSection | undefined;
+  for (const slug of path) {
+    found = current.find((s) => s.slug === slug.toLowerCase());
+    if (found === undefined) return undefined;
+    current = found.children;
+  }
+  return found;
+};
+
+/** Depth-first flattening of a skeleton (for prev/next navigation). */
+const flattenSkeleton = (sections: SkeletonSection[]): SkeletonSection[] =>
+  sections.flatMap((s) => [s, ...flattenSkeleton(s.children)]);
 
 const alignedRow = (row: AlignedSection): AlignedRow => ({
   key: row.key,
@@ -116,83 +104,84 @@ const alignedRow = (row: AlignedSection): AlignedRow => ({
   children: row.children.map(alignedRow),
 });
 
-export const catalogResponse = (catalog: Catalog): CatalogResponse => ({
+/* ------------------------------ builders ----------------------------- */
+
+export const catalogResponse = (catalog: CatalogArtefact): CatalogResponse => ({
   authors: catalog.authors.map((author) => ({
-    ...authorMeta(author),
-    works: author.works.map(workMeta),
+    ...author.meta,
+    works: author.works.map((work) => work.meta),
   })),
-  editionSlugs: [
-    ...new Set(
-      catalog.authors.flatMap((author) =>
-        author.works.flatMap((w) => w.editions.map((e) => e.slug))
-      ),
-    ),
-  ].sort(),
+  editionSlugs: catalog.editionSlugs,
 });
 
-export const editionResponse = (
-  author: Author,
-  work: Work,
-  edition: Edition,
-): EditionResponse => ({
-  author: authorMeta(author),
-  work: workMeta(work),
-  edition: editionMeta(edition),
-  blocks: edition.document.blocks,
-  sections: sectionTree(edition.document).map(sectionSummary),
+export const editionResponse = async (
+  store: BlockStore,
+  author: AuthorEntry,
+  work: WorkEntry,
+  edition: EditionEntry,
+): Promise<EditionResponse> => ({
+  author: author.meta,
+  work: work.meta,
+  edition: edition.meta,
+  blocks: await store.blocks(edition.units),
+  sections: edition.sections.map(sectionSummary),
 });
 
-export const fullTextResponse = (
-  author: Author,
-  work: Work,
-  edition: Edition,
-): FullTextResponse => ({
-  author: authorMeta(author),
-  work: workMeta(work),
-  edition: editionMeta(edition),
-  blocks: edition.document.blocks,
-  sections: sectionTree(edition.document).map(sectionContent),
+export const fullTextResponse = async (
+  store: BlockStore,
+  author: AuthorEntry,
+  work: WorkEntry,
+  edition: EditionEntry,
+): Promise<FullTextResponse> => ({
+  author: author.meta,
+  work: work.meta,
+  edition: edition.meta,
+  blocks: await store.blocks(edition.units),
+  sections: await Promise.all(
+    edition.sections.map((section) => sectionContent(store, section)),
+  ),
 });
 
-export const sectionResponse = (
-  author: Author,
-  work: Work,
-  edition: Edition,
+export const sectionResponse = async (
+  store: BlockStore,
+  author: AuthorEntry,
+  work: WorkEntry,
+  edition: EditionEntry,
   path: string[],
-): SectionResponse | undefined => {
-  const section = findSection(edition.document, path);
+): Promise<SectionResponse | undefined> => {
+  const section = findSkeleton(edition.sections, path);
   if (section === undefined) return undefined;
 
-  const flat = flattenSections(sectionTree(edition.document));
+  const flat = flattenSkeleton(edition.sections);
   const index = flat.findIndex((s) =>
     s.path.join("/") === section.path.join("/")
   );
   const ancestors = section.path.slice(0, -1)
     .map((_slug, i) =>
-      findSection(edition.document, section.path.slice(0, i + 1))
+      findSkeleton(edition.sections, section.path.slice(0, i + 1))
     )
-    .filter((s): s is Section => s !== undefined);
+    .filter((s): s is SkeletonSection => s !== undefined);
 
   const keys = pathKey(section.path);
   const compareEditions = work.editions
     .filter((other) =>
       other !== edition &&
-      findSectionByKey(sectionTree(other.document), keys) !== undefined
+      findSectionByKey(other.sections, keys) !== undefined
     )
-    .map((other) => other.slug);
+    .map((other) => other.meta.slug);
 
   const prev = flat[index - 1];
   const next = flat[index + 1];
   return {
-    author: authorMeta(author),
-    work: workMeta(work),
-    edition: editionMeta(edition),
+    author: author.meta,
+    work: work.meta,
+    edition: edition.meta,
     section: {
       path: section.path,
       title: section.title,
       breadcrumb: section.breadcrumb,
       imported: section.imported,
-      blocks: section.doc.blocks,
+      blocks: await store.blocks(section.units),
       children: section.children.map(sectionSummary),
     },
     ancestors: ancestors.map(sectionRef),
@@ -203,49 +192,55 @@ export const sectionResponse = (
 };
 
 export const compareResponse = (
-  author: Author,
-  work: Work,
+  author: AuthorEntry,
+  work: WorkEntry,
   aSlug: string,
   bSlug: string,
 ): CompareResponse | undefined => {
-  const a = findEdition(work, aSlug);
-  const b = findEdition(work, bSlug);
+  const a = findEditionEntry(work, aSlug);
+  const b = findEditionEntry(work, bSlug);
   if (a === undefined || b === undefined || a === b) return undefined;
   return {
-    author: authorMeta(author),
-    work: workMeta(work),
-    a: editionMeta(a),
-    b: editionMeta(b),
-    rows: alignSections(sectionTree(a.document), sectionTree(b.document))
-      .map(alignedRow),
+    author: author.meta,
+    work: work.meta,
+    a: a.meta,
+    b: b.meta,
+    rows: alignSections(a.sections, b.sections).map(alignedRow),
   };
 };
 
-export const compareSectionResponse = (
-  author: Author,
-  work: Work,
+export const compareSectionResponse = async (
+  store: BlockStore,
+  author: AuthorEntry,
+  work: WorkEntry,
   aSlug: string,
   bSlug: string,
   path: string[],
-): CompareSectionResponse | undefined => {
-  const a = findEdition(work, aSlug);
-  const b = findEdition(work, bSlug);
+): Promise<CompareSectionResponse | undefined> => {
+  const a = findEditionEntry(work, aSlug);
+  const b = findEditionEntry(work, bSlug);
   if (a === undefined || b === undefined || a === b) return undefined;
   const keys = pathKey(path);
-  const sectionA = findSectionByKey(sectionTree(a.document), keys);
-  const sectionB = findSectionByKey(sectionTree(b.document), keys);
+  const sectionA = findSectionByKey(a.sections, keys);
+  const sectionB = findSectionByKey(b.sections, keys);
   if (sectionA === undefined || sectionB === undefined) return undefined;
+  const [blocksA, blocksB] = await Promise.all([
+    store.blocks(sectionA.units),
+    store.blocks(sectionB.units),
+  ]);
   return {
-    author: authorMeta(author),
-    work: workMeta(work),
-    a: editionMeta(a),
-    b: editionMeta(b),
+    author: author.meta,
+    work: work.meta,
+    a: a.meta,
+    b: b.meta,
     title: sectionB.title,
-    diffs: diffBlocks(sectionA.doc.blocks, sectionB.doc.blocks),
+    diffs: diffBlocks(blocksA, blocksB),
     childRows: alignSections(sectionA.children, sectionB.children)
       .map(alignedRow),
   };
 };
+
+/* ------------------------------- search ------------------------------ */
 
 export type SearchParams = {
   q: string;
@@ -285,7 +280,7 @@ export const searchResponse = async (
     page,
     pages,
     results: await Promise.all(pageHits.map(async (hit) => {
-      const block = await readUnitBlock(artefacts, hit.unitIndex);
+      const block: Block = await readUnitBlock(artefacts, hit.unitIndex);
       const ranges = matchRanges(blockText(block), hit.positions);
       const ref = manifest.editions[units.edition[hit.unitIndex]];
       const sectionPath = units.sectionPath[hit.unitIndex];

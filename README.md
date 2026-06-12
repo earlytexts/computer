@@ -19,11 +19,13 @@ Environment: `CORPUS_DIR` (default `../corpus`), `ARTEFACTS_DIR` (default
 
 On boot the server checks the artefacts against the corpus (pipeline version +
 file count + latest mtime) and rebuilds them itself if they are stale or
-missing, so `deno task build` is an optimisation, not a requirement. Search is
-answered entirely from the artefacts (~50MB heap, ms-fast); the catalog of
-compiled documents is still also loaded into memory for the text/compare routes
-(~600MB, ~10s — migrating those routes onto the artefacts is the planned next
-step).
+missing, so `deno task build` is an optimisation, not a requirement. The corpus
+is compiled into memory only to (re)build the artefacts; once they are fresh the
+server runs entirely from them and boots in well under a second. Every route is
+answered from the artefacts: search from the inverted index and units (~50MB
+heap, ms-fast), and the text/compare routes from `catalog.json` (the metadata
+tree and per-edition section skeletons) plus block content read lazily from each
+edition's `blocks.jsonl` under a small LRU.
 
 Clients are identified by the first `X-Forwarded-For` hop when present (set by a
 reverse proxy or a trusted upstream site forwarding its visitors' IPs), else the
@@ -75,6 +77,11 @@ _shew_.
 
 - `manifest.json` — pipeline version, corpus fingerprint, edition list, stats,
   build warnings.
+- `catalog.json` — the Author → Work → Edition metadata tree, and per edition a
+  section skeleton (the composed section tree, including borrowed children, with
+  titles/breadcrumbs/imported flags) whose nodes carry the unit indices of their
+  blocks rather than the blocks themselves. This serves the text and compare
+  routes; block content is read from `blocks.jsonl` on demand.
 - `vocab.json` — the type table: every distinct case-folded spelling (surface
   form) with document/collection frequencies and its normalised form, plus a
   lemma column (identity for now — reserved so lemmatisation only ever rewrites
@@ -107,12 +114,14 @@ and document-term matrices for vectors/topic models can all be derived from
 
 ## Architecture
 
-- `src/main.ts` — loads/refreshes artefacts and the catalog, starts
-  `Deno.serve`.
+- `src/main.ts` — refreshes the artefacts (compiling the corpus only if they are
+  stale), loads them, starts `Deno.serve`.
 - `src/build.ts` — CLI entry for the build pipeline.
-- `src/server.ts` — routing shell: URL → api.ts call → JSON.
-- `src/api.ts` — pure builders for every response type.
-- `src/lib/catalog.ts` — scans the corpus (`authors/*.mit` +
+- `src/server.ts` — routing shell: URL → api.ts call → JSON; owns the
+  per-handler block store (the blocks.jsonl LRU).
+- `src/api.ts` — pure builders for every response type, over the catalog
+  artefact and the block store.
+- `src/lib/catalog.ts` — build-time only: scans the corpus (`authors/*.mit` +
   `works/<author>/<work>`), compiles Markit files, resolves `children` metadata
   references (inline section ids or relative file paths, recursively — this is
   how composite works like ETSS/FD/HE share text), cascades inherited metadata,
@@ -122,7 +131,8 @@ and document-term matrices for vectors/topic models can all be derived from
 - `src/lib/tokenize.ts` — the tokenizer (surface forms + offsets) and the
   type-level spelling normalisation.
 - `src/lib/artefacts.ts` — builds, writes, loads, and freshness-checks the
-  artefacts; byte-range block reads.
+  artefacts; the catalog/skeleton tree, byte-range block reads (search), and the
+  edition-level block store (text/compare).
 - `src/lib/search.ts` — query parsing, vocabulary expansion (exact/normalised),
   postings intersection with phrase positions, match-range mapping.
 - `src/lib/diff.ts` — Myers word/punctuation diff; block alignment by Markit

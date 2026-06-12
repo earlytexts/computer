@@ -4,7 +4,7 @@
     "dev": "deno run --watch --allow-net --allow-read --allow-write --allow-env src/main.ts",
     "build": "deno run --allow-read --allow-write --allow-env src/build.ts",
     "test": "deno test --allow-read --allow-write tests",
-    "check": "deno check src/main.ts src/build.ts tests && deno lint && deno fmt --check"
+    "check": "deno check src/main.ts src/build.ts src/client.ts tests && deno lint && deno fmt --check"
   },
   "nodeModulesDir": "auto",
   "imports": {

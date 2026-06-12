@@ -6,6 +6,11 @@
  *
  *   manifest.json    pipeline version, corpus fingerprint, edition list,
  *                    stats, build warnings
+ *   catalog.json     the Author -> Work -> Edition metadata tree, and per
+ *                    edition a section skeleton (the composed section tree
+ *                    with titles/breadcrumbs/imported flags) whose nodes carry
+ *                    the unit indices of their blocks, not the blocks; this is
+ *                    what serves the text and compare routes
  *   vocab.json       the type table: distinct surface forms with document/
  *                    collection frequencies, normalised forms, lemma slot
  *   units.json       one row per block (columnar): location, token count,
@@ -23,20 +28,26 @@
  * points into it. The pipeline version (extraction + tokenizer) is stamped
  * into the manifest; artefacts from another version are never served.
  *
- * The serve-time loader reads only the manifest, vocab, units, and postings
- * (tens of MB); blocks are fetched by byte range per search hit, and the
- * text blobs and token streams are not loaded at all (they exist for future
- * corpus analysis and for rebuilding the index quickly).
+ * The serve-time loader reads only the manifest, catalog, vocab, units, and
+ * postings (tens of MB); block content is fetched from blocks.jsonl on demand
+ * (by byte range per search hit, or a whole edition at a time, cached, for the
+ * text and compare routes), and the text blobs and token streams are not
+ * loaded at all (they exist for future corpus analysis and for rebuilding the
+ * index quickly).
  */
 
 import type { Block, MarkitDocument } from "@earlytexts/markit";
 import {
+  type Author,
   type Catalog,
   childSlug,
   type Edition,
   lastSegment,
+  type Section,
+  sectionTree,
   type Work,
 } from "./catalog.ts";
+import type { AuthorMeta, EditionMeta, WorkMeta } from "../types.ts";
 import { blockText, EXTRACTION_VERSION } from "./text.ts";
 import { normalizeSurface, tokenize, TOKENIZER_VERSION } from "./tokenize.ts";
 
@@ -77,6 +88,51 @@ export type Manifest = {
   /** Every edition, in catalog order; units.edition indexes into this. */
   editions: EditionRef[];
   warnings: string[];
+};
+
+/* ------------------------------ catalog ------------------------------ */
+
+/**
+ * One node of an edition's section skeleton: a section's place and metadata,
+ * plus the unit indices of its own blocks (in reading order). Block content
+ * is not stored here — it is read from blocks.jsonl on demand. Borrowed
+ * children (composite editions) resolve transparently: every block has one
+ * unit, under the edition that owns its text, so a unit index addresses the
+ * right blocks.jsonl wherever the section appears.
+ */
+export type SkeletonSection = {
+  slug: string;
+  path: string[];
+  title: string;
+  breadcrumb: string;
+  imported: boolean;
+  /** Unit indices of this section's own blocks, in order. */
+  units: number[];
+  children: SkeletonSection[];
+};
+
+export type EditionEntry = {
+  meta: EditionMeta;
+  /** Unit indices of the edition's own (title) blocks. */
+  units: number[];
+  sections: SkeletonSection[];
+};
+
+export type WorkEntry = {
+  meta: WorkMeta;
+  editions: EditionEntry[];
+};
+
+export type AuthorEntry = {
+  meta: AuthorMeta;
+  works: WorkEntry[];
+};
+
+/** The metadata tree and per-edition skeletons; serves text and compare. */
+export type CatalogArtefact = {
+  authors: AuthorEntry[];
+  /** Distinct edition slugs across the catalog (for filter UIs). */
+  editionSlugs: string[];
 };
 
 /**
@@ -135,21 +191,25 @@ export type BuiltEdition = EditionRef & {
 
 export type Artefacts = {
   manifest: Manifest;
+  catalog: CatalogArtefact;
   vocab: Vocab;
   units: UnitTable;
   postings: Postings;
   editions: BuiltEdition[];
 };
 
-/** Everything the server holds in memory to answer searches. */
+/** Everything the server holds in memory to answer requests. */
 export type ServeArtefacts = {
   dir: string;
   manifest: Manifest;
+  catalog: CatalogArtefact;
   vocab: Vocab;
   units: UnitTable;
   postings: Postings;
   /** norm index -> surface indices (derived from vocab at load) */
   normSurfaces: number[][];
+  /** edition index -> its unit indices, in blocks.jsonl line order */
+  editionUnits: number[][];
 };
 
 /* ------------------------------- build ------------------------------- */
@@ -200,6 +260,62 @@ const eachUnit = (
     }
   }
 };
+
+const authorMeta = (author: Author): AuthorMeta => ({
+  slug: author.slug,
+  forename: author.forename,
+  surname: author.surname,
+  title: author.title,
+  birth: author.birth,
+  death: author.death,
+  published: author.published,
+  nationality: author.nationality,
+  sex: author.sex,
+});
+
+const editionMeta = (edition: Edition): EditionMeta => ({
+  authorSlug: edition.authorSlug,
+  workSlug: edition.workSlug,
+  slug: edition.slug,
+  isMain: edition.isMain,
+  title: edition.title,
+  breadcrumb: edition.breadcrumb,
+  imported: edition.imported,
+  published: edition.published,
+  copytext: edition.copytext,
+  sourceUrl: edition.sourceUrl,
+  sourceDesc: edition.sourceDesc,
+});
+
+const workMeta = (work: Work): WorkMeta => ({
+  authorSlug: work.authorSlug,
+  slug: work.slug,
+  title: work.title,
+  breadcrumb: work.breadcrumb,
+  imported: work.imported,
+  published: work.published,
+  editions: work.editions.map(editionMeta),
+});
+
+/**
+ * Turn a section (from the composed section tree) into a skeleton node,
+ * looking up each of its blocks' unit indices. A block with no unit (text
+ * unreachable from any owned edition — should not happen) is dropped.
+ */
+const skeletonSection = (
+  section: Section,
+  blockUnit: Map<Block, number>,
+): SkeletonSection => ({
+  slug: section.slug,
+  path: section.path,
+  title: section.title,
+  breadcrumb: section.breadcrumb,
+  imported: section.imported,
+  units: section.doc.blocks
+    .map((block) => blockUnit.get(block))
+    .filter((unit): unit is number => unit !== undefined),
+  children: section.children.map((child) => skeletonSection(child, blockUnit)),
+});
 
 export const buildArtefacts = (
   catalog: Catalog,
@@ -260,6 +376,11 @@ export const buildArtefacts = (
   const accumulators = new Map<number, EditionAccumulator>();
   let totalTokens = 0;
 
+  // Block (by identity) -> its unit index. Composite editions splice the same
+  // child block objects into several parents, so this resolves a borrowed
+  // section's blocks to the unit under the edition that owns their text.
+  const blockUnit = new Map<Block, number>();
+
   eachUnit(catalog, (work, edition, sectionPath, sectionTitle, block) => {
     const editionIdx = editionIndex.get(
       `${work.authorSlug}/${work.slug}/${edition.slug}`,
@@ -277,6 +398,7 @@ export const buildArtefacts = (
     }
 
     const unitIndex = units.edition.length;
+    blockUnit.set(block, unitIndex);
     const text = blockText(block);
     const line = encoder.encode(JSON.stringify(block) + "\n");
     const spans = tokenize(text);
@@ -365,6 +487,27 @@ export const buildArtefacts = (
     return { ...acc.ref, text: acc.text, blockLines: acc.blockLines, tokens };
   });
 
+  // The metadata tree and per-edition skeletons, built from the composed
+  // section trees (which include borrowed children); block content stays in
+  // blocks.jsonl and is addressed by the unit indices recorded above.
+  const catalogArtefact: CatalogArtefact = {
+    authors: catalog.authors.map((author) => ({
+      meta: authorMeta(author),
+      works: author.works.map((work) => ({
+        meta: workMeta(work),
+        editions: work.editions.map((edition) => ({
+          meta: editionMeta(edition),
+          units: edition.document.blocks
+            .map((block) => blockUnit.get(block))
+            .filter((unit): unit is number => unit !== undefined),
+          sections: sectionTree(edition.document)
+            .map((section) => skeletonSection(section, blockUnit)),
+        })),
+      })),
+    })),
+    editionSlugs: [...new Set(editionRefs.map((e) => e.edition))].sort(),
+  };
+
   const works = catalog.authors.reduce((n, a) => n + a.works.length, 0);
   return {
     manifest: {
@@ -380,10 +523,11 @@ export const buildArtefacts = (
         surfaces: surfaces.length,
         norms: norms.length,
       },
-      editionSlugs: [...new Set(editionRefs.map((e) => e.edition))].sort(),
+      editionSlugs: catalogArtefact.editionSlugs,
       editions: editionRefs,
       warnings,
     },
+    catalog: catalogArtefact,
     vocab,
     units,
     postings: { offsets, pairs },
@@ -454,6 +598,10 @@ export const writeArtefacts = async (
     ),
   );
   await Deno.writeTextFile(
+    `${dir}/catalog.json`,
+    JSON.stringify(artefacts.catalog),
+  );
+  await Deno.writeTextFile(
     `${dir}/vocab.json`,
     JSON.stringify(artefacts.vocab),
   );
@@ -481,6 +629,9 @@ export const loadServeArtefacts = async (
         `${manifest.pipelineVersion}; this is ${PIPELINE_VERSION}`,
     );
   }
+  const catalog = JSON.parse(
+    await Deno.readTextFile(`${dir}/catalog.json`),
+  ) as CatalogArtefact;
   const vocab = JSON.parse(
     await Deno.readTextFile(`${dir}/vocab.json`),
   ) as Vocab;
@@ -498,7 +649,22 @@ export const loadServeArtefacts = async (
   for (let id = 0; id < vocab.surfaceNorm.length; id++) {
     normSurfaces[vocab.surfaceNorm[id]].push(id);
   }
-  return { dir, manifest, vocab, units, postings, normSurfaces };
+  // Units are written to each edition's blocks.jsonl in the order they appear
+  // in units.edition, so this groups them in blocks.jsonl line order.
+  const editionUnits: number[][] = manifest.editions.map(() => []);
+  for (let unit = 0; unit < units.edition.length; unit++) {
+    editionUnits[units.edition[unit]].push(unit);
+  }
+  return {
+    dir,
+    manifest,
+    catalog,
+    vocab,
+    units,
+    postings,
+    normSurfaces,
+    editionUnits,
+  };
 };
 
 /** Read one unit's compiled block from its edition's blocks.jsonl. */
@@ -523,6 +689,96 @@ export const readUnitBlock = async (
   }
   return JSON.parse(new TextDecoder().decode(buffer)) as Block;
 };
+
+/* --------------------------- block store ----------------------------- */
+
+/** Read and parse a whole edition's blocks, keyed by unit index. */
+const readEditionBlocks = async (
+  artefacts: ServeArtefacts,
+  editionIndex: number,
+): Promise<Map<number, Block>> => {
+  const blocks = new Map<number, Block>();
+  const ref = artefacts.manifest.editions[editionIndex];
+  const unitIndices = artefacts.editionUnits[editionIndex] ?? [];
+  let text: string;
+  try {
+    text = await Deno.readTextFile(
+      `${artefacts.dir}/${editionDir(ref)}/blocks.jsonl`,
+    );
+  } catch {
+    return blocks; // a stub edition has no blocks file
+  }
+  let line = 0;
+  for (const json of text.split("\n")) {
+    if (json === "") continue;
+    blocks.set(unitIndices[line], JSON.parse(json) as Block);
+    line++;
+  }
+  return blocks;
+};
+
+/**
+ * Reads block content for the text and compare routes, caching whole editions
+ * (parsed blocks.jsonl) under a small LRU. A request touches one edition (or
+ * two, when comparing, plus any borrowed in composite editions), so a handful
+ * of cached editions covers concurrent reads without holding the whole corpus.
+ */
+export type BlockStore = {
+  /** The compiled block at a unit index. */
+  block: (unitIndex: number) => Promise<Block>;
+  /** The compiled blocks at several unit indices, in the given order. */
+  blocks: (unitIndices: number[]) => Promise<Block[]>;
+};
+
+export const createBlockStore = (
+  artefacts: ServeArtefacts,
+  maxEditions = 8,
+): BlockStore => {
+  const cache = new Map<number, Promise<Map<number, Block>>>();
+  const edition = (editionIndex: number): Promise<Map<number, Block>> => {
+    const cached = cache.get(editionIndex);
+    if (cached !== undefined) {
+      cache.delete(editionIndex); // reinsert as most-recently-used
+      cache.set(editionIndex, cached);
+      return cached;
+    }
+    const loading = readEditionBlocks(artefacts, editionIndex);
+    cache.set(editionIndex, loading);
+    while (cache.size > maxEditions) {
+      cache.delete(cache.keys().next().value!);
+    }
+    return loading;
+  };
+  const block = async (unitIndex: number): Promise<Block> => {
+    const blocks = await edition(artefacts.units.edition[unitIndex]);
+    const found = blocks.get(unitIndex);
+    if (found === undefined) throw new Error(`no block for unit ${unitIndex}`);
+    return found;
+  };
+  return {
+    block,
+    blocks: (unitIndices) => Promise.all(unitIndices.map(block)),
+  };
+};
+
+/* --------------------------- catalog lookup -------------------------- */
+
+export const findAuthorEntry = (
+  catalog: CatalogArtefact,
+  authorSlug: string,
+): AuthorEntry | undefined =>
+  catalog.authors.find((a) => a.meta.slug === authorSlug);
+
+export const findWorkEntry = (
+  author: AuthorEntry,
+  workSlug: string,
+): WorkEntry | undefined => author.works.find((w) => w.meta.slug === workSlug);
+
+export const findEditionEntry = (
+  work: WorkEntry,
+  editionSlug: string,
+): EditionEntry | undefined =>
+  work.editions.find((e) => e.meta.slug === editionSlug);
 
 /* ----------------------------- freshness ----------------------------- */
 

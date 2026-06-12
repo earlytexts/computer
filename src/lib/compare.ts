@@ -4,8 +4,19 @@
  * and (in composite editions) "empl1-1758" pairs with "empl1-1777".
  */
 
-import type { Section } from "./catalog.ts";
 import { diffTokens } from "./diff.ts";
+
+/**
+ * The shape both section representations share: the catalog's `Section`
+ * (build time) and the artefacts' `SkeletonSection` (serve time). These
+ * helpers are written against it so either can be aligned and matched.
+ */
+export type SectionNode = {
+  slug: string;
+  path: string[];
+  title: string;
+  children: SectionNode[];
+};
 
 /** Key used to match sections across editions of the same work. */
 export const sectionKey = (slug: string): string =>
@@ -14,16 +25,16 @@ export const sectionKey = (slug: string): string =>
 export const pathKey = (path: string[]): string[] => path.map(sectionKey);
 
 /** Find a section by a key path (edition-independent path). */
-export const findSectionByKey = (
-  sections: Section[],
+export const findSectionByKey = <T extends SectionNode>(
+  sections: T[],
   keyPath: string[],
-): Section | undefined => {
+): T | undefined => {
   let current = sections;
-  let found: Section | undefined;
+  let found: T | undefined;
   for (const key of keyPath) {
     found = current.find((s) => sectionKey(s.slug) === key);
     if (found === undefined) return undefined;
-    current = found.children;
+    current = found.children as T[];
   }
   return found;
 };
@@ -31,8 +42,8 @@ export const findSectionByKey = (
 export type AlignedSection = {
   key: string;
   title: string;
-  a?: Section;
-  b?: Section;
+  a?: SectionNode;
+  b?: SectionNode;
   children: AlignedSection[];
 };
 
@@ -41,10 +52,10 @@ export type AlignedSection = {
  * preserves reading order (an order-preserving diff of the key sequences).
  */
 export const alignSections = (
-  a: Section[],
-  b: Section[],
+  a: SectionNode[],
+  b: SectionNode[],
 ): AlignedSection[] => {
-  const keys = (sections: Section[]) =>
+  const keys = (sections: SectionNode[]) =>
     sections.map((s) => ({ text: sectionKey(s.slug), spaced: false }));
   const aligned: AlignedSection[] = [];
   let ai = 0;

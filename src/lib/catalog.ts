@@ -460,8 +460,3 @@ export const findWork = (
   workSlug: string,
 ): Work | undefined =>
   catalog.byAuthor.get(authorSlug)?.works.find((w) => w.slug === workSlug);
-
-export const findEdition = (
-  work: Work,
-  editionSlug: string,
-): Edition | undefined => work.editions.find((e) => e.slug === editionSlug);

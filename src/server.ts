@@ -13,9 +13,14 @@
  *   /search?q=&mode=&author=&work=&edition=&page=&perPage=     full-text search
  */
 
-import type { Catalog } from "./lib/catalog.ts";
-import { findEdition, findWork } from "./lib/catalog.ts";
-import type { ServeArtefacts } from "./lib/artefacts.ts";
+import {
+  type BlockStore,
+  createBlockStore,
+  findAuthorEntry,
+  findEditionEntry,
+  findWorkEntry,
+  type ServeArtefacts,
+} from "./lib/artefacts.ts";
 import {
   catalogResponse,
   compareResponse,
@@ -28,7 +33,6 @@ import {
 import { clientKey, type RateLimiter } from "./ratelimit.ts";
 
 export type Api = {
-  catalog: Catalog;
   artefacts: ServeArtefacts;
   limiter?: RateLimiter;
 };
@@ -44,19 +48,24 @@ const json = (value: unknown, status = 200): Response =>
 
 const notFound = (): Response => json({ error: "not found" }, 404);
 
-const route = async (api: Api, url: URL): Promise<Response> => {
+const route = async (
+  api: Api,
+  store: BlockStore,
+  url: URL,
+): Promise<Response> => {
+  const { catalog } = api.artefacts;
   const segments = url.pathname.split("/").map(decodeURIComponent)
     .filter((s) => s !== "").map((s) => s.toLowerCase());
 
   if (segments.length === 0) {
     return json({
       service: "computer",
-      authors: api.catalog.authors.length,
-      works: api.catalog.authors.reduce((n, a) => n + a.works.length, 0),
+      authors: catalog.authors.length,
+      works: catalog.authors.reduce((n, a) => n + a.works.length, 0),
     });
   }
   if (segments[0] === "catalog" && segments.length === 1) {
-    return json(catalogResponse(api.catalog));
+    return json(catalogResponse(catalog));
   }
   if (segments[0] === "search" && segments.length === 1) {
     const params = url.searchParams;
@@ -76,22 +85,30 @@ const route = async (api: Api, url: URL): Promise<Response> => {
   if (
     segments[0] !== "authors" || segments[2] !== "works" || segments.length < 6
   ) return notFound();
-  const author = api.catalog.byAuthor.get(segments[1]);
+  const author = findAuthorEntry(catalog, segments[1]);
   const work = author === undefined
     ? undefined
-    : findWork(api.catalog, segments[1], segments[3]);
+    : findWorkEntry(author, segments[3]);
   if (author === undefined || work === undefined) return notFound();
 
   if (segments[4] === "editions") {
-    const edition = findEdition(work, segments[5]);
+    const edition = findEditionEntry(work, segments[5]);
     if (edition === undefined) return notFound();
     const rest = segments.slice(6);
-    if (rest.length === 0) return json(editionResponse(author, work, edition));
+    if (rest.length === 0) {
+      return json(await editionResponse(store, author, work, edition));
+    }
     if (rest.length === 1 && rest[0] === "full") {
-      return json(fullTextResponse(author, work, edition));
+      return json(await fullTextResponse(store, author, work, edition));
     }
     if (rest[0] === "sections" && rest.length > 1) {
-      const section = sectionResponse(author, work, edition, rest.slice(1));
+      const section = await sectionResponse(
+        store,
+        author,
+        work,
+        edition,
+        rest.slice(1),
+      );
       return section === undefined ? notFound() : json(section);
     }
     return notFound();
@@ -104,7 +121,8 @@ const route = async (api: Api, url: URL): Promise<Response> => {
       return compared === undefined ? notFound() : json(compared);
     }
     if (rest[0] === "sections" && rest.length > 1) {
-      const compared = compareSectionResponse(
+      const compared = await compareSectionResponse(
+        store,
         author,
         work,
         a,
@@ -119,9 +137,13 @@ const route = async (api: Api, url: URL): Promise<Response> => {
   return notFound();
 };
 
-export const createHandler =
-  (api: Api) =>
-  async (req: Request, info?: Deno.ServeHandlerInfo): Promise<Response> => {
+export const createHandler = (api: Api) => {
+  // One block store (and its LRU) for the life of the handler.
+  const store = createBlockStore(api.artefacts);
+  return async (
+    req: Request,
+    info?: Deno.ServeHandlerInfo,
+  ): Promise<Response> => {
     const remoteAddr = info === undefined || info.remoteAddr.transport !== "tcp"
       ? undefined
       : info.remoteAddr.hostname;
@@ -140,9 +162,10 @@ export const createHandler =
       return json({ error: "method not allowed" }, 405);
     }
     try {
-      return await route(api, new URL(req.url));
+      return await route(api, store, new URL(req.url));
     } catch (error) {
       console.error(error);
       return json({ error: "internal error" }, 500);
     }
   };
+};

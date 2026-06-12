@@ -18,8 +18,8 @@ import type {
 } from "../src/types.ts";
 
 const request = async (path: string, method = "GET"): Promise<Response> => {
-  const { catalog, artefacts } = await testData();
-  return await createHandler({ catalog, artefacts })(
+  const { artefacts } = await testData();
+  return await createHandler({ artefacts })(
     new Request(`http://localhost${path}`, { method }),
   );
 };
@@ -223,9 +223,8 @@ Deno.test("non-GET methods are rejected", async () => {
 });
 
 Deno.test("requests beyond the rate limit get a 429", async () => {
-  const { catalog, artefacts } = await testData();
+  const { artefacts } = await testData();
   const handler = createHandler({
-    catalog,
     artefacts,
     limiter: createRateLimiter({ ratePerSecond: 1, burst: 2 }),
   });
