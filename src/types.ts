@@ -11,26 +11,49 @@ import type { Block } from "@earlytexts/markit";
 
 /* ------------------------------ catalog ------------------------------ */
 
+export type AuthorMeta = {
+  slug: string;
+  forename: string;
+  surname: string;
+  title?: string; // honorific, e.g. "Lord Kames"
+  birth?: number;
+  death?: number;
+  published?: number; // year of first publication; authors are ordered by it
+  nationality?: string;
+  sex?: string;
+};
+
 export type EditionMeta = {
+  authorSlug: string;
   workSlug: string;
   slug: string; // "main" for the main text, otherwise e.g. "1757", "1742a"
   isMain: boolean;
   title: string;
   breadcrumb: string;
+  /** Whether the text itself is present in the corpus (else a stub). */
+  imported: boolean;
   published: number[];
   copytext: string[];
+  sourceUrl?: string;
   sourceDesc?: string;
 };
 
 export type WorkMeta = {
+  authorSlug: string;
   slug: string;
   title: string;
   breadcrumb: string;
+  imported: boolean;
+  published: number[];
   editions: EditionMeta[]; // main edition first, then dated editions ascending
 };
 
+export type CatalogAuthor = AuthorMeta & {
+  works: WorkMeta[]; // ascending by first publication year
+};
+
 export type CatalogResponse = {
-  works: WorkMeta[];
+  authors: CatalogAuthor[]; // ascending by year of first publication
   /** Distinct edition slugs across the catalog (for filter UIs). */
   editionSlugs: string[];
 };
@@ -43,6 +66,8 @@ export type SectionSummary = {
   path: string[]; // slugs from the edition root down to this section
   title: string;
   breadcrumb: string;
+  /** Whether this section's text is present (own value or inherited). */
+  imported: boolean;
   children: SectionSummary[];
 };
 
@@ -52,11 +77,13 @@ export type SectionContent = {
   path: string[];
   title: string;
   breadcrumb: string;
+  imported: boolean;
   blocks: Block[];
   children: SectionContent[];
 };
 
 export type EditionResponse = {
+  author: AuthorMeta;
   work: WorkMeta;
   edition: EditionMeta;
   /** The edition's own blocks (title page etc.). */
@@ -65,6 +92,7 @@ export type EditionResponse = {
 };
 
 export type FullTextResponse = {
+  author: AuthorMeta;
   work: WorkMeta;
   edition: EditionMeta;
   blocks: Block[];
@@ -78,12 +106,14 @@ export type SectionRef = {
 };
 
 export type SectionResponse = {
+  author: AuthorMeta;
   work: WorkMeta;
   edition: EditionMeta;
   section: {
     path: string[];
     title: string;
     breadcrumb: string;
+    imported: boolean;
     blocks: Block[];
     children: SectionSummary[];
   };
@@ -126,6 +156,7 @@ export type AlignedRow = {
 };
 
 export type CompareResponse = {
+  author: AuthorMeta;
   work: WorkMeta;
   a: EditionMeta;
   b: EditionMeta;
@@ -133,6 +164,7 @@ export type CompareResponse = {
 };
 
 export type CompareSectionResponse = {
+  author: AuthorMeta;
   work: WorkMeta;
   a: EditionMeta;
   b: EditionMeta;
@@ -146,6 +178,8 @@ export type CompareSectionResponse = {
 export type SnippetPart = { text: string; marked: boolean };
 
 export type SearchResult = {
+  author: string; // author slug
+  authorName: string; // surname, for display
   work: string;
   workBreadcrumb: string;
   edition: string; // "main" or a year slug

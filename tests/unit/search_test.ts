@@ -72,16 +72,24 @@ Deno.test("old spellings match modern ones both ways", async () => {
   assertEquals(old.length, 3);
 });
 
-Deno.test("filters restrict results to a work and edition", async () => {
+Deno.test("filters restrict results to an author, work, and edition", async () => {
   const { searchIndex } = await testData();
   const hits = search(searchIndex, parseQuery("sensation"), {
+    author: "test",
     work: "tw",
     edition: "1750",
   });
   assert(hits.length > 0);
   assert(
-    hits.every((hit) => hit.unit.work === "tw" && hit.unit.edition === "1750"),
+    hits.every((hit) =>
+      hit.unit.author === "test" && hit.unit.work === "tw" &&
+      hit.unit.edition === "1750"
+    ),
   );
+  const none = search(searchIndex, parseQuery("sensation"), {
+    author: "other",
+  });
+  assertEquals(none.length, 0);
 });
 
 Deno.test("borrowed documents are indexed under their own work only", async () => {

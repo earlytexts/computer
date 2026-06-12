@@ -11,7 +11,7 @@
  *   - bare terms are ANDed:        liberty press
  *   - quoted phrases:              "abstruse philosophy"
  *   - trailing-star prefixes:      caus*
- * Results can additionally be filtered by work and edition.
+ * Results can additionally be filtered by author, work, and edition.
  */
 
 import type { Block, MarkitDocument } from "@earlytexts/markit";
@@ -62,6 +62,7 @@ export const tokenizeText = (text: string): TokenSpan[] => {
 };
 
 export type SearchUnit = {
+  author: string;
   work: string;
   edition: string;
   sectionPath: string[];
@@ -96,6 +97,7 @@ export const buildIndex = (catalog: Catalog): SearchIndex => {
     if (text === "") return;
     const unitIndex = units.length;
     units.push({
+      author: work.authorSlug,
       work: work.slug,
       edition: edition.slug,
       sectionPath,
@@ -144,19 +146,23 @@ export const buildIndex = (catalog: Catalog): SearchIndex => {
     }
   };
 
-  for (const work of catalog.works) {
-    for (const edition of work.editions) {
-      if (!ownsDocument(work, edition.document)) continue;
-      for (const block of edition.document.blocks) {
-        indexUnit(work, edition, [], edition.title, block);
+  for (const author of catalog.authors) {
+    for (const work of author.works) {
+      for (const edition of work.editions) {
+        if (!ownsDocument(work, edition.document)) continue;
+        for (const block of edition.document.blocks) {
+          indexUnit(work, edition, [], edition.title, block);
+        }
+        indexSections(work, edition, edition.document, []);
       }
-      indexSections(work, edition, edition.document, []);
     }
   }
 
   const editionSlugs = [
     ...new Set(
-      catalog.works.flatMap((w) => w.editions.map((e) => e.slug)),
+      catalog.authors.flatMap((author) =>
+        author.works.flatMap((w) => w.editions.map((e) => e.slug))
+      ),
     ),
   ].sort();
 
@@ -206,7 +212,7 @@ export type SearchHit = {
   positions: number[];
 };
 
-export type Filters = { work?: string; edition?: string };
+export type Filters = { author?: string; work?: string; edition?: string };
 
 /** Map of unitIndex -> matched positions, or null for "matches nothing". */
 type Candidates = Map<number, number[]> | null;
@@ -305,6 +311,9 @@ export const search = (
   for (const [unitIndex, positions] of candidates) {
     if (positions.length === 0) continue;
     const unit = index.units[unitIndex];
+    if (
+      filters.author !== undefined && unit.author !== filters.author
+    ) continue;
     if (filters.work !== undefined && unit.work !== filters.work) continue;
     if (
       filters.edition !== undefined && unit.edition !== filters.edition

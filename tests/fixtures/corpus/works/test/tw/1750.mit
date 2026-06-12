@@ -1,10 +1,10 @@
 # Test.TW.1750
 
 [metadata]
+imported = true
 title = "A Test Work"
 breadcrumb = "Test Work"
 published = [1750]
-copytext = ["1750"]
 
 {#title}
 ^1 A TEST WORK.

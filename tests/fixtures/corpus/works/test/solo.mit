@@ -1,6 +1,7 @@
 # Test.SOLO
 
 [metadata]
+imported = true
 title = "A Solitary Treatise"
 breadcrumb = "Solo Treatise"
 published = [1740]
@@ -35,3 +36,10 @@ breadcrumb = "Section 2"
 
 {#1}
 The mind never perceives any real connexion among distinct existences.
+
+## 2
+
+[metadata]
+imported = false
+title = "Part 2"
+breadcrumb = "Part 2"

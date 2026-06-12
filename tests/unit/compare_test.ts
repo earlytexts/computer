@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertExists } from "@std/assert";
-import { sectionTree } from "../../src/lib/catalog.ts";
+import { findWork, sectionTree } from "../../src/lib/catalog.ts";
 import {
   alignSections,
   findSectionByKey,
@@ -15,7 +15,7 @@ Deno.test("sectionKey strips edition-year suffixes", () => {
 
 Deno.test("alignSections pairs shared sections and flags one-sided ones", async () => {
   const { catalog } = await testData();
-  const tw = catalog.bySlug.get("tw")!;
+  const tw = findWork(catalog, "test", "tw")!;
   const a = tw.editions.find((e) => e.slug === "1750")!;
   const b = tw.editions[0]; // main
   const rows = alignSections(sectionTree(a.document), sectionTree(b.document));
@@ -30,7 +30,7 @@ Deno.test("alignSections pairs shared sections and flags one-sided ones", async 
 
 Deno.test("findSectionByKey finds matching sections across editions", async () => {
   const { catalog } = await testData();
-  const tw = catalog.bySlug.get("tw")!;
+  const tw = findWork(catalog, "test", "tw")!;
   for (const edition of tw.editions) {
     const found = findSectionByKey(sectionTree(edition.document), ["1"]);
     assertExists(found, `section 1 missing in ${edition.slug}`);

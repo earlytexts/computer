@@ -1,6 +1,7 @@
 # Test.TW
 
 [metadata]
+imported = true
 title = "A Test Work"
 breadcrumb = "Test Work"
 published = [1750, 1760]

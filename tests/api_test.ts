@@ -35,37 +35,56 @@ const getJson = async <T>(path: string): Promise<T> => {
 };
 
 Deno.test("the root reports service health", async () => {
-  const info = await getJson<{ service: string; works: number }>("/");
+  const info = await getJson<
+    { service: string; authors: number; works: number }
+  >(
+    "/",
+  );
   assertEquals(info.service, "computer");
-  assertEquals(info.works, 3);
+  assertEquals(info.authors, 2);
+  assertEquals(info.works, 4);
 });
 
-Deno.test("/catalog lists works and editions", async () => {
+Deno.test("/catalog lists authors, works, and editions", async () => {
   const catalog = await getJson<CatalogResponse>("/catalog");
-  const tw = catalog.works.find((w) => w.slug === "tw");
+  assertEquals(catalog.authors.map((a) => a.slug), ["other", "test"]);
+  const test = catalog.authors.find((a) => a.slug === "test");
+  assertExists(test);
+  assertEquals(test.surname, "Test");
+  const tw = test.works.find((w) => w.slug === "tw");
   assertExists(tw);
   assertEquals(tw.editions.map((e) => e.slug), ["main", "1750", "1760"]);
+  assert(tw.imported);
+  const stub = catalog.authors[0].works.find((w) => w.slug === "stub");
+  assertExists(stub);
+  assertEquals(stub.imported, false);
   assert(catalog.editionSlugs.includes("main"));
   assert(catalog.editionSlugs.includes("1750"));
 });
 
 Deno.test("an edition has title blocks and a section tree", async () => {
-  const edition = await getJson<EditionResponse>("/works/tw/editions/main");
+  const edition = await getJson<EditionResponse>(
+    "/authors/test/works/tw/editions/main",
+  );
+  assertEquals(edition.author.slug, "test");
   assertEquals(edition.edition.slug, "main");
   assert(edition.blocks.length > 0);
   assertEquals(edition.sections.map((s) => s.slug), ["1", "2"]);
+  assert(edition.sections.every((s) => s.imported));
   assertEquals(edition.work.editions.length, 3); // for the edition strip
 });
 
 Deno.test("the full text includes every section's blocks", async () => {
-  const full = await getJson<FullTextResponse>("/works/tw/editions/main/full");
+  const full = await getJson<FullTextResponse>(
+    "/authors/test/works/tw/editions/main/full",
+  );
   assertEquals(full.sections.length, 2);
   assert(full.sections.every((s) => s.blocks.length > 0));
 });
 
 Deno.test("a section comes with navigation and compare info", async () => {
   const section = await getJson<SectionResponse>(
-    "/works/tw/editions/main/sections/1",
+    "/authors/test/works/tw/editions/main/sections/1",
   );
   assertEquals(section.section.title, "Section 1");
   assert(section.section.blocks.length > 0);
@@ -76,14 +95,21 @@ Deno.test("a section comes with navigation and compare info", async () => {
 
 Deno.test("a section unique to one edition offers no comparisons", async () => {
   const section = await getJson<SectionResponse>(
-    "/works/tw/editions/1750/sections/3",
+    "/authors/test/works/tw/editions/1750/sections/3",
   );
   assertEquals(section.compareEditions, []);
 });
 
+Deno.test("a stub section reports imported = false", async () => {
+  const section = await getJson<SectionResponse>(
+    "/authors/test/works/solo/editions/main/sections/2",
+  );
+  assertEquals(section.section.imported, false);
+});
+
 Deno.test("compare aligns the two editions' sections", async () => {
   const compared = await getJson<CompareResponse>(
-    "/works/tw/compare/1750/main",
+    "/authors/test/works/tw/compare/1750/main",
   );
   assertEquals(compared.rows.map((row) => row.key), ["1", "3", "2"]);
   const shared = compared.rows[0];
@@ -94,7 +120,7 @@ Deno.test("compare aligns the two editions' sections", async () => {
 
 Deno.test("compare of a section yields word-level diffs", async () => {
   const compared = await getJson<CompareSectionResponse>(
-    "/works/tw/compare/1750/main/sections/1",
+    "/authors/test/works/tw/compare/1750/main/sections/1",
   );
   assertEquals(compared.title, "Section 1");
   const changed = compared.diffs.find((diff) => diff.type === "changed");
@@ -114,6 +140,8 @@ Deno.test("search returns ranked, snippeted results", async () => {
     `/search?q=${encodeURIComponent('"liberty of the press"')}`,
   );
   assert(found.total > 0);
+  assertEquals(found.results[0].author, "test");
+  assertEquals(found.results[0].authorName, "Test");
   assertEquals(found.results[0].work, "tw");
   assert(found.results[0].snippet.some((part) => part.marked));
   assertEquals(found.results[0].workBreadcrumb, "Test Work");
@@ -121,9 +149,13 @@ Deno.test("search returns ranked, snippeted results", async () => {
 
 Deno.test("search filters and paginates", async () => {
   const filtered = await getJson<SearchResponse>(
-    "/search?q=sensation&work=tw&edition=1750",
+    "/search?q=sensation&author=test&work=tw&edition=1750",
   );
   assert(filtered.results.every((r) => r.edition === "1750"));
+  const noneOfHers = await getJson<SearchResponse>(
+    "/search?q=sensation&author=other",
+  );
+  assertEquals(noneOfHers.total, 0);
   const paged = await getJson<SearchResponse>(
     "/search?q=paragraph&perPage=1&page=2",
   );
@@ -141,11 +173,14 @@ Deno.test("unknown resources return JSON 404s", async () => {
   for (
     const path of [
       "/nope",
-      "/works/nope/editions/main",
-      "/works/tw/editions/1234",
-      "/works/tw/editions/main/sections/99",
-      "/works/tw/compare/1750/1750", // comparing an edition with itself
-      "/works/tw/compare/1750/main/sections/99",
+      "/works/tw/editions/main", // old route shape
+      "/authors/nope/works/tw/editions/main",
+      "/authors/test/works/nope/editions/main",
+      "/authors/other/works/tw/editions/main", // wrong author
+      "/authors/test/works/tw/editions/1234",
+      "/authors/test/works/tw/editions/main/sections/99",
+      "/authors/test/works/tw/compare/1750/1750", // an edition with itself
+      "/authors/test/works/tw/compare/1750/main/sections/99",
     ]
   ) {
     const response = await request(path);

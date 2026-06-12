@@ -1,0 +1,10 @@
+# Test
+
+[metadata]
+forename = "Thomas"
+surname = "Test"
+birth = 1700
+death = 1780
+published = 1740
+nationality = "English"
+sex = "Male"

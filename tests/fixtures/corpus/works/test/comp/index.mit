@@ -1,6 +1,7 @@
 # Test.COMP
 
 [metadata]
+imported = true
 title = "A Composite Collection"
 breadcrumb = "Composite"
 published = [1755]

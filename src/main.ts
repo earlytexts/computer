@@ -17,9 +17,12 @@ const t1 = performance.now();
 const searchIndex = buildIndex(catalog);
 const t2 = performance.now();
 
+const workCount = catalog.authors.reduce((n, a) => n + a.works.length, 0);
 console.log(
   `Corpus: ${corpusDir}\n` +
-    `Loaded ${catalog.works.length} works in ${Math.round(t1 - t0)}ms; ` +
+    `Loaded ${workCount} works by ${catalog.authors.length} authors in ${
+      Math.round(t1 - t0)
+    }ms; ` +
     `indexed ${searchIndex.units.length} blocks ` +
     `(${searchIndex.tokens.length} distinct tokens) in ${
       Math.round(t2 - t1)

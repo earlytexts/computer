@@ -1,45 +1,68 @@
 /**
- * The catalog scans the `data` directory, compiles every Markit file, and
- * organises the results into works and editions.
+ * The catalog scans the corpus, compiles every Markit file, and organises the
+ * results into authors, works, and editions.
  *
- * Layout conventions in `data/`:
- *  - A top-level `<work>.mit` file is a single-edition work (e.g. `thn.mit`).
- *  - A top-level directory containing `index.mit` is a multi-edition work.
- *    Its `index.mit` is the work's main text; sibling entries whose names
- *    look like years (`1757.mit`, `1742a.mit`, or directories `1758/index.mit`)
+ * Corpus layout (see corpus/README.md):
+ *  - `authors/<author>.mit` holds an author's metadata (no text).
+ *  - `works/<author>/<work>.mit` is a work whose only text is its reading
+ *    text; `works/<author>/<work>/index.mit` is the reading text of a work
+ *    with dated editions and/or part files. Sibling entries whose names look
+ *    like years (`1757.mit`, `1742a.mit`, or directories `1758/index.mit`)
  *    are dated editions.
  *  - A document's `children` metadata may reference sections by id (inline
  *    `##` sections of the same file) or by relative file path (without the
  *    `.mit` extension). File references are loaded recursively and spliced
- *    into the document's children, allowing composite editions (ETSS, FD,
- *    HE volumes) to share text with other works.
+ *    into the document's children, allowing composite works (collections
+ *    like ETSS, FD, HE) to share text with other works.
+ *  - Cascading metadata (imported, published, copytext, sourceUrl,
+ *    sourceDesc) flows down the composed tree: a section without the key
+ *    takes the nearest ancestor's value.
  */
 
 import { compile, type MarkitDocument } from "@earlytexts/markit";
 
+export type Author = {
+  slug: string;
+  forename: string;
+  surname: string;
+  title?: string; // honorific, e.g. "Lord Kames"
+  birth?: number;
+  death?: number;
+  published?: number; // year of first publication; used for ordering
+  nationality?: string;
+  sex?: string;
+  works: Work[]; // ascending by first publication year
+};
+
 export type Edition = {
+  authorSlug: string;
   workSlug: string;
   slug: string; // "main" for index.mit, otherwise e.g. "1757", "1742a"
   isMain: boolean;
   title: string;
   breadcrumb: string;
+  imported: boolean;
   published: number[];
   copytext: string[];
+  sourceUrl?: string;
   sourceDesc?: string;
   document: MarkitDocument;
 };
 
 export type Work = {
+  authorSlug: string;
   slug: string;
   title: string;
   breadcrumb: string;
+  imported: boolean;
+  published: number[];
   dir: string; // absolute directory owning this work's files
   editions: Edition[]; // main edition first, then dated editions ascending
 };
 
 export type Catalog = {
-  works: Work[];
-  bySlug: Map<string, Work>;
+  authors: Author[]; // ascending by year of first publication
+  byAuthor: Map<string, Author>;
   /** Source file path for every separately-loaded document root. */
   sources: WeakMap<MarkitDocument, string>;
 };
@@ -50,28 +73,11 @@ export type Section = {
   path: string[]; // slugs from the edition root down to this section
   title: string;
   breadcrumb: string;
+  imported: boolean; // own value, or inherited from the nearest ancestor
   children: Section[];
 };
 
 const EDITION_RE = /^\d{4}[a-z]?$/;
-
-/** Preferred homepage ordering; anything unknown sorts after, alphabetically. */
-const WORK_ORDER = [
-  "thn",
-  "a",
-  "lg",
-  "empl1",
-  "empl2",
-  "ehu",
-  "epm",
-  "dp",
-  "nhr",
-  "fd",
-  "etss",
-  "he",
-  "dnr",
-  "mol",
-];
 
 export const lastSegment = (id: string): string => {
   const parts = id.split(/[./]/);
@@ -81,6 +87,16 @@ export const lastSegment = (id: string): string => {
 const metaString = (doc: MarkitDocument, key: string): string | undefined => {
   const value = doc.metadata?.[key];
   return typeof value === "string" ? value : undefined;
+};
+
+const metaNumber = (doc: MarkitDocument, key: string): number | undefined => {
+  const value = doc.metadata?.[key];
+  return typeof value === "number" ? value : undefined;
+};
+
+const metaBoolean = (doc: MarkitDocument, key: string): boolean | undefined => {
+  const value = doc.metadata?.[key];
+  return typeof value === "boolean" ? value : undefined;
 };
 
 const metaArray = (doc: MarkitDocument, key: string): (string | number)[] => {
@@ -224,101 +240,158 @@ const resolveChildren = async (
 };
 
 const makeEdition = (
+  authorSlug: string,
   workSlug: string,
   slug: string,
   document: MarkitDocument,
 ): Edition => ({
+  authorSlug,
   workSlug,
   slug,
   isMain: slug === "main",
   title: metaString(document, "title") ?? document.id,
   breadcrumb: metaString(document, "breadcrumb") ??
     metaString(document, "title") ?? document.id,
+  // Texts are assumed present unless the corpus says otherwise; only files
+  // with broken metadata lack the key entirely.
+  imported: metaBoolean(document, "imported") ?? true,
   published: metaArray(document, "published").map(Number).filter((n) =>
     !Number.isNaN(n)
   ),
   copytext: metaArray(document, "copytext").map(String),
+  sourceUrl: metaString(document, "sourceUrl"),
   sourceDesc: metaString(document, "sourceDesc"),
   document,
 });
 
+/** Load one work from a file or directory under the author's directory. */
+const loadWork = async (
+  authorSlug: string,
+  entry: Deno.DirEntry,
+  authorDir: string,
+  ctx: LoadContext,
+): Promise<Work | undefined> => {
+  if (entry.isFile && entry.name.endsWith(".mit")) {
+    const slug = entry.name.slice(0, -4).toLowerCase();
+    const doc = await loadDocument(`${authorDir}/${entry.name}`, ctx);
+    if (doc === null) return undefined;
+    const main = makeEdition(authorSlug, slug, "main", doc);
+    return {
+      authorSlug,
+      slug,
+      title: main.title,
+      breadcrumb: main.breadcrumb,
+      imported: main.imported,
+      published: main.published,
+      dir: authorDir,
+      editions: [main],
+    };
+  }
+  if (!entry.isDirectory) return undefined;
+  const dir = `${authorDir}/${entry.name}`;
+  const indexPath = await findFile(`${dir}/index.mit`);
+  if (indexPath === undefined) return undefined; // not a work
+  const slug = entry.name.toLowerCase();
+  const indexDoc = await loadDocument(indexPath, ctx);
+  if (indexDoc === null) return undefined;
+  const main = makeEdition(authorSlug, slug, "main", indexDoc);
+  const editions: Edition[] = [main];
+  const editionSlugs: string[] = [];
+  for await (const sub of Deno.readDir(dir)) {
+    const name = sub.isFile && sub.name.endsWith(".mit")
+      ? sub.name.slice(0, -4)
+      : sub.isDirectory
+      ? sub.name
+      : undefined;
+    if (name !== undefined && EDITION_RE.test(name)) {
+      editionSlugs.push(name);
+    }
+  }
+  editionSlugs.sort();
+  for (const editionSlug of editionSlugs) {
+    const file = (await findFile(`${dir}/${editionSlug}.mit`)) ??
+      (await findFile(`${dir}/${editionSlug}/index.mit`));
+    const doc = file === undefined ? null : await loadDocument(file, ctx);
+    if (doc !== null) {
+      editions.push(makeEdition(authorSlug, slug, editionSlug, doc));
+    }
+  }
+  return {
+    authorSlug,
+    slug,
+    title: main.title,
+    breadcrumb: main.breadcrumb,
+    imported: main.imported,
+    published: main.published,
+    dir,
+    editions,
+  };
+};
+
+const makeAuthor = (slug: string, doc: MarkitDocument | null): Author => ({
+  slug,
+  forename: doc === null ? "" : metaString(doc, "forename") ?? "",
+  surname: doc === null ? slug : metaString(doc, "surname") ?? slug,
+  title: doc === null ? undefined : metaString(doc, "title"),
+  birth: doc === null ? undefined : metaNumber(doc, "birth"),
+  death: doc === null ? undefined : metaNumber(doc, "death"),
+  published: doc === null ? undefined : metaNumber(doc, "published"),
+  nationality: doc === null ? undefined : metaString(doc, "nationality"),
+  sex: doc === null ? undefined : metaString(doc, "sex"),
+  works: [],
+});
+
 export const loadCatalog = async (
-  dataDir: string,
+  corpusDir: string,
 ): Promise<{ catalog: Catalog; warnings: string[] }> => {
   // Canonicalise so that work directories and child-reference paths agree.
-  dataDir = await Deno.realPath(dataDir);
+  corpusDir = await Deno.realPath(corpusDir);
   const ctx: LoadContext = {
     cache: new Map(),
     stack: new Set(),
     sources: new WeakMap(),
     warnings: [],
   };
-  const works: Work[] = [];
+  const byAuthor = new Map<string, Author>();
 
-  for await (const entry of Deno.readDir(dataDir)) {
-    if (entry.isFile && entry.name.endsWith(".mit")) {
+  try {
+    for await (const entry of Deno.readDir(`${corpusDir}/authors`)) {
+      if (!entry.isFile || !entry.name.endsWith(".mit")) continue;
       const slug = entry.name.slice(0, -4).toLowerCase();
-      const doc = await loadDocument(`${dataDir}/${entry.name}`, ctx);
-      if (doc === null) continue;
-      const main = makeEdition(slug, "main", doc);
-      works.push({
-        slug,
-        title: main.title,
-        breadcrumb: main.breadcrumb,
-        dir: dataDir,
-        editions: [main],
-      });
-    } else if (entry.isDirectory) {
-      const dir = `${dataDir}/${entry.name}`;
-      const indexPath = await findFile(`${dir}/index.mit`);
-      if (indexPath === undefined) continue; // not a work (e.g. empl1/withdrawn)
-      const slug = entry.name.toLowerCase();
-      const indexDoc = await loadDocument(indexPath, ctx);
-      if (indexDoc === null) continue;
-      const main = makeEdition(slug, "main", indexDoc);
-      const editions: Edition[] = [main];
-      const editionSlugs: string[] = [];
-      for await (const sub of Deno.readDir(dir)) {
-        const name = sub.isFile && sub.name.endsWith(".mit")
-          ? sub.name.slice(0, -4)
-          : sub.isDirectory
-          ? sub.name
-          : undefined;
-        if (name !== undefined && EDITION_RE.test(name)) {
-          editionSlugs.push(name);
-        }
-      }
-      editionSlugs.sort();
-      for (const editionSlug of editionSlugs) {
-        const file = (await findFile(`${dir}/${editionSlug}.mit`)) ??
-          (await findFile(`${dir}/${editionSlug}/index.mit`));
-        const doc = file === undefined ? null : await loadDocument(file, ctx);
-        if (doc !== null) editions.push(makeEdition(slug, editionSlug, doc));
-      }
-      works.push({
-        slug,
-        title: main.title,
-        breadcrumb: main.breadcrumb,
-        dir,
-        editions,
-      });
+      const doc = await loadDocument(`${corpusDir}/authors/${entry.name}`, ctx);
+      byAuthor.set(slug, makeAuthor(slug, doc));
     }
+  } catch {
+    ctx.warnings.push(`no authors directory in ${corpusDir}`);
   }
 
-  const rank = (slug: string): number => {
-    const index = WORK_ORDER.indexOf(slug);
-    return index === -1 ? WORK_ORDER.length : index;
-  };
-  works.sort((a, b) =>
-    rank(a.slug) - rank(b.slug) || a.slug.localeCompare(b.slug)
+  for await (const entry of Deno.readDir(`${corpusDir}/works`)) {
+    if (!entry.isDirectory) continue;
+    const authorSlug = entry.name.toLowerCase();
+    let author = byAuthor.get(authorSlug);
+    if (author === undefined) {
+      ctx.warnings.push(`works/${entry.name} has no authors/${entry.name}.mit`);
+      author = makeAuthor(authorSlug, null);
+      byAuthor.set(authorSlug, author);
+    }
+    const authorDir = `${corpusDir}/works/${entry.name}`;
+    for await (const sub of Deno.readDir(authorDir)) {
+      const work = await loadWork(authorSlug, sub, authorDir, ctx);
+      if (work !== undefined) author.works.push(work);
+    }
+    author.works.sort((a, b) =>
+      (a.published[0] ?? Infinity) - (b.published[0] ?? Infinity) ||
+      a.slug.localeCompare(b.slug)
+    );
+  }
+
+  const authors = [...byAuthor.values()].sort((a, b) =>
+    (a.published ?? Infinity) - (b.published ?? Infinity) ||
+    a.surname.localeCompare(b.surname)
   );
 
   return {
-    catalog: {
-      works,
-      bySlug: new Map(works.map((w) => [w.slug, w])),
-      sources: ctx.sources,
-    },
+    catalog: { authors, byAuthor, sources: ctx.sources },
     warnings: ctx.warnings,
   };
 };
@@ -327,7 +400,7 @@ export const loadCatalog = async (
  * URL slug for a child section. Inline sections have ids nested under the
  * parent's id, so the last segment suffices ("Hume.THN.1.2" -> "2"). A child
  * pulled in from another work (composite editions) keeps its own id; use the
- * whole id minus the "Hume." prefix ("Hume.EMPL1.1777" -> "empl1-1777") to
+ * whole id with dots dashed ("Hume.EMPL1.1777" -> "hume-empl1-1777") to
  * avoid collisions between e.g. EMPL1.1777 and EMPL2.1777 inside ETSS.
  */
 export const childSlug = (
@@ -336,14 +409,17 @@ export const childSlug = (
 ): string =>
   child.id.toLowerCase().startsWith(parent.id.toLowerCase() + ".")
     ? lastSegment(child.id).toLowerCase()
-    : child.id.toLowerCase().replace(/^hume\./, "").replace(/\./g, "-");
+    : child.id.toLowerCase().replace(/\./g, "-");
 
 /** Build the section tree for an edition's document. */
 export const sectionTree = (
   doc: MarkitDocument,
   basePath: string[] = [],
-): Section[] =>
-  doc.children.map((child) => {
+  inheritedImported?: boolean,
+): Section[] => {
+  const parentImported = metaBoolean(doc, "imported") ??
+    inheritedImported ?? true;
+  return doc.children.map((child) => {
     const slug = childSlug(child, doc);
     const path = [...basePath, slug];
     return {
@@ -353,9 +429,11 @@ export const sectionTree = (
       title: metaString(child, "title") ?? lastSegment(child.id),
       breadcrumb: metaString(child, "breadcrumb") ??
         metaString(child, "title") ?? lastSegment(child.id),
-      children: sectionTree(child, path),
+      imported: metaBoolean(child, "imported") ?? parentImported,
+      children: sectionTree(child, path, parentImported),
     };
   });
+};
 
 /** Depth-first flattening of a section tree (for prev/next navigation). */
 export const flattenSections = (sections: Section[]): Section[] =>
@@ -375,6 +453,13 @@ export const findSection = (
   }
   return found;
 };
+
+export const findWork = (
+  catalog: Catalog,
+  authorSlug: string,
+  workSlug: string,
+): Work | undefined =>
+  catalog.byAuthor.get(authorSlug)?.works.find((w) => w.slug === workSlug);
 
 export const findEdition = (
   work: Work,
