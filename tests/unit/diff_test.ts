@@ -116,3 +116,18 @@ Deno.test("diffToBlocks renders a diff as Markit editorial markup", () => {
   // #2 exists only in a: the whole block is wrapped in a deletion
   assert(deletions.some((t) => t.includes("only in the first")));
 });
+
+Deno.test("diffToBlocks preserves inline formatting in equal spans", () => {
+  // "quick" is in emphasis in both editions; "brown"→"slow" differs.
+  const a = compile(`# A\n\n{#1}\nthe _quick_ brown fox\n`)[0];
+  const b = compile(`# A\n\n{#1}\nthe _quick_ slow fox\n`)[0];
+  const out = diffToBlocks(diffBlocks(a.blocks, b.blocks));
+  // Equal span "quick" must be wrapped in emphasis, not emitted as plain text.
+  const emphasisTexts = out.flatMap((blk) => ofType(blk.content, "emphasis"));
+  assert(emphasisTexts.some((t) => t.includes("quick")));
+  // Changed words still appear as deletion/insertion.
+  const deletions = out.flatMap((blk) => ofType(blk.content, "deletion"));
+  const insertions = out.flatMap((blk) => ofType(blk.content, "insertion"));
+  assert(deletions.some((t) => t.includes("brown")));
+  assert(insertions.some((t) => t.includes("slow")));
+});

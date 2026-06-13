@@ -13,14 +13,23 @@
  * as ordinary blocks and clients render it with no diff-specific logic.
  */
 
-import type { Block, InlineElement } from "@earlytexts/markit";
+import type { Block, InlineElement, List, WrapperType } from "@earlytexts/markit";
 import { blockText, markBlock } from "./text.ts";
 import { lastSegment } from "./catalog.ts";
+
+/** A wrapper inline element enclosing a token, minus its content. */
+type ContextFrame =
+  | { type: WrapperType }
+  | { type: "language"; lang?: string }
+  | { type: "highlight" };
 
 export type Token = {
   text: string;
   /** Whether the token was preceded by whitespace in the source. */
   spaced: boolean;
+  /** Wrapper context of this token (outermost first). Set by tokenizeBlock;
+   *  absent for tokens from tokenize(). */
+  context?: ContextFrame[];
 };
 
 export type DiffOp = {
@@ -178,6 +187,115 @@ const myers = (a: Token[], b: Token[]): DiffOp[] => {
 export const diffText = (a: string, b: string): DiffOp[] =>
   diffTokens(tokenize(a), tokenize(b));
 
+/** A contiguous run of characters sharing one inline wrapper context. */
+type TextSpan = { start: number; end: number; context: ContextFrame[] };
+
+/**
+ * Parallel to blockText but records the inline context of each character span.
+ * The concatenated span texts equal blockText(block) for a pre-resolved block.
+ */
+const buildSpans = (block: Block): { text: string; spans: TextSpan[] } => {
+  let text = "";
+  const spans: TextSpan[] = [];
+
+  const add = (s: string, ctx: ContextFrame[]): void => {
+    if (s === "") return;
+    spans.push({ start: text.length, end: text.length + s.length, context: ctx });
+    text += s;
+  };
+
+  const inlineCtx = (elements: InlineElement[], ctx: ContextFrame[]): void => {
+    for (const el of elements) {
+      if (el.type === "plainText") {
+        add(el.content, ctx);
+      } else if (el.type === "lineBreak") {
+        add("\n", ctx);
+      } else if (el.type === "emSpace" || el.type === "nbSpace") {
+        add(" ", ctx);
+      } else if (el.type === "illegible") {
+        add("[...]", ctx);
+      } else if (el.type === "language") {
+        inlineCtx(el.content, [...ctx, { type: "language", lang: el.lang }]);
+      } else if (el.type === "highlight") {
+        inlineCtx(el.content, [...ctx, { type: "highlight" }]);
+      } else if ("content" in el) {
+        // Wrapper: el is narrowed to Wrapper, el.type is WrapperType
+        inlineCtx(el.content, [...ctx, { type: el.type }]);
+      }
+      // pageBreak, footnoteReference: contribute nothing
+    }
+  };
+
+  const listBlock = (list: List): void => {
+    list.items.forEach((item, i) => {
+      if (i > 0) add("\n", []);
+      inlineCtx(item.content, []);
+      if (item.nestedList !== undefined) {
+        add("\n", []);
+        listBlock(item.nestedList);
+      }
+    });
+  };
+
+  block.content.forEach((el, i) => {
+    if (i > 0) add("\n", []);
+    switch (el.type) {
+      case "paragraph":
+        inlineCtx(el.content, []);
+        break;
+      case "heading":
+        el.content.forEach((line, j) => {
+          if (j > 0) add("\n", []);
+          inlineCtx(line.content, []);
+        });
+        break;
+      case "blockquote":
+        el.content.forEach((para, j) => {
+          if (j > 0) add("\n", []);
+          inlineCtx(para.content, []);
+        });
+        break;
+      case "list":
+        listBlock(el);
+        break;
+      case "table":
+        el.rows.forEach((row, j) => {
+          if (j > 0) add("\n", []);
+          row.cells.forEach((cell, k) => {
+            if (k > 0) add(" | ", []);
+            inlineCtx(cell.content, []);
+          });
+        });
+        break;
+    }
+  });
+
+  return { text, spans };
+};
+
+/**
+ * Like tokenize but applied to a pre-resolved Block, annotating each token
+ * with its inline wrapper context so opsToInline can reconstruct formatting.
+ */
+const tokenizeBlock = (block: Block): Token[] => {
+  const { text, spans } = buildSpans(block);
+  const tokens: Token[] = [];
+  let lastEnd = 0;
+  let si = 0;
+  for (const match of text.matchAll(TOKEN_RE)) {
+    const idx = match.index!;
+    // Advance to the span that covers idx (spans are in order, non-overlapping).
+    while (si < spans.length - 1 && spans[si + 1].start <= idx) si++;
+    tokens.push({
+      text: match[0],
+      spaced: idx > lastEnd,
+      context: spans[si]?.context ?? [],
+    });
+    lastEnd = idx + match[0].length;
+  }
+  return tokens;
+};
+
 /**
  * Diff two lists of blocks (two editions of one section). Blocks are
  * aligned by the order-preserving Myers diff of their id sequences, then
@@ -208,7 +326,7 @@ export const diffBlocks = (a: Block[], b: Block[]): BlockDiff[] => {
             id,
             a: blockA,
             b: blockB,
-            ops: diffText(textA, textB),
+            ops: diffTokens(tokenizeBlock(blockA), tokenizeBlock(blockB)),
           });
         }
       } else if (op.type === "delete") {
@@ -231,22 +349,56 @@ export const diffBlocks = (a: Block[], b: Block[]): BlockDiff[] => {
 const opText = (tokens: Token[]): string =>
   tokens.map((token) => (token.spaced ? " " : "") + token.text).join("");
 
-/** A changed block's ops as inline content: equal runs plain, deletes in
- * `deletion`, inserts in `insertion`. Formatting within the block is not
- * preserved (the diff is over extracted text), matching the prior behaviour. */
+/** Two context stacks are equal when the same wrappers appear in the same order. */
+const contextsEqual = (a: ContextFrame[], b: ContextFrame[]): boolean => {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].type !== b[i].type) return false;
+    if (a[i].type === "language") {
+      const al = (a[i] as { lang?: string }).lang;
+      const bl = (b[i] as { lang?: string }).lang;
+      if (al !== bl) return false;
+    }
+  }
+  return true;
+};
+
+/** A changed block's ops as inline content: equal runs preserve their inline
+ * formatting (emphasis, strong, quote, language, etc.) by grouping tokens that
+ * share the same context and re-wrapping them; deletes go in `deletion` and
+ * inserts in `insertion` as plain text (graceful fallback for changed spans). */
 const opsToInline = (ops: DiffOp[]): InlineElement[] =>
   ops.flatMap((op): InlineElement[] => {
-    const text = opText(op.tokens);
-    if (text === "") return [];
-    const plain: InlineElement = { type: "plainText", content: text };
-    switch (op.type) {
-      case "equal":
-        return [plain];
-      case "delete":
-        return [{ type: "deletion", content: [plain] }];
-      case "insert":
-        return [{ type: "insertion", content: [plain] }];
+    if (op.type !== "equal") {
+      const text = opText(op.tokens);
+      if (text === "") return [];
+      const plain: InlineElement = { type: "plainText", content: text };
+      return op.type === "delete"
+        ? [{ type: "deletion", content: [plain] }]
+        : [{ type: "insertion", content: [plain] }];
     }
+    // Equal op: group consecutive tokens by context, reconstruct wrapper elements.
+    const result: InlineElement[] = [];
+    let i = 0;
+    while (i < op.tokens.length) {
+      const ctx = op.tokens[i].context ?? [];
+      let j = i + 1;
+      while (
+        j < op.tokens.length &&
+        contextsEqual(op.tokens[j].context ?? [], ctx)
+      ) j++;
+      const text = opText(op.tokens.slice(i, j));
+      if (text !== "") {
+        // Build from innermost to outermost (ctx[0] = outermost).
+        let inner: InlineElement = { type: "plainText", content: text };
+        for (let k = ctx.length - 1; k >= 0; k--) {
+          inner = { ...ctx[k], content: [inner] } as InlineElement;
+        }
+        result.push(inner);
+      }
+      i = j;
+    }
+    return result;
   });
 
 /**
