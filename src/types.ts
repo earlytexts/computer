@@ -118,6 +118,17 @@ export type SectionRef = {
   breadcrumb: string;
 };
 
+/**
+ * An edition of the work that contains a given section, together with that
+ * edition's own path to it (section slugs can differ across editions, e.g.
+ * a year suffix). Lets a client link straight to the matching section in
+ * another edition, or compare against it.
+ */
+export type EditionSection = {
+  slug: string;
+  path: string[];
+};
+
 export type SectionResponse = {
   author: AuthorMeta;
   work: WorkMeta;
@@ -134,8 +145,11 @@ export type SectionResponse = {
   ancestors: SectionRef[];
   prev?: SectionRef;
   next?: SectionRef;
-  /** Slugs of the work's other editions that contain a matching section. */
-  compareEditions: string[];
+  /**
+   * The work's other editions that contain a matching section, each with its
+   * own path to it (for linking to that edition's section, or comparing).
+   */
+  compareEditions: EditionSection[];
 };
 
 /* ------------------------------ compare ------------------------------ */
@@ -168,6 +182,20 @@ export type CompareSectionResponse = {
   /** Which version of each edition was compared (applied to both sides). */
   version: Version;
   title: string;
+  /** This section's resolved path within edition A / edition B. */
+  aPath: string[];
+  bPath: string[];
+  /**
+   * The work's editions other than A and B that also contain this section,
+   * each with its own path (for switching either side of the comparison).
+   */
+  compareEditions: EditionSection[];
+  /**
+   * Neighbouring sections (in edition A's reading order) that also exist in
+   * edition B, so the comparison can be navigated section by section.
+   */
+  prev?: SectionRef;
+  next?: SectionRef;
   /**
    * The diff as a Markit document: words and whole blocks present only in
    * edition A are wrapped in `deletion`, those only in B in `insertion`

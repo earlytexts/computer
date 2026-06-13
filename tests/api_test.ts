@@ -90,7 +90,11 @@ Deno.test("a section comes with navigation and compare info", async () => {
   assert(section.section.blocks.length > 0);
   assertEquals(section.prev, undefined);
   assertEquals(section.next?.path, ["2"]);
-  assertEquals(section.compareEditions, ["1750", "1760"]);
+  assertEquals(
+    section.compareEditions.map((e) => e.slug),
+    ["1750", "1760"],
+  );
+  assertEquals(section.compareEditions[0].path, ["1"]); // its path in 1750
 });
 
 Deno.test("a section unique to one edition offers no comparisons", async () => {
@@ -142,6 +146,14 @@ Deno.test("compare of a section is a Markit diff document", async () => {
   );
   assertEquals(compared.title, "Section 1");
   assertEquals(compared.version, "edited");
+  // each edition's own path to the section, plus the third edition (1760)
+  // which also has it — for switching either side of the comparison.
+  assertEquals(compared.aPath, ["1"]);
+  assertEquals(compared.bPath, ["1"]);
+  assertEquals(compared.compareEditions.map((e) => e.slug), ["1760"]);
+  // section 3 (next in 1750's order) is absent from main, so no next link
+  assertEquals(compared.prev, undefined);
+  assertEquals(compared.next, undefined);
   // a→1750, b→main: words only in 1750 are deletions, those only in main
   // are insertions — Markit editorial markup, no bespoke diff structure.
   const deletions = compared.blocks.flatMap((b) =>

@@ -169,11 +169,13 @@ export const sectionResponse = async (
 
   const keys = pathKey(section.path);
   const compareEditions = work.editions
-    .filter((other) =>
-      other !== edition &&
-      findSectionByKey(other.sections, keys) !== undefined
-    )
-    .map((other) => other.meta.slug);
+    .filter((other) => other !== edition)
+    .flatMap((other) => {
+      const match = findSectionByKey(other.sections, keys);
+      return match === undefined
+        ? []
+        : [{ slug: other.meta.slug, path: match.path }];
+    });
 
   const prev = flat[index - 1];
   const next = flat[index + 1];
@@ -243,6 +245,34 @@ export const compareSectionResponse = async (
     blocksA.map((block) => resolveBlock(block, version)),
     blocksB.map((block) => resolveBlock(block, version)),
   );
+
+  // Other editions of the work that also contain this section, for switching
+  // either side of the comparison.
+  const compareEditions = work.editions
+    .filter((other) => other !== a && other !== b)
+    .flatMap((other) => {
+      const match = findSectionByKey(other.sections, keys);
+      return match === undefined
+        ? []
+        : [{ slug: other.meta.slug, path: match.path }];
+    });
+
+  // Step through edition A's reading order to the nearest neighbour that also
+  // exists in edition B, so the next/prev comparison can never 404.
+  const flatA = flattenSkeleton(a.sections);
+  const index = flatA.findIndex((s) =>
+    s.path.join("/") === sectionA.path.join("/")
+  );
+  const neighbourInBoth = (step: number): SectionRef | undefined => {
+    for (let i = index + step; i >= 0 && i < flatA.length; i += step) {
+      const candidate = flatA[i];
+      if (findSectionByKey(b.sections, pathKey(candidate.path)) !== undefined) {
+        return sectionRef(candidate);
+      }
+    }
+    return undefined;
+  };
+
   return {
     author: author.meta,
     work: work.meta,
@@ -250,6 +280,11 @@ export const compareSectionResponse = async (
     b: b.meta,
     version,
     title: sectionB.title,
+    aPath: sectionA.path,
+    bPath: sectionB.path,
+    compareEditions,
+    prev: neighbourInBoth(-1),
+    next: neighbourInBoth(1),
     blocks: diffToBlocks(diffs),
     childRows: alignSections(sectionA.children, sectionB.children)
       .map(alignedRow),
