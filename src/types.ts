@@ -36,8 +36,7 @@ export type AuthorMeta = {
 export type EditionMeta = {
   authorSlug: string;
   workSlug: string;
-  slug: string; // "main" for the main text, otherwise e.g. "1757", "1742a"
-  isMain: boolean;
+  slug: string; // a year slug, e.g. "1757", "1742a"
   title: string;
   breadcrumb: string;
   /** Whether the text itself is present in the corpus (else a stub). */
@@ -55,7 +54,9 @@ export type WorkMeta = {
   breadcrumb: string;
   imported: boolean;
   published: number[];
-  editions: EditionMeta[]; // main edition first, then dated editions ascending
+  /** Slug of the canonical edition (the default when none is specified). */
+  canonicalSlug: string;
+  editions: EditionMeta[]; // dated editions, ascending by year
 };
 
 export type CatalogAuthor = AuthorMeta & {
@@ -213,7 +214,7 @@ export type SearchResult = {
   authorName: string; // surname, for display
   work: string;
   workBreadcrumb: string;
-  edition: string; // "main" or a year slug
+  edition: string; // a year slug
   sectionPath: string[];
   sectionTitle: string;
   blockId: string;

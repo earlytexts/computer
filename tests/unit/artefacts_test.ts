@@ -16,8 +16,9 @@ Deno.test("the manifest records the pipeline and the corpus", async () => {
   assertEquals(manifest.stats.authors, 2);
   assertEquals(manifest.stats.works, 4);
   assertEquals(manifest.stats.units, artefacts.units.edition.length);
-  assert(manifest.editionSlugs.includes("main"));
+  assert(manifest.editionSlugs.includes("1760"));
   assert(manifest.editionSlugs.includes("1750"));
+  assert(!manifest.editionSlugs.includes("main"));
 });
 
 Deno.test("the vocabulary is sorted and statistically coherent", async () => {

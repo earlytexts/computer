@@ -53,30 +53,33 @@ Deno.test("/catalog lists authors, works, and editions", async () => {
   assertEquals(test.surname, "Test");
   const tw = test.works.find((w) => w.slug === "tw");
   assertExists(tw);
-  assertEquals(tw.editions.map((e) => e.slug), ["main", "1750", "1760"]);
+  assertEquals(tw.editions.map((e) => e.slug), ["1750", "1760"]);
+  assertEquals(tw.canonicalSlug, "1760");
   assert(tw.imported);
   const stub = catalog.authors[0].works.find((w) => w.slug === "stub");
   assertExists(stub);
   assertEquals(stub.imported, false);
-  assert(catalog.editionSlugs.includes("main"));
+  assert(catalog.editionSlugs.includes("1760"));
   assert(catalog.editionSlugs.includes("1750"));
+  assert(!catalog.editionSlugs.includes("main"));
 });
 
-Deno.test("an edition has title blocks and a section tree", async () => {
+Deno.test("the canonical edition serves at the work's bare path", async () => {
+  // No /editions/:slug — the work's canonical edition (1760).
   const edition = await getJson<EditionResponse>(
-    "/authors/test/works/tw/editions/main",
+    "/authors/test/works/tw",
   );
   assertEquals(edition.author.slug, "test");
-  assertEquals(edition.edition.slug, "main");
+  assertEquals(edition.edition.slug, "1760");
   assert(edition.blocks.length > 0);
   assertEquals(edition.sections.map((s) => s.slug), ["1", "2"]);
   assert(edition.sections.every((s) => s.imported));
-  assertEquals(edition.work.editions.length, 3); // for the edition strip
+  assertEquals(edition.work.editions.length, 2); // for the edition strip
 });
 
 Deno.test("the full text includes every section's blocks", async () => {
   const full = await getJson<FullTextResponse>(
-    "/authors/test/works/tw/editions/main/full",
+    "/authors/test/works/tw/full",
   );
   assertEquals(full.sections.length, 2);
   assert(full.sections.every((s) => s.blocks.length > 0));
@@ -84,16 +87,15 @@ Deno.test("the full text includes every section's blocks", async () => {
 
 Deno.test("a section comes with navigation and compare info", async () => {
   const section = await getJson<SectionResponse>(
-    "/authors/test/works/tw/editions/main/sections/1",
+    "/authors/test/works/tw/sections/1",
   );
+  assertEquals(section.edition.slug, "1760"); // canonical
   assertEquals(section.section.title, "Section 1");
   assert(section.section.blocks.length > 0);
   assertEquals(section.prev, undefined);
   assertEquals(section.next?.path, ["2"]);
-  assertEquals(
-    section.compareEditions.map((e) => e.slug),
-    ["1750", "1760"],
-  );
+  // the other edition (1750) also has section 1
+  assertEquals(section.compareEditions.map((e) => e.slug), ["1750"]);
   assertEquals(section.compareEditions[0].path, ["1"]); // its path in 1750
 });
 
@@ -106,20 +108,20 @@ Deno.test("a section unique to one edition offers no comparisons", async () => {
 
 Deno.test("a stub section reports imported = false", async () => {
   const section = await getJson<SectionResponse>(
-    "/authors/test/works/solo/editions/main/sections/2",
+    "/authors/test/works/solo/sections/2",
   );
   assertEquals(section.section.imported, false);
 });
 
 Deno.test("compare aligns the two editions' sections", async () => {
   const compared = await getJson<CompareResponse>(
-    "/authors/test/works/tw/compare/1750/main",
+    "/authors/test/works/tw/compare/1750/1760",
   );
   assertEquals(compared.rows.map((row) => row.key), ["1", "3", "2"]);
   const shared = compared.rows[0];
   assert(shared.pathA !== undefined && shared.pathB !== undefined);
   assertEquals(compared.rows[1].pathB, undefined); // 3 only in 1750
-  assertEquals(compared.rows[2].pathA, undefined); // 2 only in main
+  assertEquals(compared.rows[2].pathA, undefined); // 2 only in 1760
 });
 
 /** Plain text under a node (all nested plainText, in order). */
@@ -142,19 +144,18 @@ const ofType = (value: unknown, type: string): string[] => {
 
 Deno.test("compare of a section is a Markit diff document", async () => {
   const compared = await getJson<CompareSectionResponse>(
-    "/authors/test/works/tw/compare/1750/main/sections/1",
+    "/authors/test/works/tw/compare/1750/1760/sections/1",
   );
   assertEquals(compared.title, "Section 1");
   assertEquals(compared.version, "edited");
-  // each edition's own path to the section, plus the third edition (1760)
-  // which also has it — for switching either side of the comparison.
+  // each edition's own path to the section; no third edition has it
   assertEquals(compared.aPath, ["1"]);
   assertEquals(compared.bPath, ["1"]);
-  assertEquals(compared.compareEditions.map((e) => e.slug), ["1760"]);
-  // section 3 (next in 1750's order) is absent from main, so no next link
+  assertEquals(compared.compareEditions, []);
+  // section 3 (next in 1750's order) is absent from 1760, so no next link
   assertEquals(compared.prev, undefined);
   assertEquals(compared.next, undefined);
-  // a→1750, b→main: words only in 1750 are deletions, those only in main
+  // a→1750, b→1760: words only in 1750 are deletions, those only in 1760
   // are insertions — Markit editorial markup, no bespoke diff structure.
   const deletions = compared.blocks.flatMap((b) =>
     ofType(b.content, "deletion")
@@ -198,11 +199,17 @@ Deno.test("search returns full formatted blocks with marks", async () => {
   assertEquals(markedText(first.block.content), ["liberty of the press"]);
 });
 
-Deno.test("exactSpelling pins the search to the spelling as written", async () => {
-  const tolerant = await getJson<SearchResponse>("/search?q=encrease");
-  assertEquals(tolerant.total, 3);
+Deno.test("search defaults to canonical editions; edition=all widens it", async () => {
+  // Default scope is each work's canonical edition (tw → 1760, "increase").
+  const canonical = await getJson<SearchResponse>("/search?q=encrease");
+  assertEquals(canonical.total, 1);
+  assertEquals(canonical.results[0].edition, "1760");
+  // edition=all reaches the non-canonical 1750 too ("encrease").
+  const all = await getJson<SearchResponse>("/search?q=encrease&edition=all");
+  assertEquals(all.total, 2);
+  // exactSpelling pins to the surface as written: only 1750's "encrease".
   const exact = await getJson<SearchResponse>(
-    "/search?q=encrease&exactSpelling=1",
+    "/search?q=encrease&exactSpelling=1&edition=all",
   );
   assertEquals(exact.exactSpelling, true);
   assertEquals(exact.total, 1);
@@ -220,7 +227,7 @@ Deno.test("search filters and paginates", async () => {
   );
   assertEquals(noneOfHers.total, 0);
   const paged = await getJson<SearchResponse>(
-    "/search?q=paragraph&perPage=1&page=2",
+    "/search?q=paragraph&edition=all&perPage=1&page=2",
   );
   assertEquals(paged.page, 2);
   assertEquals(paged.results.length, 1);
@@ -234,7 +241,7 @@ Deno.test("an empty query matches nothing", async () => {
 
 Deno.test("a section resolves editorial markup to the requested version", async () => {
   // solo §1 #2: "[-corrcted-][+corrected+] the text and [+also+] revised it."
-  const path = "/authors/test/works/solo/editions/main/sections/1/1";
+  const path = "/authors/test/works/solo/sections/1/1";
   const edited = await getJson<SectionResponse>(path);
   assertEquals(edited.version, "edited");
   const editedText = edited.section.blocks.map((b) => textOf(b.content)).join(
@@ -284,14 +291,15 @@ Deno.test("unknown resources return JSON 404s", async () => {
   for (
     const path of [
       "/nope",
-      "/works/tw/editions/main", // old route shape
-      "/authors/nope/works/tw/editions/main",
-      "/authors/test/works/nope/editions/main",
-      "/authors/other/works/tw/editions/main", // wrong author
+      "/works/tw", // old route shape (no authors prefix)
+      "/authors/nope/works/tw",
+      "/authors/test/works/nope",
+      "/authors/other/works/tw", // wrong author
+      "/authors/test/works/tw/editions/main", // "main" is not an edition
       "/authors/test/works/tw/editions/1234",
-      "/authors/test/works/tw/editions/main/sections/99",
+      "/authors/test/works/tw/sections/99",
       "/authors/test/works/tw/compare/1750/1750", // an edition with itself
-      "/authors/test/works/tw/compare/1750/main/sections/99",
+      "/authors/test/works/tw/compare/1750/1760/sections/99",
     ]
   ) {
     const response = await request(path);

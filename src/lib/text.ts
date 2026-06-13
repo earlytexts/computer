@@ -350,10 +350,3 @@ export const hasEditorial = (block: Block): boolean => {
     }
   });
 };
-
-/** Full text of a document, including all (inline) children, recursively. */
-export const documentText = (doc: MarkitDocument): string =>
-  [
-    ...doc.blocks.map((block) => blockText(block)),
-    ...doc.children.map(documentText),
-  ].join("\n\n");

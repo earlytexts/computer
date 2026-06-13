@@ -5,12 +5,17 @@
  * Routes (all GET):
  *   /                                                          health/info
  *   /catalog                                                   all authors, works, and editions
- *   /authors/:author/works/:work/editions/:edition             title blocks + section tree
- *   /authors/:author/works/:work/editions/:edition/full        whole edition with text
- *   /authors/:author/works/:work/editions/:edition/sections/*  one section + navigation
+ *   /authors/:author/works/:work                               canonical edition: title blocks + section tree
+ *   /authors/:author/works/:work/full                          canonical edition with text
+ *   /authors/:author/works/:work/sections/*                    one canonical-edition section + navigation
+ *   /authors/:author/works/:work/editions/:edition[/full|/sections/*]  a specific edition
  *   /authors/:author/works/:work/compare/:a/:b                 aligned section lists
  *   /authors/:author/works/:work/compare/:a/:b/sections/*      diff of a section (Markit)
  *   /search?q=&exactSpelling=&caseSensitive=&version=&author=&work=&edition=&page=&perPage=  full-text search
+ *
+ * A request without `/editions/:edition` addresses the work's canonical
+ * edition. Search with no `edition` is scoped to canonical editions;
+ * `edition=all` searches every edition.
  *
  * Search matches the whole query as one phrase; it is tolerant by default,
  * tightened by exactSpelling=1 and/or caseSensitive=1 (see types.ts). Text
@@ -107,7 +112,7 @@ const route = async (
   }
 
   if (
-    segments[0] !== "authors" || segments[2] !== "works" || segments.length < 6
+    segments[0] !== "authors" || segments[2] !== "works" || segments.length < 4
   ) return notFound();
   const author = findAuthorEntry(catalog, segments[1]);
   const work = author === undefined
@@ -115,10 +120,16 @@ const route = async (
     : findWorkEntry(author, segments[3]);
   if (author === undefined || work === undefined) return notFound();
 
-  if (segments[4] === "editions") {
-    const edition = findEditionEntry(work, segments[5]);
+  if (segments[4] !== "compare") {
+    // An explicit `/editions/:slug/...` names the edition; otherwise the path
+    // addresses the work's canonical edition directly.
+    const [edition, rest] = segments[4] === "editions"
+      ? [findEditionEntry(work, segments[5]), segments.slice(6)] as const
+      : [
+        findEditionEntry(work, work.meta.canonicalSlug),
+        segments.slice(4),
+      ] as const;
     if (edition === undefined) return notFound();
-    const rest = segments.slice(6);
     if (rest.length === 0) {
       return json(
         await editionResponse(store, author, work, edition, textVersion(url)),

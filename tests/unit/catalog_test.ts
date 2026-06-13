@@ -38,20 +38,28 @@ Deno.test("fixture corpus compiles without warnings", async () => {
   assertEquals(warnings, []);
 });
 
-Deno.test("multi-edition works have the main edition first, then dated ones", async () => {
+Deno.test("works expose dated editions ascending, with a canonical slug", async () => {
   const { catalog } = await testData();
   const tw = findWork(catalog, "test", "tw")!;
-  assertEquals(tw.editions.map((e) => e.slug), ["main", "1750", "1760"]);
-  assert(tw.editions[0].isMain);
-  assertEquals(tw.editions[0].title, "A Test Work");
-  assertEquals(tw.editions[1].published, [1750]);
+  assertEquals(tw.editions.map((e) => e.slug), ["1750", "1760"]);
+  assertEquals(tw.canonicalSlug, "1760");
+  // Work identity comes from the stub, not from any one edition.
+  assertEquals(tw.title, "A Test Work");
+  assertEquals(tw.editions[0].published, [1750]);
 });
 
-Deno.test("single-file works have exactly one edition", async () => {
+Deno.test("the retained main.mit reading text is never an edition", async () => {
+  const { catalog } = await testData();
+  const tw = findWork(catalog, "test", "tw")!;
+  assert(!tw.editions.some((e) => e.slug === "main"));
+});
+
+Deno.test("a single-edition work has one edition, canonical by default", async () => {
   const { catalog } = await testData();
   const solo = findWork(catalog, "test", "solo")!;
   assertEquals(solo.editions.length, 1);
-  assertEquals(solo.editions[0].slug, "main");
+  assertEquals(solo.editions[0].slug, "1740");
+  assertEquals(solo.canonicalSlug, "1740");
 });
 
 Deno.test("stub works are catalogued but not imported", async () => {

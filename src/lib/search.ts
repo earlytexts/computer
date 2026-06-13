@@ -195,7 +195,15 @@ export type SearchHit = {
   positions: number[];
 };
 
+/**
+ * Result filters. With no `edition`, search is scoped to each work's canonical
+ * edition (so a corpus-wide query returns one hit per work, not one per
+ * printing); `edition: "all"` searches every edition, and a year slug searches
+ * just that one.
+ */
 export type Filters = { author?: string; work?: string; edition?: string };
+
+export const ALL_EDITIONS = "all";
 
 export const search = (
   artefacts: ServeArtefacts,
@@ -220,7 +228,11 @@ export const search = (
     const ref = manifest.editions[units.edition[unitIndex]];
     if (filters.author !== undefined && ref.author !== filters.author) continue;
     if (filters.work !== undefined && ref.work !== filters.work) continue;
-    if (filters.edition !== undefined && ref.edition !== filters.edition) {
+    if (filters.edition === undefined) {
+      if (!ref.canonical) continue;
+    } else if (
+      filters.edition !== ALL_EDITIONS && ref.edition !== filters.edition
+    ) {
       continue;
     }
     const weight = units.isTitle[unitIndex] === 1 ? 3 : 1;

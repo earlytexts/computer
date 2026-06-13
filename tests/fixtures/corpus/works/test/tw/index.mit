@@ -1,42 +1,7 @@
 # Test.TW
 
 [metadata]
-imported = true
 title = "A Test Work"
 breadcrumb = "Test Work"
 published = [1750, 1760]
-copytext = ["1760"]
-sourceDesc = "A fixture text for the computer's tests."
-
-{#title}
-^1 A TEST WORK.
-
-## 1
-
-[metadata]
-title = "Section 1"
-breadcrumb = "Section 1"
-
-{#title}
-^1 SECT. I.
-
-{#1}
-Some objects produce immediately an agreeable sensation between friends, and increase the delicacy of passion.
-
-{#2}
-A second paragraph, identical in every edition of this work.
-
-## 2
-
-[metadata]
-title = "Section 2"
-breadcrumb = "Section 2"
-
-{#1}
-The liberty of the press is a passion peculiar to free governments.
-
-{#2}
-Men of letters defend the natural _liberty_ of thinking<n1> in every age.
-
-{#n1}
-A remark re//42//corded at the foot of the page.
+canonical = "1760"

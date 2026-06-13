@@ -1,24 +1,7 @@
 # Test.COMP
 
 [metadata]
-imported = true
 title = "A Composite Collection"
 breadcrumb = "Composite"
 published = [1755]
-copytext = ["1755"]
-children = [
-  "../tw/1750",
-  "in"
-]
-
-{#title}
-^1 A COMPOSITE COLLECTION.
-
-## In
-
-[metadata]
-title = "An Inline Essay"
-breadcrumb = "Inline Essay"
-
-{#1}
-An essay belonging to the composite collection alone.
+canonical = "1755"

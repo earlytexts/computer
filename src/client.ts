@@ -42,22 +42,23 @@ export type SearchParams = {
 
 export type Computer = {
   catalog: () => Promise<CatalogResponse>;
+  /** Omit `edition` to address the work's canonical edition. */
   edition: (
     author: string,
     work: string,
-    edition: string,
+    edition?: string,
     version?: Version,
   ) => Promise<EditionResponse | undefined>;
   fullText: (
     author: string,
     work: string,
-    edition: string,
+    edition?: string,
     version?: Version,
   ) => Promise<FullTextResponse | undefined>;
   section: (
     author: string,
     work: string,
-    edition: string,
+    edition: string | undefined,
     path: string[],
     version?: Version,
   ) => Promise<SectionResponse | undefined>;
@@ -132,6 +133,11 @@ export const computerClient = (
   };
 
   const works = (author: string) => `/authors/${segment(author)}/works`;
+  // The work's canonical edition (no `/editions/:slug`) when edition is omitted.
+  const editionBase = (author: string, work: string, edition?: string) =>
+    edition === undefined
+      ? `${works(author)}/${segment(work)}`
+      : `${works(author)}/${segment(work)}/editions/${segment(edition)}`;
   return {
     catalog: async () => {
       const cached = catalogCache.get(baseUrl);
@@ -143,20 +149,14 @@ export const computerClient = (
       return value;
     },
     edition: (author, work, edition, version) =>
-      get(withVersion(
-        `${works(author)}/${segment(work)}/editions/${segment(edition)}`,
-        version,
-      )),
+      get(withVersion(editionBase(author, work, edition), version)),
     fullText: (author, work, edition, version) =>
-      get(withVersion(
-        `${works(author)}/${segment(work)}/editions/${segment(edition)}/full`,
-        version,
-      )),
+      get(withVersion(`${editionBase(author, work, edition)}/full`, version)),
     section: (author, work, edition, path, version) =>
       get(withVersion(
-        `${works(author)}/${segment(work)}/editions/${
-          segment(edition)
-        }/sections/${path.map(segment).join("/")}`,
+        `${editionBase(author, work, edition)}/sections/${
+          path.map(segment).join("/")
+        }`,
         version,
       )),
     compare: (author, work, a, b) =>

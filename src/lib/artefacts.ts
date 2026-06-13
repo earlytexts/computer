@@ -79,7 +79,9 @@ export type EditionRef = {
   authorName: string; // surname, for display
   work: string;
   workBreadcrumb: string;
-  edition: string; // "main" or a year slug
+  edition: string; // a year slug
+  /** Whether this is the work's canonical edition (the default search scope). */
+  canonical: boolean;
 };
 
 export type CorpusScan = {
@@ -308,7 +310,6 @@ const editionMeta = (edition: Edition): EditionMeta => ({
   authorSlug: edition.authorSlug,
   workSlug: edition.workSlug,
   slug: edition.slug,
-  isMain: edition.isMain,
   title: edition.title,
   breadcrumb: edition.breadcrumb,
   imported: edition.imported,
@@ -325,6 +326,7 @@ const workMeta = (work: Work): WorkMeta => ({
   breadcrumb: work.breadcrumb,
   imported: work.imported,
   published: work.published,
+  canonicalSlug: work.canonicalSlug,
   editions: work.editions.map(editionMeta),
 });
 
@@ -372,6 +374,7 @@ export const buildArtefacts = (
           work: work.slug,
           workBreadcrumb: work.breadcrumb,
           edition: edition.slug,
+          canonical: edition.slug === work.canonicalSlug,
         });
       }
     }

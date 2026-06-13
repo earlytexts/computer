@@ -17,7 +17,7 @@ Deno.test("alignSections pairs shared sections and flags one-sided ones", async 
   const { catalog } = await testData();
   const tw = findWork(catalog, "test", "tw")!;
   const a = tw.editions.find((e) => e.slug === "1750")!;
-  const b = tw.editions[0]; // main
+  const b = tw.editions.find((e) => e.slug === "1760")!;
   const rows = alignSections(sectionTree(a.document), sectionTree(b.document));
   assertEquals(rows.map((row) => row.key), ["1", "3", "2"]);
   const shared = rows.find((row) => row.key === "1")!;

@@ -53,28 +53,36 @@ Deno.test("a phrase needs its words adjacent, not merely co-occurring", async ()
 
 Deno.test("exactSpelling matches the spelling as written", async () => {
   const { artefacts } = await testData();
-  // tolerant unifies the spellings across all three tw editions
-  assertEquals(search(artefacts, "encrease", { work: "tw" }).length, 3);
-  assertEquals(search(artefacts, "increase", { work: "tw" }).length, 3);
+  const ALL = { work: "tw", edition: "all" };
+  // tolerant unifies the spellings across both tw editions
+  assertEquals(search(artefacts, "encrease", ALL).length, 2);
+  assertEquals(search(artefacts, "increase", ALL).length, 2);
   // exact pins each to its own spelling
-  const old = search(artefacts, "encrease", {}, EXACT);
+  const old = search(artefacts, "encrease", { edition: "all" }, EXACT);
   assertEquals(old.length, 1);
   assertEquals((await editionOf(old[0])).edition, "1750");
-  assertEquals(search(artefacts, "increase", {}, EXACT).length, 2);
+  assertEquals(
+    search(artefacts, "increase", { edition: "all" }, EXACT).length,
+    1,
+  );
   // case is still folded at the exact layer
-  assertEquals(search(artefacts, "ENCREASE", {}, EXACT).length, 1);
+  assertEquals(
+    search(artefacts, "ENCREASE", { edition: "all" }, EXACT).length,
+    1,
+  );
 });
 
 Deno.test("caseSensitive requires initial capitalisation to agree", async () => {
   const { artefacts } = await testData();
-  // "Avarice" appears only capitalised in the fixture
-  const any = search(artefacts, "avarice");
+  const ALL = { edition: "all" };
+  // "Avarice" appears only capitalised in the fixture (in non-canonical 1750)
+  const any = search(artefacts, "avarice", ALL);
   assert(any.length > 0);
-  assertEquals(search(artefacts, "Avarice", {}, CASED).length, any.length);
-  assertEquals(search(artefacts, "avarice", {}, CASED).length, 0);
+  assertEquals(search(artefacts, "Avarice", ALL, CASED).length, any.length);
+  assertEquals(search(artefacts, "avarice", ALL, CASED).length, 0);
   // and a lowercase word: "liberty" is never capitalised here
-  assert(search(artefacts, "liberty", {}, CASED).length > 0);
-  assertEquals(search(artefacts, "Liberty", {}, CASED).length, 0);
+  assert(search(artefacts, "liberty", ALL, CASED).length > 0);
+  assertEquals(search(artefacts, "Liberty", ALL, CASED).length, 0);
 });
 
 Deno.test("filters restrict results to an author, work, and edition", async () => {
@@ -94,8 +102,8 @@ Deno.test("filters restrict results to an author, work, and edition", async () =
 
 Deno.test("borrowed documents are indexed under their own work only", async () => {
   const { artefacts } = await testData();
-  // "avarice" appears only in tw/1750, which comp borrows
-  const hits = search(artefacts, "avarice");
+  // "avarice" appears only in tw/1750 (non-canonical), which comp borrows
+  const hits = search(artefacts, "avarice", { edition: "all" });
   assert(hits.length > 0);
   for (const hit of hits) assertEquals((await editionOf(hit)).work, "tw");
   // comp's own inline essay is indexed under comp

@@ -1,11 +1,10 @@
-# Test.SOLO
+# Test.SOLO.1740
 
 [metadata]
 imported = true
 title = "A Solitary Treatise"
 breadcrumb = "Solo Treatise"
 published = [1740]
-copytext = ["1740"]
 
 {#title}
 ^1 A SOLITARY TREATISE.

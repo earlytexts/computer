@@ -1,10 +1,12 @@
-# Test.TW.1760
+# Test.TW.Main
 
 [metadata]
 imported = true
 title = "A Test Work"
 breadcrumb = "Test Work"
-published = [1760]
+published = [1750, 1760]
+copytext = ["1760"]
+sourceDesc = "A fixture text for the computer's tests."
 
 {#title}
 ^1 A TEST WORK.

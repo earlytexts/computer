@@ -4,11 +4,12 @@
  *
  * Corpus layout (see corpus/README.md):
  *  - `authors/<author>.mit` holds an author's metadata (no text).
- *  - `works/<author>/<work>.mit` is a work whose only text is its reading
- *    text; `works/<author>/<work>/index.mit` is the reading text of a work
- *    with dated editions and/or part files. Sibling entries whose names look
- *    like years (`1757.mit`, `1742a.mit`, or directories `1758/index.mit`)
- *    are dated editions.
+ *  - `works/<author>/<work>/` is a work. Its `index.mit` is a metadata-only
+ *    stub: the work's edition-independent identity (title, breadcrumb,
+ *    published) plus a `canonical` key naming the default edition. The texts
+ *    are year-named editions — sibling entries whose names look like years
+ *    (`1757.mit`, `1742a.mit`, or directories `1758/index.mit`). A `main.mit`
+ *    sibling (the retained old reading text) is kept but never exposed.
  *  - A document's `children` metadata may reference sections by id (inline
  *    `##` sections of the same file) or by relative file path (without the
  *    `.mit` extension). File references are loaded recursively and spliced
@@ -37,8 +38,7 @@ export type Author = {
 export type Edition = {
   authorSlug: string;
   workSlug: string;
-  slug: string; // "main" for index.mit, otherwise e.g. "1757", "1742a"
-  isMain: boolean;
+  slug: string; // a year slug, e.g. "1757", "1742a"
   title: string;
   breadcrumb: string;
   imported: boolean;
@@ -56,8 +56,9 @@ export type Work = {
   breadcrumb: string;
   imported: boolean;
   published: number[];
+  canonicalSlug: string; // slug of the canonical (default) edition
   dir: string; // absolute directory owning this work's files
-  editions: Edition[]; // main edition first, then dated editions ascending
+  editions: Edition[]; // dated editions, ascending by year
 };
 
 export type Catalog = {
@@ -248,7 +249,6 @@ const makeEdition = (
   authorSlug,
   workSlug,
   slug,
-  isMain: slug === "main",
   title: metaString(document, "title") ?? document.id,
   breadcrumb: metaString(document, "breadcrumb") ??
     metaString(document, "title") ?? document.id,
@@ -264,38 +264,27 @@ const makeEdition = (
   document,
 });
 
-/** Load one work from a file or directory under the author's directory. */
+/**
+ * Load one work. Every work is a directory `<author>/<work>/` whose
+ * `index.mit` is a metadata-only stub (work identity + a `canonical` pointer);
+ * the texts live in year-named editions (`1757.mit` or `1758/index.mit`). The
+ * stub and the retained, unexposed reading text (`main.mit`) are never
+ * editions — only year slugs are.
+ */
 const loadWork = async (
   authorSlug: string,
   entry: Deno.DirEntry,
   authorDir: string,
   ctx: LoadContext,
 ): Promise<Work | undefined> => {
-  if (entry.isFile && entry.name.endsWith(".mit")) {
-    const slug = entry.name.slice(0, -4).toLowerCase();
-    const doc = await loadDocument(`${authorDir}/${entry.name}`, ctx);
-    if (doc === null) return undefined;
-    const main = makeEdition(authorSlug, slug, "main", doc);
-    return {
-      authorSlug,
-      slug,
-      title: main.title,
-      breadcrumb: main.breadcrumb,
-      imported: main.imported,
-      published: main.published,
-      dir: authorDir,
-      editions: [main],
-    };
-  }
   if (!entry.isDirectory) return undefined;
   const dir = `${authorDir}/${entry.name}`;
   const indexPath = await findFile(`${dir}/index.mit`);
   if (indexPath === undefined) return undefined; // not a work
   const slug = entry.name.toLowerCase();
-  const indexDoc = await loadDocument(indexPath, ctx);
-  if (indexDoc === null) return undefined;
-  const main = makeEdition(authorSlug, slug, "main", indexDoc);
-  const editions: Edition[] = [main];
+  const stub = await loadDocument(indexPath, ctx);
+  if (stub === null) return undefined;
+
   const editionSlugs: string[] = [];
   for await (const sub of Deno.readDir(dir)) {
     const name = sub.isFile && sub.name.endsWith(".mit")
@@ -308,6 +297,7 @@ const loadWork = async (
     }
   }
   editionSlugs.sort();
+  const editions: Edition[] = [];
   for (const editionSlug of editionSlugs) {
     const file = (await findFile(`${dir}/${editionSlug}.mit`)) ??
       (await findFile(`${dir}/${editionSlug}/index.mit`));
@@ -316,13 +306,33 @@ const loadWork = async (
       editions.push(makeEdition(authorSlug, slug, editionSlug, doc));
     }
   }
+  if (editions.length === 0) {
+    ctx.warnings.push(`works/${authorSlug}/${slug}: no editions`);
+    return undefined;
+  }
+
+  // Canonical edition: the stub's `canonical` key, else the latest edition.
+  const declared = metaString(stub, "canonical")?.toLowerCase();
+  const canonical = editions.find((e) => e.slug === declared) ??
+    editions[editions.length - 1];
+  if (declared !== undefined && canonical.slug !== declared) {
+    ctx.warnings.push(
+      `works/${authorSlug}/${slug}: canonical "${declared}" is not an edition`,
+    );
+  }
+
+  const title = metaString(stub, "title") ?? stub.id;
+  const published = metaArray(stub, "published").map(Number).filter((n) =>
+    !Number.isNaN(n)
+  );
   return {
     authorSlug,
     slug,
-    title: main.title,
-    breadcrumb: main.breadcrumb,
-    imported: main.imported,
-    published: main.published,
+    title,
+    breadcrumb: metaString(stub, "breadcrumb") ?? title,
+    imported: canonical.imported,
+    published: published.length > 0 ? published : canonical.published,
+    canonicalSlug: canonical.slug,
     dir,
     editions,
   };
