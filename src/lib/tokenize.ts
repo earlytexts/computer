@@ -11,15 +11,25 @@
  *    change must bump TOKENIZER_VERSION (invalidating built artefacts).
  *
  *  - TYPE level (`normalizeSurface`): what distinct surface forms count as
- *    the same word — accents, ligatures, apostrophes, and the variant
- *    spelling table ("encrease" -> "increase"). Applied to the ~50k distinct
- *    forms in the vocabulary, never to the corpus itself, so it can be
- *    improved freely without rebuilding corpus-scale artefacts.
+ *    the same word for a tolerant search. Three steps, in order: fold accents,
+ *    ligatures and apostrophes; map old spellings to modern through the
+ *    variant table ("encrease" -> "increase"); then Porter-stem to collapse
+ *    inflections and plurals ("increase"/"increases" -> "increas",
+ *    "connection" -> "connect"). Applied to the ~50k distinct forms in the
+ *    vocabulary, never to the corpus itself. The normalised form is only ever
+ *    a bucket key (never displayed), so it can read oddly ("'tis" -> "ti") as
+ *    long as a query word and the spellings it should find land in one bucket.
+ *
+ * TOKENIZER_VERSION gates both layers: bumping it invalidates the built
+ * artefacts (the postings — whose positions now also carry a capitalisation
+ * bit — and the vocabulary's normalised buckets). See artefacts.ts.
  */
 
 import variantsJson from "./variants.json" with { type: "json" };
 
-export const TOKENIZER_VERSION = 1;
+// 2: query is matched as a phrase; postings carry a capitalisation bit;
+// normalisation now Porter-stems after the variant table (plurals/inflections).
+export const TOKENIZER_VERSION = 2;
 
 const VARIANTS = new Map<string, string>(
   Object.entries(variantsJson).filter(
@@ -63,11 +73,130 @@ export const tokenize = (text: string): TokenSpan[] => {
 export const surfaceForm = (word: string): string =>
   tokenize(word)[0]?.surface ?? "";
 
+/* -------------------------- Porter stemming -------------------------- */
+
+// The classic Porter (1980) algorithm, used to collapse inflections and
+// plurals so that "cause"/"causes", "effect"/"effects" and
+// "connect"/"connection" share a normalised form. Applied after the variant
+// table (so old spellings reach their modern stem first) and only to the
+// vocabulary, never to corpus text. A faithful port of Porter's reference
+// implementation, in the repo's arrow-function style.
+
+const CONS = "[^aeiou]";
+const VOWEL = "[aeiouy]";
+const CONS_SEQ = CONS + "[^aeiouy]*";
+const VOWEL_SEQ = VOWEL + "[aeiou]*";
+// measure tests: mgr0 = m>0, mgr1 = m>1, meq1 = m==1.
+const MGR0 = new RegExp(`^(${CONS_SEQ})?${VOWEL_SEQ}${CONS_SEQ}`);
+const MGR1 = new RegExp(
+  `^(${CONS_SEQ})?${VOWEL_SEQ}${CONS_SEQ}${VOWEL_SEQ}${CONS_SEQ}`,
+);
+const MEQ1 = new RegExp(
+  `^(${CONS_SEQ})?${VOWEL_SEQ}${CONS_SEQ}(${VOWEL_SEQ})?$`,
+);
+const HAS_VOWEL = new RegExp(`^(${CONS_SEQ})?${VOWEL}`);
+const CVC = new RegExp(`^${CONS_SEQ}${VOWEL}[^aeiouwxy]$`);
+
+const STEP2 = new Map<string, string>(Object.entries({
+  ational: "ate",
+  tional: "tion",
+  enci: "ence",
+  anci: "ance",
+  izer: "ize",
+  bli: "ble",
+  alli: "al",
+  entli: "ent",
+  eli: "e",
+  ousli: "ous",
+  ization: "ize",
+  ation: "ate",
+  ator: "ate",
+  alism: "al",
+  iveness: "ive",
+  fulness: "ful",
+  ousness: "ous",
+  aliti: "al",
+  iviti: "ive",
+  biliti: "ble",
+  logi: "log",
+}));
+const STEP3 = new Map<string, string>(Object.entries({
+  icate: "ic",
+  ative: "",
+  alize: "al",
+  iciti: "ic",
+  ical: "ic",
+  ful: "",
+  ness: "",
+}));
+const STEP2_RE =
+  /^(.+?)(ational|tional|enci|anci|izer|bli|alli|entli|eli|ousli|ization|ation|ator|alism|iveness|fulness|ousness|aliti|iviti|biliti|logi)$/;
+const STEP3_RE = /^(.+?)(icate|ative|alize|iciti|ical|ful|ness)$/;
+const STEP4_RE =
+  /^(.+?)(al|ance|ence|er|ic|able|ible|ant|ement|ment|ent|ou|ism|ate|iti|ous|ive|ize)$/;
+
+export const stem = (word: string): string => {
+  if (word.length < 3) return word;
+  let w = word;
+  const leadingY = w[0] === "y";
+  if (leadingY) w = "Y" + w.slice(1); // a leading y is a consonant
+
+  // Step 1a (plurals)
+  if (/^(.+?)(ss|i)es$/.test(w)) w = w.replace(/^(.+?)(ss|i)es$/, "$1$2");
+  else if (/^(.+?)([^s])s$/.test(w)) w = w.replace(/^(.+?)([^s])s$/, "$1$2");
+
+  // Step 1b (-eed/-ed/-ing)
+  const eed = /^(.+?)eed$/.exec(w);
+  if (eed !== null) {
+    if (MGR0.test(eed[1])) w = w.slice(0, -1);
+  } else {
+    const edIng = /^(.+?)(ed|ing)$/.exec(w);
+    if (edIng !== null && HAS_VOWEL.test(edIng[1])) {
+      w = edIng[1];
+      if (/(at|bl|iz)$/.test(w)) w = w + "e";
+      else if (/([^aeiouylsz])\1$/.test(w)) w = w.slice(0, -1);
+      else if (CVC.test(w)) w = w + "e";
+    }
+  }
+
+  // Step 1c (y -> i)
+  const y = /^(.+?)y$/.exec(w);
+  if (y !== null && HAS_VOWEL.test(y[1])) w = y[1] + "i";
+
+  // Step 2
+  const m2 = STEP2_RE.exec(w);
+  if (m2 !== null && MGR0.test(m2[1])) w = m2[1] + STEP2.get(m2[2]);
+
+  // Step 3
+  const m3 = STEP3_RE.exec(w);
+  if (m3 !== null && MGR0.test(m3[1])) w = m3[1] + STEP3.get(m3[2]);
+
+  // Step 4 (strip remaining suffixes when m>1)
+  const m4 = STEP4_RE.exec(w);
+  const ion = /^(.+?)(s|t)(ion)$/.exec(w);
+  if (m4 !== null) {
+    if (MGR1.test(m4[1])) w = m4[1];
+  } else if (ion !== null && MGR1.test(ion[1] + ion[2])) {
+    w = ion[1] + ion[2];
+  }
+
+  // Step 5a (trailing e)
+  const e = /^(.+?)e$/.exec(w);
+  if (e !== null) {
+    const s = e[1];
+    if (MGR1.test(s) || (MEQ1.test(s) && !CVC.test(s))) w = s;
+  }
+  // Step 5b (double l)
+  if (/ll$/.test(w) && MGR1.test(w)) w = w.slice(0, -1);
+
+  return leadingY ? "y" + w.slice(1) : w;
+};
+
 /**
  * Type-level spelling normalisation: surface form -> normalised form.
- * Strips apostrophes and accents, expands ligatures, then applies the
- * variant-spelling table, so old and modern spellings share a normalised
- * form ("shew" and "show" -> "show").
+ * Strips apostrophes and accents, expands ligatures, applies the variant
+ * table (so old and modern spellings share a form, "shew"/"show"), then
+ * Porter-stems (so inflections and plurals do too, "causes"/"cause").
  */
 export const normalizeSurface = (surface: string): string => {
   const base = surface
@@ -76,5 +205,5 @@ export const normalizeSurface = (surface: string): string => {
     .replace(/[̀-ͯ]/g, "")
     .replace(/æ/g, "ae")
     .replace(/œ/g, "oe");
-  return VARIANTS.get(base) ?? base;
+  return stem(VARIANTS.get(base) ?? base);
 };

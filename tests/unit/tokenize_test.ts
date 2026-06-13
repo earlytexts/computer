@@ -1,9 +1,14 @@
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import {
   normalizeSurface,
+  stem,
   surfaceForm,
   tokenize,
 } from "../../src/lib/tokenize.ts";
+
+/** Two surfaces share a normalised form (so a tolerant search unites them). */
+const unify = (a: string, b: string): boolean =>
+  normalizeSurface(a) === normalizeSurface(b);
 
 Deno.test("tokenize case-folds but keeps spellings and offsets", () => {
   const spans = tokenize("The Encrease of LIBERTY.");
@@ -33,19 +38,31 @@ Deno.test("surfaceForm folds a query word like corpus text", () => {
   assertEquals(surfaceForm("..."), "");
 });
 
-Deno.test("normalizeSurface strips apostrophes and accents", () => {
-  assertEquals(normalizeSurface("tho'"), "though"); // variant mapping too
-  assertEquals(normalizeSurface("’tis"), "tis");
-  assertEquals(normalizeSurface("pluralité"), "pluralite");
+Deno.test("stem collapses plurals and inflections", () => {
+  // the normalised form is just a bucket key, but these anchor the behaviour
+  assertEquals(stem("causes"), stem("cause"));
+  assertEquals(stem("effects"), stem("effect"));
+  assertEquals(stem("connection"), "connect");
+  assertEquals(stem("increase"), stem("increases"));
 });
 
-Deno.test("normalizeSurface expands ligatures", () => {
-  assertEquals(normalizeSurface("phænomenon"), "phenomenon"); // via variants
-  assertEquals(normalizeSurface("œconomy"), "economy");
+Deno.test("normalizeSurface folds apostrophes, accents, and ligatures", () => {
+  assert(unify("’tis", "tis"));
+  assert(unify("pluralité", "pluralite"));
+  assert(unify("œconomy", "economy")); // ligature, then via variants
+  assert(unify("phænomenon", "phenomenon"));
 });
 
-Deno.test("normalizeSurface applies the variant-spelling table", () => {
-  assertEquals(normalizeSurface("encrease"), "increase");
-  assertEquals(normalizeSurface("betwixt"), "between");
-  assertEquals(normalizeSurface("shew"), "show");
+Deno.test("normalizeSurface unites variant spellings and inflections", () => {
+  // variant spellings
+  assert(unify("encrease", "increase"));
+  assert(unify("betwixt", "between"));
+  assert(unify("shew", "show"));
+  // plurals and inflections, including over a variant spelling
+  assert(unify("cause", "causes"));
+  assert(unify("connexion", "connections"));
+  assert(unify("encrease", "increases"));
+  // but distinct words stay distinct
+  assert(!unify("cause", "effect"));
+  assert(!unify("liberty", "liberality"));
 });

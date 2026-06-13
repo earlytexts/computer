@@ -25,12 +25,7 @@ import {
 } from "./lib/compare.ts";
 import { diffBlocks, diffToBlocks } from "./lib/diff.ts";
 import { readUnitBlock } from "./lib/artefacts.ts";
-import {
-  matchRanges,
-  parseQuery,
-  search,
-  type SearchMode,
-} from "./lib/search.ts";
+import { matchRanges, search, type SearchOptions } from "./lib/search.ts";
 import { blockText, highlightBlock, resolveBlock } from "./lib/text.ts";
 import type {
   AlignedRow,
@@ -265,7 +260,8 @@ export const compareSectionResponse = async (
 
 export type SearchParams = {
   q: string;
-  mode?: string;
+  exactSpelling?: boolean;
+  caseSensitive?: boolean;
   version?: string;
   author?: string;
   work?: string;
@@ -281,7 +277,10 @@ export const searchResponse = async (
   params: SearchParams,
 ): Promise<SearchResponse> => {
   const q = params.q.trim();
-  const mode: SearchMode = params.mode === "exact" ? "exact" : "normalised";
+  const options: SearchOptions = {
+    exactSpelling: params.exactSpelling ?? false,
+    caseSensitive: params.caseSensitive ?? false,
+  };
   const version: Version = params.version === "original"
     ? "original"
     : "edited";
@@ -292,13 +291,13 @@ export const searchResponse = async (
   );
   const hits = q === "" ? [] : search(
     artefacts,
-    parseQuery(q),
+    q,
     {
       author: params.author,
       work: params.work,
       edition: params.edition,
     },
-    mode,
+    options,
     version,
   );
   const pages = Math.max(1, Math.ceil(hits.length / perPage));
@@ -306,7 +305,8 @@ export const searchResponse = async (
   const { units, manifest } = artefacts;
   return {
     q,
-    mode,
+    exactSpelling: options.exactSpelling,
+    caseSensitive: options.caseSensitive,
     version,
     total: hits.length,
     page,

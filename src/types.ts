@@ -180,13 +180,6 @@ export type CompareSectionResponse = {
 
 /* ------------------------------- search ------------------------------ */
 
-/**
- * How query words are matched: at the "normalised" layer old and modern
- * spellings find each other ("shew"/"show"); "exact" matches the spelling
- * as written (case-insensitively).
- */
-export type SearchMode = "exact" | "normalised";
-
 export type SearchResult = {
   author: string; // author slug
   authorName: string; // surname, for display
@@ -208,7 +201,14 @@ export type SearchResult = {
 
 export type SearchResponse = {
   q: string;
-  mode: SearchMode;
+  /**
+   * The whole query is matched as one phrase. By default matching is tolerant
+   * (case- and spelling-insensitive: old/modern spellings and inflections find
+   * each other). `exactSpelling` matches the surface form as written;
+   * `caseSensitive` requires each word's initial capitalisation to agree.
+   */
+  exactSpelling: boolean;
+  caseSensitive: boolean;
   /** Which version was searched (`edited` default, or `original`). */
   version: Version;
   total: number;

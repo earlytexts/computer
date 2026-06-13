@@ -171,10 +171,11 @@ const markedText = (value: unknown): string[] => {
 
 Deno.test("search returns full formatted blocks with marks", async () => {
   const found = await getJson<SearchResponse>(
-    `/search?q=${encodeURIComponent('"liberty of the press"')}`,
+    `/search?q=${encodeURIComponent("liberty of the press")}`,
   );
   assert(found.total > 0);
-  assertEquals(found.mode, "normalised");
+  assertEquals(found.exactSpelling, false);
+  assertEquals(found.caseSensitive, false);
   const first = found.results[0];
   assertEquals(first.author, "test");
   assertEquals(first.authorName, "Test");
@@ -185,11 +186,13 @@ Deno.test("search returns full formatted blocks with marks", async () => {
   assertEquals(markedText(first.block.content), ["liberty of the press"]);
 });
 
-Deno.test("search mode selects the matching layer", async () => {
-  const normalised = await getJson<SearchResponse>("/search?q=encrease");
-  assertEquals(normalised.total, 3);
-  const exact = await getJson<SearchResponse>("/search?q=encrease&mode=exact");
-  assertEquals(exact.mode, "exact");
+Deno.test("exactSpelling pins the search to the spelling as written", async () => {
+  const tolerant = await getJson<SearchResponse>("/search?q=encrease");
+  assertEquals(tolerant.total, 3);
+  const exact = await getJson<SearchResponse>(
+    "/search?q=encrease&exactSpelling=1",
+  );
+  assertEquals(exact.exactSpelling, true);
   assertEquals(exact.total, 1);
   assertEquals(exact.results[0].edition, "1750");
   assertEquals(markedText(exact.results[0].block.content), ["encrease"]);

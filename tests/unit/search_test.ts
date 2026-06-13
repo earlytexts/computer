@@ -2,82 +2,84 @@ import { assert, assertEquals } from "@std/assert";
 import { readUnitBlock } from "../../src/lib/artefacts.ts";
 import {
   matchRanges,
-  parseQuery,
   search,
   type SearchHit,
+  type SearchOptions,
 } from "../../src/lib/search.ts";
 import { blockText, highlightBlock } from "../../src/lib/text.ts";
 import { testData, unitText } from "../helpers.ts";
+
+const EXACT: SearchOptions = { exactSpelling: true, caseSensitive: false };
+const CASED: SearchOptions = { exactSpelling: false, caseSensitive: true };
 
 const editionOf = async (hit: SearchHit) => {
   const { artefacts } = await testData();
   return artefacts.manifest.editions[artefacts.units.edition[hit.unitIndex]];
 };
 
-Deno.test("parseQuery separates phrases, prefixes, and terms", () => {
-  const query = parseQuery(`Cause "Abstruse Philosophy" liber*`);
-  assertEquals(query.terms, ["cause"]);
-  assertEquals(query.prefixes, ["liber"]);
-  assertEquals(query.phrases, [["abstruse", "philosophy"]]);
-});
-
-Deno.test("phrase search finds exact sequences", async () => {
+Deno.test("the whole query matches as one phrase", async () => {
   const data = await testData();
-  const hits = search(data.artefacts, parseQuery(`"liberty of the press"`));
+  const hits = search(data.artefacts, "liberty of the press");
   assert(hits.length > 0);
   for (const hit of hits) {
     assert(/liberty of the press/i.test(unitText(data, hit.unitIndex)));
   }
-  // and the phrase must be required: a scrambled phrase finds nothing
-  const none = search(data.artefacts, parseQuery(`"press the of liberty"`));
-  assertEquals(none.length, 0);
+  // the words must be consecutive and in order: a scramble finds nothing
+  assertEquals(search(data.artefacts, "press the of liberty").length, 0);
 });
 
-Deno.test("terms are ANDed across a paragraph", async () => {
+Deno.test("tolerant search matches variant spellings and plurals", async () => {
   const data = await testData();
-  const both = search(data.artefacts, parseQuery("agreeable sensation"));
-  assert(both.length > 0);
-  for (const hit of both) {
-    const text = unitText(data, hit.unitIndex).toLowerCase();
-    assert(text.includes("agreeable") && text.includes("sensation"));
-  }
-  // terms in different paragraphs must not match
-  const none = search(data.artefacts, parseQuery("agreeable avarice"));
-  assertEquals(none.length, 0);
+  // solo §1.2 #2 reads "the connexion betwixt causes and effects"
+  const hits = search(data.artefacts, "connection between cause and effect");
+  assertEquals(hits.length, 1);
+  assert(
+    /connexion betwixt causes and effects/.test(
+      unitText(data, hits[0].unitIndex),
+    ),
+  );
+  assertEquals((await editionOf(hits[0])).work, "solo");
 });
 
-Deno.test("prefix queries expand", async () => {
+Deno.test("a phrase needs its words adjacent, not merely co-occurring", async () => {
   const { artefacts } = await testData();
-  const exact = search(artefacts, parseQuery("passion"));
-  const prefixed = search(artefacts, parseQuery("passio*"));
-  assert(prefixed.length >= exact.length);
-  assert(prefixed.length > 0);
+  // "agreeable sensation" is one phrase in the text
+  assert(search(artefacts, "agreeable sensation").length > 0);
+  // reversed, the phrase is gone
+  assertEquals(search(artefacts, "sensation agreeable").length, 0);
+  // two words from different paragraphs never form a phrase
+  assertEquals(search(artefacts, "agreeable avarice").length, 0);
 });
 
-Deno.test("normalised search matches old and modern spellings", async () => {
+Deno.test("exactSpelling matches the spelling as written", async () => {
   const { artefacts } = await testData();
-  const old = search(artefacts, parseQuery("encrease"), { work: "tw" });
-  const modern = search(artefacts, parseQuery("increase"), { work: "tw" });
-  assertEquals(old.length, modern.length);
-  // every tw edition has the sentence, in one spelling or the other
-  assertEquals(old.length, 3);
-});
-
-Deno.test("exact search matches spellings as written", async () => {
-  const { artefacts } = await testData();
-  const old = search(artefacts, parseQuery("encrease"), {}, "exact");
+  // tolerant unifies the spellings across all three tw editions
+  assertEquals(search(artefacts, "encrease", { work: "tw" }).length, 3);
+  assertEquals(search(artefacts, "increase", { work: "tw" }).length, 3);
+  // exact pins each to its own spelling
+  const old = search(artefacts, "encrease", {}, EXACT);
   assertEquals(old.length, 1);
   assertEquals((await editionOf(old[0])).edition, "1750");
-  const modern = search(artefacts, parseQuery("increase"), {}, "exact");
-  assertEquals(modern.length, 2);
+  assertEquals(search(artefacts, "increase", {}, EXACT).length, 2);
   // case is still folded at the exact layer
-  const upper = search(artefacts, parseQuery("ENCREASE"), {}, "exact");
-  assertEquals(upper.length, 1);
+  assertEquals(search(artefacts, "ENCREASE", {}, EXACT).length, 1);
+});
+
+Deno.test("caseSensitive requires initial capitalisation to agree", async () => {
+  const { artefacts } = await testData();
+  // "Avarice" appears only capitalised in the fixture
+  const any = search(artefacts, "avarice");
+  assert(any.length > 0);
+  assertEquals(search(artefacts, "Avarice", {}, CASED).length, any.length);
+  assertEquals(search(artefacts, "avarice", {}, CASED).length, 0);
+  // and a lowercase word: "liberty" is never capitalised here
+  assert(search(artefacts, "liberty", {}, CASED).length > 0);
+  assertEquals(search(artefacts, "Liberty", {}, CASED).length, 0);
 });
 
 Deno.test("filters restrict results to an author, work, and edition", async () => {
   const { artefacts } = await testData();
-  const hits = search(artefacts, parseQuery("sensation"), {
+  const hits = search(artefacts, "sensation", {
     author: "test",
     work: "tw",
     edition: "1750",
@@ -85,84 +87,54 @@ Deno.test("filters restrict results to an author, work, and edition", async () =
   assert(hits.length > 0);
   for (const hit of hits) {
     const ref = await editionOf(hit);
-    assertEquals(
-      [ref.author, ref.work, ref.edition],
-      ["test", "tw", "1750"],
-    );
+    assertEquals([ref.author, ref.work, ref.edition], ["test", "tw", "1750"]);
   }
-  const none = search(artefacts, parseQuery("sensation"), {
-    author: "other",
-  });
-  assertEquals(none.length, 0);
+  assertEquals(search(artefacts, "sensation", { author: "other" }).length, 0);
 });
 
 Deno.test("borrowed documents are indexed under their own work only", async () => {
   const { artefacts } = await testData();
   // "avarice" appears only in tw/1750, which comp borrows
-  const hits = search(artefacts, parseQuery("avarice"));
+  const hits = search(artefacts, "avarice");
   assert(hits.length > 0);
   for (const hit of hits) assertEquals((await editionOf(hit)).work, "tw");
   // comp's own inline essay is indexed under comp
-  const inline = search(artefacts, parseQuery("composite collection alone"));
+  const inline = search(artefacts, "composite collection alone");
   assert(inline.length > 0);
   for (const hit of inline) assertEquals((await editionOf(hit)).work, "comp");
 });
 
 Deno.test("version selects the edited or original text for single words", async () => {
   const { artefacts } = await testData();
-  // solo §1 #2: "[-corrcted-][+corrected+] the text and [+also+] revised"
+  // solo §1.1 #2: "[-corrcted-][+corrected+] the text and [+also+] revised"
+  assertEquals(search(artefacts, "corrected", {}, EXACT).length, 1);
+  assertEquals(search(artefacts, "corrcted", {}, EXACT).length, 0);
   assertEquals(
-    search(artefacts, parseQuery("corrected"), {}, "exact").length,
-    1,
-  );
-  assertEquals(
-    search(artefacts, parseQuery("corrcted"), {}, "exact").length,
-    0,
-  );
-  assertEquals(
-    search(artefacts, parseQuery("corrcted"), {}, "exact", "original").length,
+    search(artefacts, "corrcted", {}, EXACT, "original").length,
     1,
   );
   // "also" is inserted, so it belongs to the edited text only
-  assertEquals(search(artefacts, parseQuery("also"), {}, "exact").length, 1);
-  assertEquals(
-    search(artefacts, parseQuery("also"), {}, "exact", "original").length,
-    0,
-  );
+  assertEquals(search(artefacts, "also", {}, EXACT).length, 1);
+  assertEquals(search(artefacts, "also", {}, EXACT, "original").length, 0);
 });
 
 Deno.test("a phrase across an editorial correction matches the right version", async () => {
   const { artefacts } = await testData();
   // edited reads "and also revised"; original reads "and revised"
   assertEquals(
-    search(
-      artefacts,
-      parseQuery(`"and also revised"`),
-      {},
-      "normalised",
-      "edited",
-    )
-      .length,
+    search(artefacts, "and also revised", {}, undefined, "edited").length,
     1,
   );
   assertEquals(
-    search(artefacts, parseQuery(`"and revised"`), {}, "normalised", "edited")
-      .length,
+    search(artefacts, "and revised", {}, undefined, "edited").length,
     0,
   );
   assertEquals(
-    search(artefacts, parseQuery(`"and revised"`), {}, "normalised", "original")
-      .length,
+    search(artefacts, "and revised", {}, undefined, "original").length,
     1,
   );
   assertEquals(
-    search(
-      artefacts,
-      parseQuery(`"and also revised"`),
-      {},
-      "normalised",
-      "original",
-    ).length,
+    search(artefacts, "and also revised", {}, undefined, "original").length,
     0,
   );
 });
@@ -179,7 +151,7 @@ Deno.test("matchRanges merges consecutive matched tokens", () => {
 
 Deno.test("search hits highlight across formatting boundaries", async () => {
   const data = await testData();
-  const hits = search(data.artefacts, parseQuery(`"natural liberty of"`));
+  const hits = search(data.artefacts, "natural liberty of");
   assertEquals(hits.length, 1);
   const block = await readUnitBlock(data.artefacts, hits[0].unitIndex);
   const text = blockText(block);
@@ -212,7 +184,7 @@ Deno.test("search hits highlight across formatting boundaries", async () => {
 
 Deno.test("a token split by a page break is still highlighted", async () => {
   const data = await testData();
-  const hits = search(data.artefacts, parseQuery("recorded"));
+  const hits = search(data.artefacts, "recorded");
   assertEquals(hits.length, 1);
   const block = await readUnitBlock(data.artefacts, hits[0].unitIndex);
   const text = blockText(block);

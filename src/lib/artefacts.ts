@@ -16,7 +16,10 @@
  *   units.json       one row per block (columnar): location, token count,
  *                    offsets into the per-edition text and block files
  *   postings.bin     inverted index over the edited reading text: per surface
- *                    type, (unit, position) pairs as little-endian Uint32
+ *                    type, (unit, position) pairs as little-endian Uint32. The
+ *                    position word's high bit (CAP_BIT) flags an occurrence
+ *                    whose first letter was a capital, so a case-sensitive
+ *                    search can filter postings without re-reading the text
  *   postings-original.bin
  *                    overlay index (same format/vocab) for searching the
  *                    original text: only the units that carry editorial
@@ -59,6 +62,15 @@ import { blockText, EXTRACTION_VERSION, hasEditorial } from "./text.ts";
 import { normalizeSurface, tokenize, TOKENIZER_VERSION } from "./tokenize.ts";
 
 export const PIPELINE_VERSION = `x${EXTRACTION_VERSION}.t${TOKENIZER_VERSION}`;
+
+/**
+ * A posting's position word is `position | (capital ? CAP_BIT : 0)`: the low
+ * 31 bits are the token's ordinal within its unit, the high bit marks an
+ * occurrence whose first letter was a capital (for case-sensitive search).
+ * Token ordinals never approach 2^31, so the bit is always free.
+ */
+export const CAP_BIT = 0x80000000;
+export const POSITION_MASK = 0x7fffffff;
 
 /* ------------------------------- types ------------------------------- */
 
@@ -184,7 +196,7 @@ export type UnitTable = {
 export type Postings = {
   /** surface index -> first pair index; length = surfaces + 1 */
   offsets: Uint32Array;
-  /** flat (unit, position) pairs, grouped by surface */
+  /** flat (unit, position) pairs, grouped by surface; position carries CAP_BIT */
   pairs: Uint32Array;
 };
 
@@ -228,6 +240,10 @@ export type ServeArtefacts = {
 };
 
 /* ------------------------------- build ------------------------------- */
+
+/** Whether a token's first character is a capital letter (for CAP_BIT). */
+const isCapital = (first: string): boolean =>
+  first !== first.toLowerCase() && first === first.toUpperCase();
 
 /** Visit every block of every edition, under the work that owns its text. */
 const eachUnit = (
@@ -389,15 +405,17 @@ export const buildArtefacts = (
     return tempId;
   };
 
-  /** Record one occurrence of a surface in a unit: postings, cf, and df. */
+  /** Record one occurrence of a surface in a unit: postings, cf, and df. The
+   * stored position carries CAP_BIT when the occurrence began with a capital. */
   const record = (
     postings: number[][],
     surface: string,
     unitIndex: number,
     position: number,
+    capital: boolean,
   ): number => {
     const tempId = intern(surface);
-    postings[tempId].push(unitIndex, position);
+    postings[tempId].push(unitIndex, capital ? position + CAP_BIT : position);
     tempCf[tempId]++;
     if (tempLastUnit[tempId] !== unitIndex) {
       tempDf[tempId]++;
@@ -471,7 +489,13 @@ export const buildArtefacts = (
 
     for (let position = 0; position < spans.length; position++) {
       const span = spans[position];
-      const tempId = record(tempPostings, span.surface, unitIndex, position);
+      const tempId = record(
+        tempPostings,
+        span.surface,
+        unitIndex,
+        position,
+        isCapital(text[span.start]),
+      );
       acc.tokens.push(tempId, units.blobOffset[unitIndex] + span.start);
     }
     totalTokens += spans.length;
@@ -481,13 +505,16 @@ export const buildArtefacts = (
     // search reads this unit from the overlay instead of the (edited) primary.
     if (hasEditorial(block)) {
       affectedUnits.push(unitIndex);
-      const originalSpans = tokenize(blockText(block, "original"));
+      const originalText = blockText(block, "original");
+      const originalSpans = tokenize(originalText);
       for (let position = 0; position < originalSpans.length; position++) {
+        const span = originalSpans[position];
         record(
           overlayPostings,
-          originalSpans[position].surface,
+          span.surface,
           unitIndex,
           position,
+          isCapital(originalText[span.start]),
         );
       }
     }

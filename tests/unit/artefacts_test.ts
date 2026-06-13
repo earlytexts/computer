@@ -31,10 +31,10 @@ Deno.test("the vocabulary is sorted and statistically coherent", async () => {
     assert(df[i] >= 1 && cf[i] >= df[i]);
     assert(surfaceNorm[i] >= 0 && surfaceNorm[i] < norms.length);
   }
-  // surfaces keep old spellings; norms unify them
+  // surfaces keep old spellings; norms unify them onto a stemmed bucket
   assert(surfaces.includes("encrease"));
   assert(surfaces.includes("betwixt"));
-  assert(norms.includes("increase"));
+  assert(norms.includes("increas")); // encrease/increase(s) all land here
   assert(!norms.includes("encrease"));
 });
 

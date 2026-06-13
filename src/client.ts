@@ -28,7 +28,10 @@ import type {
 
 export type SearchParams = {
   q: string;
-  mode?: "exact" | "normalised";
+  /** Match the surface form as written (default: tolerant of spelling). */
+  exactSpelling?: boolean;
+  /** Require initial capitalisation to agree (default: ignore case). */
+  caseSensitive?: boolean;
   /** Which text to search: edited reading text (default) or the original. */
   version?: "edited" | "original";
   author?: string;
@@ -169,7 +172,8 @@ export const computerClient = (
       )),
     search: (params) => {
       const query = new URLSearchParams({ q: params.q });
-      if (params.mode !== undefined) query.set("mode", params.mode);
+      if (params.exactSpelling) query.set("exactSpelling", "1");
+      if (params.caseSensitive) query.set("caseSensitive", "1");
       if (params.version !== undefined) query.set("version", params.version);
       if (params.author !== undefined) query.set("author", params.author);
       if (params.work !== undefined) query.set("work", params.work);

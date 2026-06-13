@@ -2,65 +2,69 @@
  * Full-text search over the built artefacts (see artefacts.ts).
  *
  * The searchable unit is a single block (paragraph, footnote, or title), so
- * results link straight to the matching text. The inverted index is keyed
- * by SURFACE form (distinct case-folded spellings); a query is answered at
- * one of two layers:
+ * results link straight to the matching text. The whole query is matched as
+ * one phrase — its words must appear consecutively, in order — without the
+ * reader having to quote it (boolean and prefix queries are deliberately left
+ * for later). Matching is tolerant by default and tightened by two
+ * independent options:
  *
- *   - "normalised" (default): each query word is normalised and expanded to
- *     every surface form sharing that normalisation, so "show" finds "shew"
- *     and vice versa;
- *   - "exact": each query word matches its own surface form only, so
- *     "enquiry" and "inquiry" are distinct.
+ *   - exactSpelling: off (default) matches through the normalised layer, so
+ *     old and modern spellings and inflections find each other ("connection
+ *     between cause and effect" matches "connexion betwixt causes and
+ *     effects"); on matches the surface form as written ("enquiry" ≠
+ *     "inquiry", "causes" ≠ "cause").
+ *   - caseSensitive: off (default) ignores case; on requires each word's
+ *     initial capitalisation to agree with the text (so "Hume" skips lowercase
+ *     "hume"). Resolved from a capitalisation bit on every posting (CAP_BIT),
+ *     so it stays a pure in-memory filter — no per-hit text reads.
  *
- * Query syntax:
- *   - bare terms are ANDed:        liberty press
- *   - quoted phrases:              "abstruse philosophy"
- *   - trailing-star prefixes:      caus*
- * Results can additionally be filtered by author, work, and edition.
+ * Either way the index is keyed by SURFACE form (distinct case-folded
+ * spellings); a tolerant word is expanded to every surface sharing its
+ * normalised form, an exact word to its own surface only. Results can be
+ * filtered by author, work, and edition.
  *
- * Matched token positions are converted back to character ranges in a
- * block's extracted text by `matchRanges`, for highlighting via
- * highlightBlock (text.ts).
+ * Matched token positions are converted back to character ranges in a block's
+ * extracted text by `matchRanges`, for highlighting via highlightBlock
+ * (text.ts).
  */
 
-import type { Postings, ServeArtefacts } from "./artefacts.ts";
+import {
+  CAP_BIT,
+  POSITION_MASK,
+  type Postings,
+  type ServeArtefacts,
+} from "./artefacts.ts";
 import type { HighlightRange } from "./text.ts";
 import type { Version } from "../types.ts";
-import { normalizeSurface, surfaceForm, tokenize } from "./tokenize.ts";
+import { normalizeSurface, tokenize } from "./tokenize.ts";
 
-export type SearchMode = "exact" | "normalised";
-
-export type Query = {
-  terms: string[]; // surface-folded single words
-  prefixes: string[]; // surface-folded prefixes (from trailing *)
-  phrases: string[][]; // surface-folded word sequences
+export type SearchOptions = {
+  /** Match the surface form as written, skipping variant/inflection folding. */
+  exactSpelling: boolean;
+  /** Require each query word's initial capitalisation to agree with the text. */
+  caseSensitive: boolean;
 };
 
-export const parseQuery = (q: string): Query => {
-  const query: Query = { terms: [], prefixes: [], phrases: [] };
-  const phraseRe = /"([^"]*)"/g;
-  let rest = "";
-  let lastEnd = 0;
-  for (const match of q.matchAll(phraseRe)) {
-    rest += q.slice(lastEnd, match.index) + " ";
-    lastEnd = match.index + match[0].length;
-    const words = tokenize(match[1]).map((span) => span.surface);
-    if (words.length > 0) query.phrases.push(words);
-  }
-  rest += q.slice(lastEnd);
-  for (const word of rest.split(/\s+/)) {
-    if (word === "") continue;
-    if (word.endsWith("*") && word.length > 1) {
-      const prefix = surfaceForm(word.slice(0, -1));
-      if (prefix !== "") query.prefixes.push(prefix);
-    } else {
-      query.terms.push(...tokenize(word).map((span) => span.surface));
-    }
-  }
-  return query;
+export const DEFAULT_OPTIONS: SearchOptions = {
+  exactSpelling: false,
+  caseSensitive: false,
 };
 
-/* --------------------------- query expansion -------------------------- */
+/** One word of the phrase: its case-folded surface and whether it was typed
+ * with a leading capital (consulted only when caseSensitive). */
+export type QueryWord = { surface: string; capital: boolean };
+
+/** Split a query into its words, in order; the whole sequence is the phrase. */
+export const parseQuery = (q: string): QueryWord[] =>
+  tokenize(q).map((span) => ({
+    surface: span.surface,
+    capital: isCapital(q[span.start]),
+  }));
+
+const isCapital = (first: string): boolean =>
+  first !== first.toLowerCase() && first === first.toUpperCase();
+
+/* --------------------------- vocabulary lookup ------------------------ */
 
 /** Index of `value` in a sorted array, or undefined. */
 const lookupId = (sorted: string[], value: string): number | undefined => {
@@ -75,65 +79,39 @@ const lookupId = (sorted: string[], value: string): number | undefined => {
   return undefined;
 };
 
-/** Indices of every entry in a sorted array starting with `prefix`. */
-const prefixIds = (sorted: string[], prefix: string): number[] => {
-  let lo = 0;
-  let hi = sorted.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (sorted[mid] < prefix) lo = mid + 1;
-    else hi = mid;
-  }
-  const ids: number[] = [];
-  for (let i = lo; i < sorted.length; i++) {
-    if (!sorted[i].startsWith(prefix)) break;
-    ids.push(i);
-  }
-  return ids;
-};
-
-/** Surface ids matching one query word at the given layer. */
-const wordIds = (
+/** Surface ids matching one query word under the spelling option: the word's
+ * own surface (exact) or every surface sharing its normalised form (tolerant). */
+const surfaceIds = (
   artefacts: ServeArtefacts,
-  word: string,
-  mode: SearchMode,
+  surface: string,
+  exactSpelling: boolean,
 ): number[] => {
-  if (mode === "exact") {
-    const id = lookupId(artefacts.vocab.surfaces, word);
+  if (exactSpelling) {
+    const id = lookupId(artefacts.vocab.surfaces, surface);
     return id === undefined ? [] : [id];
   }
-  const normId = lookupId(artefacts.vocab.norms, normalizeSurface(word));
+  const normId = lookupId(artefacts.vocab.norms, normalizeSurface(surface));
   return normId === undefined ? [] : artefacts.normSurfaces[normId];
 };
 
+/* ------------------------------ postings ------------------------------ */
+
+const positionOf = (packed: number): number => packed & POSITION_MASK;
+const isCapitalPosting = (packed: number): boolean => packed >= CAP_BIT;
+
+/** Map of unitIndex -> matched token positions. */
+type Slot = Map<number, number[]>;
+
 /**
- * Surface ids matching a prefix. At the normalised layer the prefix is
- * matched against both normalised and surface forms (united), so "she*"
- * finds shew-spellings whichever way the reader thinks of them.
+ * Add the (unit, position) pairs for the given surface ids to `out`, skipping
+ * any unit in `skip` and, when `requireCapital` is set, any posting whose
+ * capitalisation bit disagrees. Positions are stored with CAP_BIT masked off.
  */
-const prefixSurfaceIds = (
-  artefacts: ServeArtefacts,
-  prefix: string,
-  mode: SearchMode,
-): number[] => {
-  const direct = prefixIds(artefacts.vocab.surfaces, prefix);
-  if (mode === "exact") return direct;
-  const viaNorms = prefixIds(artefacts.vocab.norms, prefix)
-    .flatMap((normId) => artefacts.normSurfaces[normId]);
-  return [...new Set([...direct, ...viaNorms])];
-};
-
-/* ------------------------------ matching ------------------------------ */
-
-/** Map of unitIndex -> matched token positions, or null for "nothing". */
-type Candidates = Map<number, number[]> | null;
-
-/** Add the (unit, position) pairs for the given surface ids to `out`,
- * skipping any unit in `skip`. */
 const collectPostings = (
   postings: Postings,
   ids: number[],
-  out: Map<number, number[]>,
+  out: Slot,
+  requireCapital: boolean | undefined,
   skip?: Set<number>,
 ): void => {
   const { offsets, pairs } = postings;
@@ -141,63 +119,68 @@ const collectPostings = (
     for (let i = offsets[id] * 2; i < offsets[id + 1] * 2; i += 2) {
       const unit = pairs[i];
       if (skip !== undefined && skip.has(unit)) continue;
+      const packed = pairs[i + 1];
+      if (
+        requireCapital !== undefined &&
+        isCapitalPosting(packed) !== requireCapital
+      ) continue;
+      const position = positionOf(packed);
       const positions = out.get(unit);
-      if (positions === undefined) out.set(unit, [pairs[i + 1]]);
-      else positions.push(pairs[i + 1]);
+      if (positions === undefined) out.set(unit, [position]);
+      else positions.push(position);
     }
   }
 };
 
 /**
- * Postings for the given surface ids in the requested version. The primary
- * index is the edited reading text; for `original` the units that carry
- * editorial markup come from the overlay instead (with original-version
- * positions), so phrase matching stays consistent within every unit.
+ * Postings for one query word in the requested version. The primary index is
+ * the edited reading text; for `original` the units that carry editorial
+ * markup come from the overlay instead (with original-version positions), so
+ * phrase matching stays consistent within every unit.
  */
-const postingsFor = (
+const slotPostings = (
   artefacts: ServeArtefacts,
-  ids: number[],
+  word: QueryWord,
+  options: SearchOptions,
   version: Version,
-): Map<number, number[]> => {
-  const out = new Map<number, number[]>();
+): Slot => {
+  const ids = surfaceIds(artefacts, word.surface, options.exactSpelling);
+  const requireCapital = options.caseSensitive ? word.capital : undefined;
+  const out: Slot = new Map();
   if (version === "original") {
-    collectPostings(artefacts.postings, ids, out, artefacts.affectedUnits);
-    collectPostings(artefacts.overlayPostings, ids, out);
+    collectPostings(
+      artefacts.postings,
+      ids,
+      out,
+      requireCapital,
+      artefacts.affectedUnits,
+    );
+    collectPostings(artefacts.overlayPostings, ids, out, requireCapital);
   } else {
-    collectPostings(artefacts.postings, ids, out);
+    collectPostings(artefacts.postings, ids, out, requireCapital);
   }
   return out;
 };
 
-const intersect = (a: Candidates, b: Candidates): Candidates => {
-  if (a === null || b === null) return null;
-  const out = new Map<number, number[]>();
-  for (const [unit, positions] of a) {
-    const other = b.get(unit);
-    if (other !== undefined) out.set(unit, [...positions, ...other]);
-  }
-  return out;
-};
+/* ------------------------------ matching ------------------------------ */
 
-const phraseCandidates = (
-  artefacts: ServeArtefacts,
-  phrase: string[],
-  mode: SearchMode,
-  version: Version,
-): Map<number, number[]> => {
-  const slots = phrase.map((word) =>
-    postingsFor(artefacts, wordIds(artefacts, word, mode), version)
-  );
+/**
+ * Units where the phrase occurs, mapped to the positions of every matched
+ * token (so a unit with two occurrences carries both runs). A single-word
+ * phrase is just its slot; otherwise a start position in slot 0 matches when
+ * slot i holds start + i for every later slot.
+ */
+const phraseMatches = (slots: Slot[]): Slot => {
   if (slots.length === 1) return slots[0];
-  const out = new Map<number, number[]>();
-  for (const [unit, positions] of slots[0]) {
+  const out: Slot = new Map();
+  for (const [unit, starts] of slots[0]) {
     const matched: number[] = [];
-    for (const start of positions) {
-      const ok = slots.slice(1).every((slot, i) =>
-        slot.get(unit)?.includes(start + i + 1) ?? false
+    for (const start of starts) {
+      const ok = slots.every((slot, i) =>
+        i === 0 || (slot.get(unit)?.includes(start + i) ?? false)
       );
       if (ok) {
-        for (let i = 0; i < phrase.length; i++) matched.push(start + i);
+        for (let i = 0; i < slots.length; i++) matched.push(start + i);
       }
     }
     if (matched.length > 0) out.set(unit, matched);
@@ -216,39 +199,26 @@ export type Filters = { author?: string; work?: string; edition?: string };
 
 export const search = (
   artefacts: ServeArtefacts,
-  query: Query,
+  q: string,
   filters: Filters = {},
-  mode: SearchMode = "normalised",
+  options: SearchOptions = DEFAULT_OPTIONS,
   version: Version = "edited",
 ): SearchHit[] => {
-  const parts: Candidates[] = [
-    ...query.terms.map((term) =>
-      postingsFor(artefacts, wordIds(artefacts, term, mode), version)
-    ),
-    ...query.prefixes.map((prefix) =>
-      postingsFor(artefacts, prefixSurfaceIds(artefacts, prefix, mode), version)
-    ),
-    ...query.phrases.map((phrase) =>
-      phrase.length === 0
-        ? null
-        : phraseCandidates(artefacts, phrase, mode, version)
-    ),
-  ];
-  if (parts.length === 0) return [];
-  let candidates = parts[0];
-  for (let i = 1; i < parts.length; i++) {
-    candidates = intersect(candidates, parts[i]);
-  }
-  if (candidates === null) return [];
+  const words = parseQuery(q);
+  if (words.length === 0) return [];
+  const slots = words.map((word) =>
+    slotPostings(artefacts, word, options, version)
+  );
+  // A phrase can only match where every word does, so bail at the first gap.
+  if (slots.some((slot) => slot.size === 0)) return [];
+  const candidates = phraseMatches(slots);
 
   const { units, manifest } = artefacts;
   const hits: SearchHit[] = [];
   for (const [unitIndex, positions] of candidates) {
     if (positions.length === 0) continue;
     const ref = manifest.editions[units.edition[unitIndex]];
-    if (filters.author !== undefined && ref.author !== filters.author) {
-      continue;
-    }
+    if (filters.author !== undefined && ref.author !== filters.author) continue;
     if (filters.work !== undefined && ref.work !== filters.work) continue;
     if (filters.edition !== undefined && ref.edition !== filters.edition) {
       continue;
@@ -266,7 +236,7 @@ export const search = (
 
 /**
  * Character ranges of the matched tokens in a block's extracted text, for
- * highlightBlock. Runs of consecutive matched tokens (phrases) become one
+ * highlightBlock. Runs of consecutive matched tokens (the phrase) become one
  * range, so the words between them are marked too.
  */
 export const matchRanges = (

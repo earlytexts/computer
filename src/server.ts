@@ -10,10 +10,12 @@
  *   /authors/:author/works/:work/editions/:edition/sections/*  one section + navigation
  *   /authors/:author/works/:work/compare/:a/:b                 aligned section lists
  *   /authors/:author/works/:work/compare/:a/:b/sections/*      diff of a section (Markit)
- *   /search?q=&mode=&version=&author=&work=&edition=&page=&perPage=  full-text search
+ *   /search?q=&exactSpelling=&caseSensitive=&version=&author=&work=&edition=&page=&perPage=  full-text search
  *
- * Text routes take ?version=edited|original|both (default edited); search and
- * compare take ?version=edited|original (default edited). See types.ts.
+ * Search matches the whole query as one phrase; it is tolerant by default,
+ * tightened by exactSpelling=1 and/or caseSensitive=1 (see types.ts). Text
+ * routes take ?version=edited|original|both (default edited); search and
+ * compare take ?version=edited|original (default edited).
  */
 
 import {
@@ -53,6 +55,10 @@ const textVersion = (url: URL): Version =>
 const compareVersion = (url: URL): Version =>
   url.searchParams.get("version") === "original" ? "original" : "edited";
 
+/** A boolean query flag: "1" or "true" (case-insensitive) is on. */
+const flag = (value: string | null): boolean =>
+  value === "1" || value?.toLowerCase() === "true";
+
 const HEADERS = {
   "content-type": "application/json; charset=utf-8",
   "access-control-allow-origin": "*",
@@ -88,7 +94,8 @@ const route = async (
     return json(
       await searchResponse(api.artefacts, {
         q: params.get("q") ?? "",
-        mode: params.get("mode") ?? undefined,
+        exactSpelling: flag(params.get("exactSpelling")),
+        caseSensitive: flag(params.get("caseSensitive")),
         version: params.get("version") ?? undefined,
         author: params.get("author") ?? undefined,
         work: params.get("work") ?? undefined,
