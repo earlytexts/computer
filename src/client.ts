@@ -23,10 +23,14 @@ import type {
   FullTextResponse,
   SearchResponse,
   SectionResponse,
+  Version,
 } from "./types.ts";
 
 export type SearchParams = {
   q: string;
+  mode?: "exact" | "normalised";
+  /** Which text to search: edited reading text (default) or the original. */
+  version?: "edited" | "original";
   author?: string;
   work?: string;
   edition?: string;
@@ -39,17 +43,20 @@ export type Computer = {
     author: string,
     work: string,
     edition: string,
+    version?: Version,
   ) => Promise<EditionResponse | undefined>;
   fullText: (
     author: string,
     work: string,
     edition: string,
+    version?: Version,
   ) => Promise<FullTextResponse | undefined>;
   section: (
     author: string,
     work: string,
     edition: string,
     path: string[],
+    version?: Version,
   ) => Promise<SectionResponse | undefined>;
   compare: (
     author: string,
@@ -63,6 +70,7 @@ export type Computer = {
     a: string,
     b: string,
     path: string[],
+    version?: Version,
   ) => Promise<CompareSectionResponse | undefined>;
   search: (params: SearchParams) => Promise<SearchResponse>;
 };
@@ -71,6 +79,12 @@ const CATALOG_TTL_MS = 60_000;
 const catalogCache = new Map<string, { at: number; value: CatalogResponse }>();
 
 const segment = (s: string): string => encodeURIComponent(s);
+
+/** Append ?version unless it is the default (edited). */
+const withVersion = (path: string, version?: Version): string =>
+  version === undefined || version === "edited"
+    ? path
+    : `${path}?version=${version}`;
 
 /** Build an error marking the computer (not the caller) as the failure. */
 export const computerUnavailable = (detail: string): Error =>
@@ -125,30 +139,38 @@ export const computerClient = (
       catalogCache.set(baseUrl, { at: Date.now(), value });
       return value;
     },
-    edition: (author, work, edition) =>
-      get(`${works(author)}/${segment(work)}/editions/${segment(edition)}`),
-    fullText: (author, work, edition) =>
-      get(
+    edition: (author, work, edition, version) =>
+      get(withVersion(
+        `${works(author)}/${segment(work)}/editions/${segment(edition)}`,
+        version,
+      )),
+    fullText: (author, work, edition, version) =>
+      get(withVersion(
         `${works(author)}/${segment(work)}/editions/${segment(edition)}/full`,
-      ),
-    section: (author, work, edition, path) =>
-      get(
+        version,
+      )),
+    section: (author, work, edition, path, version) =>
+      get(withVersion(
         `${works(author)}/${segment(work)}/editions/${
           segment(edition)
         }/sections/${path.map(segment).join("/")}`,
-      ),
+        version,
+      )),
     compare: (author, work, a, b) =>
       get(
         `${works(author)}/${segment(work)}/compare/${segment(a)}/${segment(b)}`,
       ),
-    compareSection: (author, work, a, b, path) =>
-      get(
+    compareSection: (author, work, a, b, path, version) =>
+      get(withVersion(
         `${works(author)}/${segment(work)}/compare/${segment(a)}/${
           segment(b)
         }/sections/${path.map(segment).join("/")}`,
-      ),
+        version,
+      )),
     search: (params) => {
       const query = new URLSearchParams({ q: params.q });
+      if (params.mode !== undefined) query.set("mode", params.mode);
+      if (params.version !== undefined) query.set("version", params.version);
       if (params.author !== undefined) query.set("author", params.author);
       if (params.work !== undefined) query.set("work", params.work);
       if (params.edition !== undefined) query.set("edition", params.edition);

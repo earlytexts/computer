@@ -1,10 +1,28 @@
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
+import { compile } from "@earlytexts/markit";
 import {
+  diffBlocks,
   diffText,
+  diffToBlocks,
   diffTokens,
   type Token,
   tokenize,
 } from "../../src/lib/diff.ts";
+
+/** The text of every element of the given type, anywhere in a value. */
+const ofType = (value: unknown, type: string): string[] => {
+  if (Array.isArray(value)) return value.flatMap((v) => ofType(v, type));
+  if (typeof value !== "object" || value === null) return [];
+  const el = value as Record<string, unknown>;
+  if (el.type === "plainText") return [];
+  if (el.type === type) {
+    return [
+      (el.content as { content: string }[] ?? [])
+        .map((n) => n.content ?? "").join(""),
+    ];
+  }
+  return ofType(el.content, type);
+};
 
 const words = (ops: ReturnType<typeof diffText>, type: string): string =>
   ops.filter((op) => op.type === type)
@@ -83,4 +101,18 @@ Deno.test("diff handles empty sides", () => {
   assertEquals(diffTokens([], []), []);
   assertEquals(diffTokens(tokenize("some text"), [])[0].type, "delete");
   assertEquals(diffTokens([], tokenize("some text"))[0].type, "insert");
+});
+
+Deno.test("diffToBlocks renders a diff as Markit editorial markup", () => {
+  const a =
+    compile(`# A\n\n{#1}\nthe quick brown fox\n\n{#2}\nonly in the first\n`)[0];
+  const b = compile(`# A\n\n{#1}\nthe slow brown fox\n`)[0];
+  const out = diffToBlocks(diffBlocks(a.blocks, b.blocks));
+  const deletions = out.flatMap((blk) => ofType(blk.content, "deletion"));
+  const insertions = out.flatMap((blk) => ofType(blk.content, "insertion"));
+  // a word changed in #1: only in a is a deletion, only in b an insertion
+  assert(deletions.some((t) => t.includes("quick")));
+  assert(insertions.some((t) => t.includes("slow")));
+  // #2 exists only in a: the whole block is wrapped in a deletion
+  assert(deletions.some((t) => t.includes("only in the first")));
 });

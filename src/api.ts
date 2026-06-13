@@ -23,7 +23,7 @@ import {
   findSectionByKey,
   pathKey,
 } from "./lib/compare.ts";
-import { diffBlocks } from "./lib/diff.ts";
+import { diffBlocks, diffToBlocks } from "./lib/diff.ts";
 import { readUnitBlock } from "./lib/artefacts.ts";
 import {
   matchRanges,
@@ -31,7 +31,7 @@ import {
   search,
   type SearchMode,
 } from "./lib/search.ts";
-import { blockText, highlightBlock } from "./lib/text.ts";
+import { blockText, highlightBlock, resolveBlock } from "./lib/text.ts";
 import type {
   AlignedRow,
   CatalogResponse,
@@ -44,6 +44,7 @@ import type {
   SectionRef,
   SectionResponse,
   SectionSummary,
+  Version,
 } from "./types.ts";
 
 /* --------------------------- skeleton helpers ------------------------- */
@@ -60,15 +61,17 @@ const sectionSummary = (section: SkeletonSection): SectionSummary => ({
 const sectionContent = async (
   store: BlockStore,
   section: SkeletonSection,
+  version: Version,
 ): Promise<SectionContent> => ({
   slug: section.slug,
   path: section.path,
   title: section.title,
   breadcrumb: section.breadcrumb,
   imported: section.imported,
-  blocks: await store.blocks(section.units),
+  blocks: (await store.blocks(section.units))
+    .map((block) => resolveBlock(block, version)),
   children: await Promise.all(
-    section.children.map((child) => sectionContent(store, child)),
+    section.children.map((child) => sectionContent(store, child, version)),
   ),
 });
 
@@ -119,11 +122,14 @@ export const editionResponse = async (
   author: AuthorEntry,
   work: WorkEntry,
   edition: EditionEntry,
+  version: Version = "edited",
 ): Promise<EditionResponse> => ({
   author: author.meta,
   work: work.meta,
   edition: edition.meta,
-  blocks: await store.blocks(edition.units),
+  version,
+  blocks: (await store.blocks(edition.units))
+    .map((block) => resolveBlock(block, version)),
   sections: edition.sections.map(sectionSummary),
 });
 
@@ -132,13 +138,16 @@ export const fullTextResponse = async (
   author: AuthorEntry,
   work: WorkEntry,
   edition: EditionEntry,
+  version: Version = "edited",
 ): Promise<FullTextResponse> => ({
   author: author.meta,
   work: work.meta,
   edition: edition.meta,
-  blocks: await store.blocks(edition.units),
+  version,
+  blocks: (await store.blocks(edition.units))
+    .map((block) => resolveBlock(block, version)),
   sections: await Promise.all(
-    edition.sections.map((section) => sectionContent(store, section)),
+    edition.sections.map((section) => sectionContent(store, section, version)),
   ),
 });
 
@@ -148,6 +157,7 @@ export const sectionResponse = async (
   work: WorkEntry,
   edition: EditionEntry,
   path: string[],
+  version: Version = "edited",
 ): Promise<SectionResponse | undefined> => {
   const section = findSkeleton(edition.sections, path);
   if (section === undefined) return undefined;
@@ -176,12 +186,14 @@ export const sectionResponse = async (
     author: author.meta,
     work: work.meta,
     edition: edition.meta,
+    version,
     section: {
       path: section.path,
       title: section.title,
       breadcrumb: section.breadcrumb,
       imported: section.imported,
-      blocks: await store.blocks(section.units),
+      blocks: (await store.blocks(section.units))
+        .map((block) => resolveBlock(block, version)),
       children: section.children.map(sectionSummary),
     },
     ancestors: ancestors.map(sectionRef),
@@ -216,6 +228,7 @@ export const compareSectionResponse = async (
   aSlug: string,
   bSlug: string,
   path: string[],
+  version: Version = "edited",
 ): Promise<CompareSectionResponse | undefined> => {
   const a = findEditionEntry(work, aSlug);
   const b = findEditionEntry(work, bSlug);
@@ -228,13 +241,21 @@ export const compareSectionResponse = async (
     store.blocks(sectionA.units),
     store.blocks(sectionB.units),
   ]);
+  // Resolve each edition to the chosen version first, then diff: the markup
+  // in the result expresses the A↔B difference, not either edition's own
+  // corrections (which the resolution has already applied).
+  const diffs = diffBlocks(
+    blocksA.map((block) => resolveBlock(block, version)),
+    blocksB.map((block) => resolveBlock(block, version)),
+  );
   return {
     author: author.meta,
     work: work.meta,
     a: a.meta,
     b: b.meta,
+    version,
     title: sectionB.title,
-    diffs: diffBlocks(blocksA, blocksB),
+    blocks: diffToBlocks(diffs),
     childRows: alignSections(sectionA.children, sectionB.children)
       .map(alignedRow),
   };
@@ -245,6 +266,7 @@ export const compareSectionResponse = async (
 export type SearchParams = {
   q: string;
   mode?: string;
+  version?: string;
   author?: string;
   work?: string;
   edition?: string;
@@ -260,28 +282,40 @@ export const searchResponse = async (
 ): Promise<SearchResponse> => {
   const q = params.q.trim();
   const mode: SearchMode = params.mode === "exact" ? "exact" : "normalised";
+  const version: Version = params.version === "original"
+    ? "original"
+    : "edited";
   const page = Math.max(1, Math.floor(params.page ?? 1));
   const perPage = Math.min(
     MAX_PER_PAGE,
     Math.max(1, Math.floor(params.perPage ?? 20)),
   );
-  const hits = q === "" ? [] : search(artefacts, parseQuery(q), {
-    author: params.author,
-    work: params.work,
-    edition: params.edition,
-  }, mode);
+  const hits = q === "" ? [] : search(
+    artefacts,
+    parseQuery(q),
+    {
+      author: params.author,
+      work: params.work,
+      edition: params.edition,
+    },
+    mode,
+    version,
+  );
   const pages = Math.max(1, Math.ceil(hits.length / perPage));
   const pageHits = hits.slice((page - 1) * perPage, page * perPage);
   const { units, manifest } = artefacts;
   return {
     q,
     mode,
+    version,
     total: hits.length,
     page,
     pages,
     results: await Promise.all(pageHits.map(async (hit) => {
+      // Positions index into the version's tokenization; highlightBlock
+      // resolves the block to that version and injects the marks in one walk.
       const block: Block = await readUnitBlock(artefacts, hit.unitIndex);
-      const ranges = matchRanges(blockText(block), hit.positions);
+      const ranges = matchRanges(blockText(block, version), hit.positions);
       const ref = manifest.editions[units.edition[hit.unitIndex]];
       const sectionPath = units.sectionPath[hit.unitIndex];
       return {
@@ -294,7 +328,7 @@ export const searchResponse = async (
         sectionTitle: units.sectionTitle[hit.unitIndex],
         blockId: units.blockId[hit.unitIndex],
         score: hit.score,
-        block: highlightBlock(block, ranges),
+        block: highlightBlock(block, ranges, version),
       };
     })),
   };

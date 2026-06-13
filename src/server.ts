@@ -9,8 +9,11 @@
  *   /authors/:author/works/:work/editions/:edition/full        whole edition with text
  *   /authors/:author/works/:work/editions/:edition/sections/*  one section + navigation
  *   /authors/:author/works/:work/compare/:a/:b                 aligned section lists
- *   /authors/:author/works/:work/compare/:a/:b/sections/*      block-level diff of a section
- *   /search?q=&mode=&author=&work=&edition=&page=&perPage=     full-text search
+ *   /authors/:author/works/:work/compare/:a/:b/sections/*      diff of a section (Markit)
+ *   /search?q=&mode=&version=&author=&work=&edition=&page=&perPage=  full-text search
+ *
+ * Text routes take ?version=edited|original|both (default edited); search and
+ * compare take ?version=edited|original (default edited). See types.ts.
  */
 
 import {
@@ -31,11 +34,24 @@ import {
   sectionResponse,
 } from "./api.ts";
 import { clientKey, type RateLimiter } from "./ratelimit.ts";
+import type { Version } from "./types.ts";
 
 export type Api = {
   artefacts: ServeArtefacts;
   limiter?: RateLimiter;
 };
+
+/** ?version for text routes: edited (default), original, or both. */
+const textVersion = (url: URL): Version =>
+  url.searchParams.get("version") === "original"
+    ? "original"
+    : url.searchParams.get("version") === "both"
+    ? "both"
+    : "edited";
+
+/** ?version for compare: edited (default) or original (no `both`). */
+const compareVersion = (url: URL): Version =>
+  url.searchParams.get("version") === "original" ? "original" : "edited";
 
 const HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -73,6 +89,7 @@ const route = async (
       await searchResponse(api.artefacts, {
         q: params.get("q") ?? "",
         mode: params.get("mode") ?? undefined,
+        version: params.get("version") ?? undefined,
         author: params.get("author") ?? undefined,
         work: params.get("work") ?? undefined,
         edition: params.get("edition") ?? undefined,
@@ -96,10 +113,14 @@ const route = async (
     if (edition === undefined) return notFound();
     const rest = segments.slice(6);
     if (rest.length === 0) {
-      return json(await editionResponse(store, author, work, edition));
+      return json(
+        await editionResponse(store, author, work, edition, textVersion(url)),
+      );
     }
     if (rest.length === 1 && rest[0] === "full") {
-      return json(await fullTextResponse(store, author, work, edition));
+      return json(
+        await fullTextResponse(store, author, work, edition, textVersion(url)),
+      );
     }
     if (rest[0] === "sections" && rest.length > 1) {
       const section = await sectionResponse(
@@ -108,6 +129,7 @@ const route = async (
         work,
         edition,
         rest.slice(1),
+        textVersion(url),
       );
       return section === undefined ? notFound() : json(section);
     }
@@ -128,6 +150,7 @@ const route = async (
         a,
         b,
         rest.slice(1),
+        compareVersion(url),
       );
       return compared === undefined ? notFound() : json(compared);
     }

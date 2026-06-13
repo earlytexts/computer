@@ -108,6 +108,65 @@ Deno.test("borrowed documents are indexed under their own work only", async () =
   for (const hit of inline) assertEquals((await editionOf(hit)).work, "comp");
 });
 
+Deno.test("version selects the edited or original text for single words", async () => {
+  const { artefacts } = await testData();
+  // solo §1 #2: "[-corrcted-][+corrected+] the text and [+also+] revised"
+  assertEquals(
+    search(artefacts, parseQuery("corrected"), {}, "exact").length,
+    1,
+  );
+  assertEquals(
+    search(artefacts, parseQuery("corrcted"), {}, "exact").length,
+    0,
+  );
+  assertEquals(
+    search(artefacts, parseQuery("corrcted"), {}, "exact", "original").length,
+    1,
+  );
+  // "also" is inserted, so it belongs to the edited text only
+  assertEquals(search(artefacts, parseQuery("also"), {}, "exact").length, 1);
+  assertEquals(
+    search(artefacts, parseQuery("also"), {}, "exact", "original").length,
+    0,
+  );
+});
+
+Deno.test("a phrase across an editorial correction matches the right version", async () => {
+  const { artefacts } = await testData();
+  // edited reads "and also revised"; original reads "and revised"
+  assertEquals(
+    search(
+      artefacts,
+      parseQuery(`"and also revised"`),
+      {},
+      "normalised",
+      "edited",
+    )
+      .length,
+    1,
+  );
+  assertEquals(
+    search(artefacts, parseQuery(`"and revised"`), {}, "normalised", "edited")
+      .length,
+    0,
+  );
+  assertEquals(
+    search(artefacts, parseQuery(`"and revised"`), {}, "normalised", "original")
+      .length,
+    1,
+  );
+  assertEquals(
+    search(
+      artefacts,
+      parseQuery(`"and also revised"`),
+      {},
+      "normalised",
+      "original",
+    ).length,
+    0,
+  );
+});
+
 Deno.test("matchRanges merges consecutive matched tokens", () => {
   const text = "The liberty of the press is a passion.";
   // tokens: the(0) liberty(1) of(2) the(3) press(4) is(5) a(6) passion(7)

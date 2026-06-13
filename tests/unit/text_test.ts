@@ -1,6 +1,16 @@
 import { assert, assertEquals } from "@std/assert";
 import { type Block, compile, type InlineElement } from "@earlytexts/markit";
-import { blockText, highlightBlock } from "../../src/lib/text.ts";
+import {
+  blockText,
+  hasEditorial,
+  highlightBlock,
+  markBlock,
+  resolveBlock,
+} from "../../src/lib/text.ts";
+
+/** The single paragraph block of a compiled snippet. */
+const block = (source: string): Block =>
+  compile(`# Test\n\n{#1}\n${source}\n`)[0].blocks[0];
 
 /**
  * Compile a Markit document and return its blocks. The sample exercises
@@ -102,6 +112,56 @@ Deno.test("empty ranges mark nothing", () => {
   const highlighted = highlightBlock(paragraph, [{ start: 10, end: 10 }]);
   assertEquals(marked(highlighted), []);
   assertEquals(highlightBlock(paragraph, []), paragraph);
+});
+
+Deno.test("blockText resolves editorial markup per version", () => {
+  const b = block(
+    "The editor [-corrcted-][+corrected+] the text and [+also+] revised it.",
+  );
+  assertEquals(
+    blockText(b),
+    "The editor corrected the text and also revised it.",
+  );
+  assertEquals(
+    blockText(b, "edited"),
+    "The editor corrected the text and also revised it.",
+  );
+  // dropping the inserted "also" leaves the join doubled — the original is
+  // the printed text, character for character, minus the editor's addition.
+  assertEquals(
+    blockText(b, "original"),
+    "The editor corrcted the text and  revised it.",
+  );
+  assertEquals(
+    blockText(b, "both"),
+    "The editor corrctedcorrected the text and also revised it.",
+  );
+});
+
+Deno.test("resolveBlock strips markup for a version, keeps it for both", () => {
+  const b = block("The editor [-corrcted-][+corrected+] this word.");
+  assert(!hasEditorial(resolveBlock(b, "edited")));
+  assert(!hasEditorial(resolveBlock(b, "original")));
+  assertEquals(blockText(resolveBlock(b, "edited")), blockText(b, "edited"));
+  assertEquals(
+    blockText(resolveBlock(b, "original")),
+    blockText(b, "original"),
+  );
+  assertEquals(resolveBlock(b, "both"), b); // unchanged, markup intact
+  assert(hasEditorial(resolveBlock(b, "both")));
+});
+
+Deno.test("markBlock wraps a whole block in one editorial wrapper", () => {
+  const plain = block("A plain sentence with no markup.");
+  assert(!hasEditorial(plain));
+  const deleted = markBlock(plain, "deletion");
+  assert(hasEditorial(deleted));
+  // present in the original, gone from the edited reading text
+  assertEquals(
+    blockText(deleted, "original"),
+    "A plain sentence with no markup.",
+  );
+  assertEquals(blockText(deleted, "edited"), "");
 });
 
 Deno.test("highlighting does not mutate the original block", () => {

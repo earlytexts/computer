@@ -23,8 +23,9 @@
  * highlightBlock (text.ts).
  */
 
-import type { ServeArtefacts } from "./artefacts.ts";
+import type { Postings, ServeArtefacts } from "./artefacts.ts";
 import type { HighlightRange } from "./text.ts";
+import type { Version } from "../types.ts";
 import { normalizeSurface, surfaceForm, tokenize } from "./tokenize.ts";
 
 export type SearchMode = "exact" | "normalised";
@@ -127,19 +128,43 @@ const prefixSurfaceIds = (
 /** Map of unitIndex -> matched token positions, or null for "nothing". */
 type Candidates = Map<number, number[]> | null;
 
-const postingsFor = (
-  artefacts: ServeArtefacts,
+/** Add the (unit, position) pairs for the given surface ids to `out`,
+ * skipping any unit in `skip`. */
+const collectPostings = (
+  postings: Postings,
   ids: number[],
-): Map<number, number[]> => {
-  const { offsets, pairs } = artefacts.postings;
-  const out = new Map<number, number[]>();
+  out: Map<number, number[]>,
+  skip?: Set<number>,
+): void => {
+  const { offsets, pairs } = postings;
   for (const id of ids) {
     for (let i = offsets[id] * 2; i < offsets[id + 1] * 2; i += 2) {
       const unit = pairs[i];
+      if (skip !== undefined && skip.has(unit)) continue;
       const positions = out.get(unit);
       if (positions === undefined) out.set(unit, [pairs[i + 1]]);
       else positions.push(pairs[i + 1]);
     }
+  }
+};
+
+/**
+ * Postings for the given surface ids in the requested version. The primary
+ * index is the edited reading text; for `original` the units that carry
+ * editorial markup come from the overlay instead (with original-version
+ * positions), so phrase matching stays consistent within every unit.
+ */
+const postingsFor = (
+  artefacts: ServeArtefacts,
+  ids: number[],
+  version: Version,
+): Map<number, number[]> => {
+  const out = new Map<number, number[]>();
+  if (version === "original") {
+    collectPostings(artefacts.postings, ids, out, artefacts.affectedUnits);
+    collectPostings(artefacts.overlayPostings, ids, out);
+  } else {
+    collectPostings(artefacts.postings, ids, out);
   }
   return out;
 };
@@ -158,9 +183,10 @@ const phraseCandidates = (
   artefacts: ServeArtefacts,
   phrase: string[],
   mode: SearchMode,
+  version: Version,
 ): Map<number, number[]> => {
   const slots = phrase.map((word) =>
-    postingsFor(artefacts, wordIds(artefacts, word, mode))
+    postingsFor(artefacts, wordIds(artefacts, word, mode), version)
   );
   if (slots.length === 1) return slots[0];
   const out = new Map<number, number[]>();
@@ -193,16 +219,19 @@ export const search = (
   query: Query,
   filters: Filters = {},
   mode: SearchMode = "normalised",
+  version: Version = "edited",
 ): SearchHit[] => {
   const parts: Candidates[] = [
     ...query.terms.map((term) =>
-      postingsFor(artefacts, wordIds(artefacts, term, mode))
+      postingsFor(artefacts, wordIds(artefacts, term, mode), version)
     ),
     ...query.prefixes.map((prefix) =>
-      postingsFor(artefacts, prefixSurfaceIds(artefacts, prefix, mode))
+      postingsFor(artefacts, prefixSurfaceIds(artefacts, prefix, mode), version)
     ),
     ...query.phrases.map((phrase) =>
-      phrase.length === 0 ? null : phraseCandidates(artefacts, phrase, mode)
+      phrase.length === 0
+        ? null
+        : phraseCandidates(artefacts, phrase, mode, version)
     ),
   ];
   if (parts.length === 0) return [];

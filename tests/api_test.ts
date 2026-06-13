@@ -118,21 +118,42 @@ Deno.test("compare aligns the two editions' sections", async () => {
   assertEquals(compared.rows[2].pathA, undefined); // 2 only in main
 });
 
-Deno.test("compare of a section yields word-level diffs", async () => {
+/** Plain text under a node (all nested plainText, in order). */
+const textOf = (value: unknown): string => {
+  if (Array.isArray(value)) return value.map(textOf).join("");
+  if (typeof value !== "object" || value === null) return "";
+  const el = value as Record<string, unknown>;
+  if (el.type === "plainText") return el.content as string;
+  return textOf(el.content);
+};
+
+/** The text of every element of the given type, anywhere in a value. */
+const ofType = (value: unknown, type: string): string[] => {
+  if (Array.isArray(value)) return value.flatMap((v) => ofType(v, type));
+  if (typeof value !== "object" || value === null) return [];
+  const el = value as Record<string, unknown>;
+  if (el.type === type) return [textOf(el.content)];
+  return ofType(el.content, type);
+};
+
+Deno.test("compare of a section is a Markit diff document", async () => {
   const compared = await getJson<CompareSectionResponse>(
     "/authors/test/works/tw/compare/1750/main/sections/1",
   );
   assertEquals(compared.title, "Section 1");
-  const changed = compared.diffs.find((diff) => diff.type === "changed");
-  assertExists(changed);
-  const deleted = changed.ops.filter((op) => op.type === "delete")
-    .flatMap((op) => op.tokens.map((t) => t.text));
-  const inserted = changed.ops.filter((op) => op.type === "insert")
-    .flatMap((op) => op.tokens.map((t) => t.text));
-  assert(deleted.includes("betwixt"));
-  assert(inserted.includes("between"));
-  // paragraph #3 exists only in 1750
-  assert(compared.diffs.some((diff) => diff.type === "deleted"));
+  assertEquals(compared.version, "edited");
+  // a→1750, b→main: words only in 1750 are deletions, those only in main
+  // are insertions — Markit editorial markup, no bespoke diff structure.
+  const deletions = compared.blocks.flatMap((b) =>
+    ofType(b.content, "deletion")
+  );
+  const insertions = compared.blocks.flatMap((b) =>
+    ofType(b.content, "insertion")
+  );
+  assert(deletions.some((t) => t.includes("betwixt")));
+  assert(insertions.some((t) => t.includes("between")));
+  // paragraph #3 exists only in 1750: a whole block wrapped in a deletion
+  assert(deletions.some((t) => t.includes("only in the seventeen-fifty")));
 });
 
 /** Collect the text of highlight elements anywhere in a block. */
@@ -194,6 +215,54 @@ Deno.test("search filters and paginates", async () => {
 Deno.test("an empty query matches nothing", async () => {
   const found = await getJson<SearchResponse>("/search?q=");
   assertEquals(found.total, 0);
+});
+
+Deno.test("a section resolves editorial markup to the requested version", async () => {
+  // solo §1 #2: "[-corrcted-][+corrected+] the text and [+also+] revised it."
+  const path = "/authors/test/works/solo/editions/main/sections/1/1";
+  const edited = await getJson<SectionResponse>(path);
+  assertEquals(edited.version, "edited");
+  const editedText = edited.section.blocks.map((b) => textOf(b.content)).join(
+    " ",
+  );
+  assert(editedText.includes("corrected the text and also revised"));
+  assert(!editedText.includes("corrcted"));
+
+  const original = await getJson<SectionResponse>(`${path}?version=original`);
+  assertEquals(original.version, "original");
+  const originalText = original.section.blocks.map((b) => textOf(b.content))
+    .join(" ");
+  assert(originalText.includes("corrcted the text"));
+  assert(!originalText.includes("also"));
+
+  // both keeps the markup intact (the within-edition diff)
+  const both = await getJson<SectionResponse>(`${path}?version=both`);
+  assertEquals(both.version, "both");
+  const ins = both.section.blocks.flatMap((b) =>
+    ofType(b.content, "insertion")
+  );
+  const del = both.section.blocks.flatMap((b) => ofType(b.content, "deletion"));
+  assert(ins.some((t) => t.includes("corrected")));
+  assert(del.some((t) => t.includes("corrcted")));
+});
+
+Deno.test("search selects the edited or original text", async () => {
+  const edited = await getJson<SearchResponse>("/search?q=corrected");
+  assertEquals(edited.version, "edited");
+  assertEquals(edited.total, 1); // in the reading text
+  const editedMiss = await getJson<SearchResponse>("/search?q=corrcted");
+  assertEquals(editedMiss.total, 0); // the original spelling is not searched
+  const original = await getJson<SearchResponse>(
+    "/search?q=corrcted&version=original",
+  );
+  assertEquals(original.version, "original");
+  assertEquals(original.total, 1);
+  // an inserted word belongs to the edited text only
+  const inserted = await getJson<SearchResponse>(
+    "/search?q=also&version=original",
+  );
+  assertEquals(inserted.total, 0);
+  assertEquals((await getJson<SearchResponse>("/search?q=also")).total, 1);
 });
 
 Deno.test("unknown resources return JSON 404s", async () => {

@@ -15,8 +15,15 @@
  *                    collection frequencies, normalised forms, lemma slot
  *   units.json       one row per block (columnar): location, token count,
  *                    offsets into the per-edition text and block files
- *   postings.bin     inverted index: per surface type, (unit, position)
- *                    pairs as little-endian Uint32
+ *   postings.bin     inverted index over the edited reading text: per surface
+ *                    type, (unit, position) pairs as little-endian Uint32
+ *   postings-original.bin
+ *                    overlay index (same format/vocab) for searching the
+ *                    original text: only the units that carry editorial
+ *                    markup, with their original-version token positions
+ *   overlay.json     { affectedUnits }: the units the overlay covers, so an
+ *                    original search reads them from the overlay instead of
+ *                    the (edited) primary
  *   editions/<author>/<work>/<edition>/
  *     blocks.jsonl   one compiled block per line, in unit order (units.json
  *                    holds byte ranges, so single blocks are read directly)
@@ -48,7 +55,7 @@ import {
   type Work,
 } from "./catalog.ts";
 import type { AuthorMeta, EditionMeta, WorkMeta } from "../types.ts";
-import { blockText, EXTRACTION_VERSION } from "./text.ts";
+import { blockText, EXTRACTION_VERSION, hasEditorial } from "./text.ts";
 import { normalizeSurface, tokenize, TOKENIZER_VERSION } from "./tokenize.ts";
 
 export const PIPELINE_VERSION = `x${EXTRACTION_VERSION}.t${TOKENIZER_VERSION}`;
@@ -195,6 +202,10 @@ export type Artefacts = {
   vocab: Vocab;
   units: UnitTable;
   postings: Postings;
+  /** Original-text overlay for the units in `affectedUnits`. */
+  overlayPostings: Postings;
+  /** Unit indices that carry editorial markup, ascending. */
+  affectedUnits: number[];
   editions: BuiltEdition[];
 };
 
@@ -206,6 +217,10 @@ export type ServeArtefacts = {
   vocab: Vocab;
   units: UnitTable;
   postings: Postings;
+  /** Original-text overlay (see Artefacts); empty when nothing is edited. */
+  overlayPostings: Postings;
+  /** Units the overlay covers — read from it, not `postings`, for original. */
+  affectedUnits: Set<number>;
   /** norm index -> surface indices (derived from vocab at load) */
   normSurfaces: number[][];
   /** edition index -> its unit indices, in blocks.jsonl line order */
@@ -346,12 +361,50 @@ export const buildArtefacts = (
     }
   }
 
-  // Interim, insertion-ordered vocabulary; remapped to sorted ids below.
+  // Interim, insertion-ordered vocabulary; remapped to sorted ids below. The
+  // vocabulary is the union of the edited and original streams; df/cf count
+  // occurrences across both (so original-only spellings are still coherent).
   const tempIds = new Map<string, number>();
-  const tempPostings: number[][] = [];
+  const tempPostings: number[][] = []; // edited reading text (every unit)
+  const overlayPostings: number[][] = []; // original text (edited units only)
   const tempCf: number[] = [];
   const tempDf: number[] = [];
   const tempLastUnit: number[] = [];
+  // Units carrying editorial markup, in ascending order (eachUnit visits in
+  // unit order), whose original text lives in the overlay.
+  const affectedUnits: number[] = [];
+
+  /** Find or create the interim id for a surface, parallel arrays in step. */
+  const intern = (surface: string): number => {
+    let tempId = tempIds.get(surface);
+    if (tempId === undefined) {
+      tempId = tempIds.size;
+      tempIds.set(surface, tempId);
+      tempPostings.push([]);
+      overlayPostings.push([]);
+      tempCf.push(0);
+      tempDf.push(0);
+      tempLastUnit.push(-1);
+    }
+    return tempId;
+  };
+
+  /** Record one occurrence of a surface in a unit: postings, cf, and df. */
+  const record = (
+    postings: number[][],
+    surface: string,
+    unitIndex: number,
+    position: number,
+  ): number => {
+    const tempId = intern(surface);
+    postings[tempId].push(unitIndex, position);
+    tempCf[tempId]++;
+    if (tempLastUnit[tempId] !== unitIndex) {
+      tempDf[tempId]++;
+      tempLastUnit[tempId] = unitIndex;
+    }
+    return tempId;
+  };
 
   const units: UnitTable = {
     edition: [],
@@ -418,24 +471,26 @@ export const buildArtefacts = (
 
     for (let position = 0; position < spans.length; position++) {
       const span = spans[position];
-      let tempId = tempIds.get(span.surface);
-      if (tempId === undefined) {
-        tempId = tempIds.size;
-        tempIds.set(span.surface, tempId);
-        tempPostings.push([]);
-        tempCf.push(0);
-        tempDf.push(0);
-        tempLastUnit.push(-1);
-      }
-      tempPostings[tempId].push(unitIndex, position);
-      tempCf[tempId]++;
-      if (tempLastUnit[tempId] !== unitIndex) {
-        tempDf[tempId]++;
-        tempLastUnit[tempId] = unitIndex;
-      }
+      const tempId = record(tempPostings, span.surface, unitIndex, position);
       acc.tokens.push(tempId, units.blobOffset[unitIndex] + span.start);
     }
     totalTokens += spans.length;
+
+    // Where the block carries editorial markup, index its original text into
+    // the overlay too, with original-version token positions, so an original
+    // search reads this unit from the overlay instead of the (edited) primary.
+    if (hasEditorial(block)) {
+      affectedUnits.push(unitIndex);
+      const originalSpans = tokenize(blockText(block, "original"));
+      for (let position = 0; position < originalSpans.length; position++) {
+        record(
+          overlayPostings,
+          originalSpans[position].surface,
+          unitIndex,
+          position,
+        );
+      }
+    }
 
     acc.text += text + "\n";
     acc.blockLines.push(line);
@@ -465,18 +520,23 @@ export const buildArtefacts = (
     vocab.cf[id] = tempCf[tempId];
   }
 
-  // Pack postings grouped by final surface id.
-  const offsets = new Uint32Array(surfaces.length + 1);
-  let totalPairs = 0;
-  for (let id = 0; id < surfaces.length; id++) {
-    offsets[id] = totalPairs;
-    totalPairs += tempPostings[tempIds.get(surfaces[id])!].length / 2;
-  }
-  offsets[surfaces.length] = totalPairs;
-  const pairs = new Uint32Array(totalPairs * 2);
-  for (let id = 0; id < surfaces.length; id++) {
-    pairs.set(tempPostings[tempIds.get(surfaces[id])!], offsets[id] * 2);
-  }
+  // Pack a (tempId-indexed) postings table grouped by final surface id.
+  const packPostings = (source: number[][]): Postings => {
+    const offsets = new Uint32Array(surfaces.length + 1);
+    let total = 0;
+    for (let id = 0; id < surfaces.length; id++) {
+      offsets[id] = total;
+      total += source[tempIds.get(surfaces[id])!].length / 2;
+    }
+    offsets[surfaces.length] = total;
+    const pairs = new Uint32Array(total * 2);
+    for (let id = 0; id < surfaces.length; id++) {
+      pairs.set(source[tempIds.get(surfaces[id])!], offsets[id] * 2);
+    }
+    return { offsets, pairs };
+  };
+  const postings = packPostings(tempPostings);
+  const overlay = packPostings(overlayPostings);
 
   const editions: BuiltEdition[] = [...accumulators.values()].map((acc) => {
     const tokens = new Uint32Array(acc.tokens.length);
@@ -530,7 +590,9 @@ export const buildArtefacts = (
     catalog: catalogArtefact,
     vocab,
     units,
-    postings: { offsets, pairs },
+    postings,
+    overlayPostings: overlay,
+    affectedUnits,
     editions,
   };
 };
@@ -589,13 +651,19 @@ export const writeArtefacts = async (
     await Deno.writeTextFile(`${subdir}/text.txt`, edition.text);
     await Deno.writeFile(`${subdir}/tokens.bin`, asBytes(edition.tokens));
   }
-  await Deno.writeFile(
-    `${dir}/postings.bin`,
-    concat(
-      [asBytes(artefacts.postings.offsets), asBytes(artefacts.postings.pairs)],
-      artefacts.postings.offsets.byteLength +
-        artefacts.postings.pairs.byteLength,
-    ),
+  const writePostings = (name: string, postings: Postings): Promise<void> =>
+    Deno.writeFile(
+      `${dir}/${name}`,
+      concat(
+        [asBytes(postings.offsets), asBytes(postings.pairs)],
+        postings.offsets.byteLength + postings.pairs.byteLength,
+      ),
+    );
+  await writePostings("postings.bin", artefacts.postings);
+  await writePostings("postings-original.bin", artefacts.overlayPostings);
+  await Deno.writeTextFile(
+    `${dir}/overlay.json`,
+    JSON.stringify({ affectedUnits: artefacts.affectedUnits }),
   );
   await Deno.writeTextFile(
     `${dir}/catalog.json`,
@@ -638,13 +706,18 @@ export const loadServeArtefacts = async (
   const units = JSON.parse(
     await Deno.readTextFile(`${dir}/units.json`),
   ) as UnitTable;
-  const bin = await Deno.readFile(`${dir}/postings.bin`);
-  const words = new Uint32Array(bin.buffer, bin.byteOffset, bin.length / 4);
   const split = vocab.surfaces.length + 1;
-  const postings: Postings = {
-    offsets: words.subarray(0, split),
-    pairs: words.subarray(split),
+  const readPostings = async (name: string): Promise<Postings> => {
+    const bin = await Deno.readFile(`${dir}/${name}`);
+    const words = new Uint32Array(bin.buffer, bin.byteOffset, bin.length / 4);
+    return { offsets: words.subarray(0, split), pairs: words.subarray(split) };
   };
+  const postings = await readPostings("postings.bin");
+  const overlayPostings = await readPostings("postings-original.bin");
+  const overlay = JSON.parse(
+    await Deno.readTextFile(`${dir}/overlay.json`),
+  ) as { affectedUnits: number[] };
+  const affectedUnits = new Set(overlay.affectedUnits);
   const normSurfaces: number[][] = vocab.norms.map(() => []);
   for (let id = 0; id < vocab.surfaceNorm.length; id++) {
     normSurfaces[vocab.surfaceNorm[id]].push(id);
@@ -662,6 +735,8 @@ export const loadServeArtefacts = async (
     vocab,
     units,
     postings,
+    overlayPostings,
+    affectedUnits,
     normSurfaces,
     editionUnits,
   };

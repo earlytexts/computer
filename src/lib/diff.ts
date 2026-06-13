@@ -6,14 +6,33 @@
  * with the Myers O(ND) algorithm. Sections are compared block-by-block:
  * paragraphs are aligned by their Markit block ids ({#1}, {#n2}, ...) and
  * word-diffed individually.
+ *
+ * The diff is an internal representation. `diffToBlocks` turns it into a
+ * regular Markit document — words and whole blocks only in edition A wrapped
+ * in `deletion`, those only in B in `insertion` — so the API serves a diff
+ * as ordinary blocks and clients render it with no diff-specific logic.
  */
 
-import type { Block } from "@earlytexts/markit";
-import type { BlockDiff, DiffOp, Token } from "../types.ts";
-import { blockText } from "./text.ts";
+import type { Block, InlineElement } from "@earlytexts/markit";
+import { blockText, markBlock } from "./text.ts";
 import { lastSegment } from "./catalog.ts";
 
-export type { BlockDiff, DiffOp, Token };
+export type Token = {
+  text: string;
+  /** Whether the token was preceded by whitespace in the source. */
+  spaced: boolean;
+};
+
+export type DiffOp = {
+  type: "equal" | "delete" | "insert";
+  tokens: Token[];
+};
+
+export type BlockDiff =
+  | { type: "equal"; id: string; a: Block; b: Block }
+  | { type: "changed"; id: string; a: Block; b: Block; ops: DiffOp[] }
+  | { type: "deleted"; id: string; a: Block }
+  | { type: "inserted"; id: string; b: Block };
 
 const TOKEN_RE = /[\p{L}\p{N}'’—&-]+|[^\s\p{L}\p{N}]/gu;
 
@@ -207,3 +226,47 @@ export const diffBlocks = (a: Block[], b: Block[]): BlockDiff[] => {
   }
   return result;
 };
+
+/** Reconstruct an op's text, restoring the whitespace before each token. */
+const opText = (tokens: Token[]): string =>
+  tokens.map((token) => (token.spaced ? " " : "") + token.text).join("");
+
+/** A changed block's ops as inline content: equal runs plain, deletes in
+ * `deletion`, inserts in `insertion`. Formatting within the block is not
+ * preserved (the diff is over extracted text), matching the prior behaviour. */
+const opsToInline = (ops: DiffOp[]): InlineElement[] =>
+  ops.flatMap((op): InlineElement[] => {
+    const text = opText(op.tokens);
+    if (text === "") return [];
+    const plain: InlineElement = { type: "plainText", content: text };
+    switch (op.type) {
+      case "equal":
+        return [plain];
+      case "delete":
+        return [{ type: "deletion", content: [plain] }];
+      case "insert":
+        return [{ type: "insertion", content: [plain] }];
+    }
+  });
+
+/**
+ * Turn a block-level diff into a Markit document: the changes are expressed
+ * with Markit's own editorial markup, so the result renders exactly like the
+ * within-edition diff a `?version=both` retrieval returns.
+ */
+export const diffToBlocks = (diffs: BlockDiff[]): Block[] =>
+  diffs.map((diff): Block => {
+    switch (diff.type) {
+      case "equal":
+        return diff.b;
+      case "changed":
+        return {
+          ...diff.b,
+          content: [{ type: "paragraph", content: opsToInline(diff.ops) }],
+        };
+      case "deleted":
+        return markBlock(diff.a, "deletion");
+      case "inserted":
+        return markBlock(diff.b, "insertion");
+    }
+  });

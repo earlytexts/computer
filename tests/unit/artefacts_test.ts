@@ -40,19 +40,42 @@ Deno.test("the vocabulary is sorted and statistically coherent", async () => {
 
 Deno.test("postings are grouped by surface and within bounds", async () => {
   const { artefacts } = await testData();
-  const { offsets, pairs } = artefacts.postings;
+  const { postings, overlayPostings, affectedUnits } = artefacts;
   const surfaces = artefacts.vocab.surfaces.length;
   const units = artefacts.units.edition.length;
-  assertEquals(offsets.length, surfaces + 1);
-  assertEquals(offsets[surfaces] * 2, pairs.length);
+  assertEquals(postings.offsets.length, surfaces + 1);
+  assertEquals(overlayPostings.offsets.length, surfaces + 1);
+  assertEquals(postings.offsets[surfaces] * 2, postings.pairs.length);
+  assertEquals(
+    overlayPostings.offsets[surfaces] * 2,
+    overlayPostings.pairs.length,
+  );
+  const count = (p: typeof postings, id: number) =>
+    p.offsets[id + 1] - p.offsets[id];
   for (let id = 0; id < surfaces; id++) {
-    assert(offsets[id] <= offsets[id + 1]);
-    const count = offsets[id + 1] - offsets[id];
-    assertEquals(count, artefacts.vocab.cf[id]);
-    for (let i = offsets[id] * 2; i < offsets[id + 1] * 2; i += 2) {
-      assert(pairs[i] < units);
+    assert(postings.offsets[id] <= postings.offsets[id + 1]);
+    // cf counts occurrences across the edited primary and original overlay
+    assertEquals(
+      count(postings, id) + count(overlayPostings, id),
+      artefacts.vocab.cf[id],
+    );
+    for (
+      let i = postings.offsets[id] * 2;
+      i < postings.offsets[id + 1] * 2;
+      i += 2
+    ) {
+      assert(postings.pairs[i] < units);
+    }
+    // overlay pairs only ever address units that carry editorial markup
+    for (
+      let i = overlayPostings.offsets[id] * 2;
+      i < overlayPostings.offsets[id + 1] * 2;
+      i += 2
+    ) {
+      assert(affectedUnits.has(overlayPostings.pairs[i]));
     }
   }
+  assert(affectedUnits.size > 0); // the fixture edits solo §1 #2
 });
 
 Deno.test("blocks read back from disk match the text blob", async () => {

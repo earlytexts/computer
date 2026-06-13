@@ -9,6 +9,16 @@
 
 import type { Block } from "@earlytexts/markit";
 
+/**
+ * Editorial markup makes every edition two texts. `edited` is the curated
+ * reading text (insertions kept, deletions dropped); `original` is the
+ * printed text (deletions kept, insertions dropped); `both` returns the raw
+ * markup — the within-edition diff, the same shape a cross-edition compare
+ * produces. Retrieval defaults to `edited`; search and compare to `edited`
+ * too (they do not take `both`).
+ */
+export type Version = "edited" | "original" | "both";
+
 /* ------------------------------ catalog ------------------------------ */
 
 export type AuthorMeta = {
@@ -86,6 +96,8 @@ export type EditionResponse = {
   author: AuthorMeta;
   work: WorkMeta;
   edition: EditionMeta;
+  /** Which version the blocks below are resolved to. */
+  version: Version;
   /** The edition's own blocks (title page etc.). */
   blocks: Block[];
   sections: SectionSummary[];
@@ -95,6 +107,7 @@ export type FullTextResponse = {
   author: AuthorMeta;
   work: WorkMeta;
   edition: EditionMeta;
+  version: Version;
   blocks: Block[];
   sections: SectionContent[];
 };
@@ -109,6 +122,7 @@ export type SectionResponse = {
   author: AuthorMeta;
   work: WorkMeta;
   edition: EditionMeta;
+  version: Version;
   section: {
     path: string[];
     title: string;
@@ -125,23 +139,6 @@ export type SectionResponse = {
 };
 
 /* ------------------------------ compare ------------------------------ */
-
-export type Token = {
-  text: string;
-  /** Whether the token was preceded by whitespace in the source. */
-  spaced: boolean;
-};
-
-export type DiffOp = {
-  type: "equal" | "delete" | "insert";
-  tokens: Token[];
-};
-
-export type BlockDiff =
-  | { type: "equal"; id: string; a: Block; b: Block }
-  | { type: "changed"; id: string; a: Block; b: Block; ops: DiffOp[] }
-  | { type: "deleted"; id: string; a: Block }
-  | { type: "inserted"; id: string; b: Block };
 
 /**
  * Two editions' section trees aligned in reading order. A row missing
@@ -168,8 +165,16 @@ export type CompareSectionResponse = {
   work: WorkMeta;
   a: EditionMeta;
   b: EditionMeta;
+  /** Which version of each edition was compared (applied to both sides). */
+  version: Version;
   title: string;
-  diffs: BlockDiff[];
+  /**
+   * The diff as a Markit document: words and whole blocks present only in
+   * edition A are wrapped in `deletion`, those only in B in `insertion`
+   * (Markit's editorial markup, rendered like any other block). Render it
+   * with the same component used for reading text — no diff-specific logic.
+   */
+  blocks: Block[];
   childRows: AlignedRow[];
 };
 
@@ -193,9 +198,10 @@ export type SearchResult = {
   blockId: string;
   score: number;
   /**
-   * The complete matched block, fully formatted, with the matched tokens
-   * wrapped in `highlight` inline elements (rendered as <mark> by Markit's
-   * renderHTML). Render it like any other block.
+   * The complete matched block, resolved to the searched version and fully
+   * formatted, with the matched tokens wrapped in `highlight` inline
+   * elements (rendered as <mark> by Markit's renderHTML). Render it like any
+   * other block.
    */
   block: Block;
 };
@@ -203,6 +209,8 @@ export type SearchResult = {
 export type SearchResponse = {
   q: string;
   mode: SearchMode;
+  /** Which version was searched (`edited` default, or `original`). */
+  version: Version;
   total: number;
   page: number;
   pages: number;
