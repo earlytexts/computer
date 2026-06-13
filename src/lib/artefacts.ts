@@ -512,12 +512,10 @@ export const buildArtefacts = (
       const originalSpans = tokenize(originalText);
       for (let position = 0; position < originalSpans.length; position++) {
         const span = originalSpans[position];
-        record(
-          overlayPostings,
-          span.surface,
+        const tempId = intern(span.surface); // register in vocab but don't count cf/df
+        overlayPostings[tempId].push(
           unitIndex,
-          position,
-          isCapital(originalText[span.start]),
+          isCapital(originalText[span.start]) ? position + CAP_BIT : position,
         );
       }
     }
