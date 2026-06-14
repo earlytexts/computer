@@ -196,6 +196,34 @@ export type SearchHit = {
 };
 
 /**
+ * Start positions of each phrase occurrence in a hit, recovered from its
+ * matched token positions. A phrase of length `phraseLen` contributes a run of
+ * that many consecutive positions (see `phraseMatches`); `positions` is sorted
+ * and de-duplicated, so maximal runs of consecutive positions split into
+ * occurrences `phraseLen` tokens apart. Natural-language phrases don't overlap,
+ * so two occurrences never interleave within one run.
+ */
+export const occurrences = (
+  positions: number[],
+  phraseLen: number,
+): number[] => {
+  const starts: number[] = [];
+  let i = 0;
+  while (i < positions.length) {
+    let runLen = 1;
+    while (
+      i + runLen < positions.length &&
+      positions[i + runLen] === positions[i + runLen - 1] + 1
+    ) runLen++;
+    for (let j = 0; j + phraseLen <= runLen; j += phraseLen) {
+      starts.push(positions[i] + j);
+    }
+    i += runLen;
+  }
+  return starts;
+};
+
+/**
  * Result filters. With no `edition`, search is scoped to each work's canonical
  * edition (so a corpus-wide query returns one hit per work, not one per
  * printing); `edition: "all"` searches every edition, and a year slug searches

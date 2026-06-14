@@ -29,7 +29,10 @@ Deno.test("the vocabulary is sorted and statistically coherent", async () => {
   }
   for (let i = 1; i < norms.length; i++) assert(norms[i - 1] < norms[i]);
   for (let i = 0; i < surfaces.length; i++) {
-    assert(df[i] >= 1 && cf[i] >= df[i]);
+    // df can be 0 for surfaces that appear only in the original (pre-editorial)
+    // text: they enter the vocabulary for original-text search but are absent
+    // from the edited reading text, so cf = df = 0. cf >= df always holds.
+    assert(cf[i] >= df[i]);
     assert(surfaceNorm[i] >= 0 && surfaceNorm[i] < norms.length);
   }
   // surfaces keep old spellings; norms unify them onto a stemmed bucket
@@ -55,11 +58,10 @@ Deno.test("postings are grouped by surface and within bounds", async () => {
     p.offsets[id + 1] - p.offsets[id];
   for (let id = 0; id < surfaces; id++) {
     assert(postings.offsets[id] <= postings.offsets[id + 1]);
-    // cf counts occurrences across the edited primary and original overlay
-    assertEquals(
-      count(postings, id) + count(overlayPostings, id),
-      artefacts.vocab.cf[id],
-    );
+    // cf counts only edited-text (primary) occurrences; original-text overlay
+    // postings are intentionally excluded so that downstream statistics reflect
+    // the published reading text, not the manuscript layer.
+    assertEquals(count(postings, id), artefacts.vocab.cf[id]);
     for (
       let i = postings.offsets[id] * 2;
       i < postings.offsets[id + 1] * 2;
@@ -78,6 +80,24 @@ Deno.test("postings are grouped by surface and within bounds", async () => {
   }
   assert(affectedUnits.size > 0); // the fixture edits solo §1 #2
 });
+
+Deno.test(
+  "original-only surfaces are indexed for search but excluded from df/cf",
+  async () => {
+    const { artefacts } = await testData();
+    const { vocab, postings, overlayPostings } = artefacts;
+    // "corrcted" is the original misspelling in solo §1 #2 (the fixture edits
+    // it to "corrected"). It must enter the vocabulary so that an original-text
+    // search can find it, but it must NOT contribute to df or cf — those counts
+    // are grounded in the edited reading text only.
+    const id = vocab.surfaces.indexOf("corrcted");
+    assert(id >= 0, '"corrcted" must be in the vocabulary');
+    assertEquals(vocab.df[id], 0);
+    assertEquals(vocab.cf[id], 0);
+    assertEquals(postings.offsets[id + 1] - postings.offsets[id], 0);
+    assert(overlayPostings.offsets[id + 1] - overlayPostings.offsets[id] > 0);
+  },
+);
 
 Deno.test("blocks read back from disk match the text blob", async () => {
   const data = await testData();

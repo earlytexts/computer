@@ -12,6 +12,8 @@
  *   /authors/:author/works/:work/compare/:a/:b                 aligned section lists
  *   /authors/:author/works/:work/compare/:a/:b/sections/*      diff of a section (Markit)
  *   /search?q=&exactSpelling=&caseSensitive=&version=&author=&work=&edition=&page=&perPage=  full-text search
+ *   /frequency?q=&by=author|work|edition&exactSpelling=&caseSensitive=&version=&author=&work=&edition=  term/phrase frequency
+ *   /concordance?q=&context=&sort=position|left|right&exactSpelling=&caseSensitive=&version=&author=&work=&edition=&page=&perPage=  keyword-in-context lines
  *
  * A request without `/editions/:edition` addresses the work's canonical
  * edition. Search with no `edition` is scoped to canonical editions;
@@ -35,9 +37,12 @@ import {
   catalogResponse,
   compareResponse,
   compareSectionResponse,
+  concordanceResponse,
   editionResponse,
+  frequencyResponse,
   fullTextResponse,
   searchResponse,
+  sectionFullTextResponse,
   sectionResponse,
 } from "./api.ts";
 import { clientKey, type RateLimiter } from "./ratelimit.ts";
@@ -110,6 +115,39 @@ const route = async (
       }),
     );
   }
+  if (segments[0] === "frequency" && segments.length === 1) {
+    const params = url.searchParams;
+    return json(
+      frequencyResponse(api.artefacts, {
+        q: params.get("q") ?? "",
+        by: params.get("by") ?? undefined,
+        exactSpelling: flag(params.get("exactSpelling")),
+        caseSensitive: flag(params.get("caseSensitive")),
+        version: params.get("version") ?? undefined,
+        author: params.get("author") ?? undefined,
+        work: params.get("work") ?? undefined,
+        edition: params.get("edition") ?? undefined,
+      }),
+    );
+  }
+  if (segments[0] === "concordance" && segments.length === 1) {
+    const params = url.searchParams;
+    return json(
+      await concordanceResponse(api.artefacts, {
+        q: params.get("q") ?? "",
+        context: Number(params.get("context")) || undefined,
+        sort: params.get("sort") ?? undefined,
+        exactSpelling: flag(params.get("exactSpelling")),
+        caseSensitive: flag(params.get("caseSensitive")),
+        version: params.get("version") ?? undefined,
+        author: params.get("author") ?? undefined,
+        work: params.get("work") ?? undefined,
+        edition: params.get("edition") ?? undefined,
+        page: Number(params.get("page")) || undefined,
+        perPage: Number(params.get("perPage")) || undefined,
+      }),
+    );
+  }
 
   if (
     segments[0] !== "authors" || segments[2] !== "works" || segments.length < 4
@@ -141,12 +179,28 @@ const route = async (
       );
     }
     if (rest[0] === "sections" && rest.length > 1) {
+      const sectionPath = rest.slice(1);
+      // A trailing /full on a section path returns its full text (recursively).
+      if (
+        sectionPath.length > 1 &&
+        sectionPath[sectionPath.length - 1] === "full"
+      ) {
+        const data = await sectionFullTextResponse(
+          store,
+          author,
+          work,
+          edition,
+          sectionPath.slice(0, -1),
+          textVersion(url),
+        );
+        return data === undefined ? notFound() : json(data);
+      }
       const section = await sectionResponse(
         store,
         author,
         work,
         edition,
-        rest.slice(1),
+        sectionPath,
         textVersion(url),
       );
       return section === undefined ? notFound() : json(section);

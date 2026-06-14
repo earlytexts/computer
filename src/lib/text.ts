@@ -29,7 +29,6 @@ import type {
   BlockElement,
   InlineElement,
   List,
-  MarkitDocument,
 } from "@earlytexts/markit";
 import type { Version } from "../types.ts";
 

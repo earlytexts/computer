@@ -14,6 +14,7 @@ import type {
   EditionResponse,
   FullTextResponse,
   SearchResponse,
+  SectionFullTextResponse,
   SectionResponse,
 } from "../src/types.ts";
 
@@ -111,6 +112,33 @@ Deno.test("a stub section reports imported = false", async () => {
     "/authors/test/works/solo/sections/2",
   );
   assertEquals(section.section.imported, false);
+});
+
+Deno.test("section full text returns the section with all descendant blocks", async () => {
+  // solo § 1 has two subsections; /full loads all of them recursively.
+  const full = await getJson<SectionFullTextResponse>(
+    "/authors/test/works/solo/sections/1/full",
+  );
+  assertEquals(full.edition.slug, "1740");
+  assertEquals(full.section.path, ["1"]);
+  assertEquals(full.section.title, "Part 1");
+  // the section itself has a title block
+  assert(full.section.blocks.length > 0);
+  // both subsections come back with their text
+  assertEquals(full.section.children.length, 2);
+  assert(full.section.children.every((c) => c.blocks.length > 0));
+  // navigation follows depth-first order: section 1's next is its first child
+  assertEquals(full.prev, undefined);
+  assertEquals(full.next?.path, ["1", "1"]);
+  // section 2 of solo is a stub, so no compare editions
+  assertEquals(full.compareEditions, []);
+  assertEquals(full.ancestors, []);
+});
+
+Deno.test("section full text 404s for unknown sections", async () => {
+  const response = await request("/authors/test/works/solo/sections/99/full");
+  assertEquals(response.status, 404);
+  await response.body?.cancel();
 });
 
 Deno.test("compare aligns the two editions' sections", async () => {

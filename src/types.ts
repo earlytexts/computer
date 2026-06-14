@@ -153,6 +153,19 @@ export type SectionResponse = {
   compareEditions: EditionSection[];
 };
 
+export type SectionFullTextResponse = {
+  author: AuthorMeta;
+  work: WorkMeta;
+  edition: EditionMeta;
+  version: Version;
+  /** The requested section with all its descendant blocks loaded. */
+  section: SectionContent;
+  ancestors: SectionRef[];
+  prev?: SectionRef;
+  next?: SectionRef;
+  compareEditions: EditionSection[];
+};
+
 /* ------------------------------ compare ------------------------------ */
 
 /**
@@ -244,6 +257,68 @@ export type SearchResponse = {
   page: number;
   pages: number;
   results: SearchResult[];
+};
+
+/* ----------------------------- frequency ----------------------------- */
+
+export type FrequencyEntry = {
+  label: string;
+  author: string;
+  work: string;
+  edition: string | null; // null unless by="edition"
+  count: number; // phrase occurrences in this group
+  tokens: number; // total tokens in this group (denominator)
+  relative: number; // occurrences per 1000 tokens, rounded to 1 decimal
+};
+
+export type FrequencyResponse = {
+  q: string;
+  by: "author" | "work" | "edition";
+  total: number; // sum of count across all groups
+  results: FrequencyEntry[]; // sorted by count descending
+};
+
+/* ---------------------------- concordance ---------------------------- */
+
+/** One occurrence of the phrase, shown keyword-in-context. */
+export type ConcordanceLine = {
+  author: string; // author slug
+  authorName: string; // surname, for display
+  work: string;
+  workBreadcrumb: string;
+  edition: string; // a year slug
+  sectionPath: string[];
+  sectionTitle: string;
+  blockId: string;
+  /** Context words to the left of the keyword, in reading order ("" at the
+   * block's start). */
+  left: string;
+  /** The matched phrase, verbatim from the block's extracted text. */
+  keyword: string;
+  /** Context words to the right of the keyword, in reading order ("" at the
+   * block's end). */
+  right: string;
+  /** True when context was cut at the word limit, not the block edge (so a UI
+   * can show an ellipsis on that side). */
+  leftTruncated: boolean;
+  rightTruncated: boolean;
+};
+
+export type ConcordanceResponse = {
+  q: string;
+  /** Context words kept on each side of the keyword. */
+  context: number;
+  /** Line order: `position` (corpus order) or by the words nearest the keyword
+   * on the `left` / `right`. */
+  sort: "position" | "left" | "right";
+  /** Matching options, as for search (the whole query is one phrase). */
+  exactSpelling: boolean;
+  caseSensitive: boolean;
+  version: Version;
+  total: number; // occurrences across the whole scope
+  page: number;
+  pages: number;
+  lines: ConcordanceLine[];
 };
 
 /* ------------------------------- errors ------------------------------ */

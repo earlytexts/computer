@@ -19,9 +19,12 @@ import type {
   CatalogResponse,
   CompareResponse,
   CompareSectionResponse,
+  ConcordanceResponse,
   EditionResponse,
+  FrequencyResponse,
   FullTextResponse,
   SearchResponse,
+  SectionFullTextResponse,
   SectionResponse,
   Version,
 } from "./types.ts";
@@ -33,6 +36,33 @@ export type SearchParams = {
   /** Require initial capitalisation to agree (default: ignore case). */
   caseSensitive?: boolean;
   /** Which text to search: edited reading text (default) or the original. */
+  version?: "edited" | "original";
+  author?: string;
+  work?: string;
+  edition?: string;
+  page?: number;
+};
+
+export type FrequencyParams = {
+  q: string;
+  /** Group occurrences by author, work, or edition (default: work). */
+  by?: "author" | "work" | "edition";
+  exactSpelling?: boolean;
+  caseSensitive?: boolean;
+  version?: "edited" | "original";
+  author?: string;
+  work?: string;
+  edition?: string;
+};
+
+export type ConcordanceParams = {
+  q: string;
+  /** Context words on each side of the keyword (default 6, max 25). */
+  context?: number;
+  /** Line order: corpus order (default) or by the nearest words on each side. */
+  sort?: "position" | "left" | "right";
+  exactSpelling?: boolean;
+  caseSensitive?: boolean;
   version?: "edited" | "original";
   author?: string;
   work?: string;
@@ -62,6 +92,13 @@ export type Computer = {
     path: string[],
     version?: Version,
   ) => Promise<SectionResponse | undefined>;
+  sectionFullText: (
+    author: string,
+    work: string,
+    edition: string | undefined,
+    path: string[],
+    version?: Version,
+  ) => Promise<SectionFullTextResponse | undefined>;
   compare: (
     author: string,
     work: string,
@@ -77,6 +114,8 @@ export type Computer = {
     version?: Version,
   ) => Promise<CompareSectionResponse | undefined>;
   search: (params: SearchParams) => Promise<SearchResponse>;
+  frequency: (params: FrequencyParams) => Promise<FrequencyResponse>;
+  concordance: (params: ConcordanceParams) => Promise<ConcordanceResponse>;
 };
 
 const CATALOG_TTL_MS = 60_000;
@@ -159,6 +198,13 @@ export const computerClient = (
         }`,
         version,
       )),
+    sectionFullText: (author, work, edition, path, version) =>
+      get(withVersion(
+        `${editionBase(author, work, edition)}/sections/${
+          path.map(segment).join("/")
+        }/full`,
+        version,
+      )),
     compare: (author, work, a, b) =>
       get(
         `${works(author)}/${segment(work)}/compare/${segment(a)}/${segment(b)}`,
@@ -180,6 +226,32 @@ export const computerClient = (
       if (params.edition !== undefined) query.set("edition", params.edition);
       if (params.page !== undefined) query.set("page", String(params.page));
       return must(`/search?${query}`);
+    },
+    frequency: (params) => {
+      const query = new URLSearchParams({ q: params.q });
+      if (params.by !== undefined) query.set("by", params.by);
+      if (params.exactSpelling) query.set("exactSpelling", "1");
+      if (params.caseSensitive) query.set("caseSensitive", "1");
+      if (params.version !== undefined) query.set("version", params.version);
+      if (params.author !== undefined) query.set("author", params.author);
+      if (params.work !== undefined) query.set("work", params.work);
+      if (params.edition !== undefined) query.set("edition", params.edition);
+      return must(`/frequency?${query}`);
+    },
+    concordance: (params) => {
+      const query = new URLSearchParams({ q: params.q });
+      if (params.context !== undefined) {
+        query.set("context", String(params.context));
+      }
+      if (params.sort !== undefined) query.set("sort", params.sort);
+      if (params.exactSpelling) query.set("exactSpelling", "1");
+      if (params.caseSensitive) query.set("caseSensitive", "1");
+      if (params.version !== undefined) query.set("version", params.version);
+      if (params.author !== undefined) query.set("author", params.author);
+      if (params.work !== undefined) query.set("work", params.work);
+      if (params.edition !== undefined) query.set("edition", params.edition);
+      if (params.page !== undefined) query.set("page", String(params.page));
+      return must(`/concordance?${query}`);
     },
   };
 };

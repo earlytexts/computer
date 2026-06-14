@@ -1,0 +1,28 @@
+{
+  "NOTE": "Surface-to-lemma overrides. Keys are case-folded surface forms as they appear in vocab.surfaces; values are the citation-form lemma string. The heuristic in buildSurfaceLemma handles the bulk of regular inflections; this file covers what it cannot: suppletive forms (irregular verbs) and archaic conjugations. Extend this file on inspection of the generated table whenever the heuristic produces a wrong or opaque result.",
+
+  "am": "be",
+  "art": "be",
+  "is": "be",
+  "are": "be",
+  "was": "be",
+  "wast": "be",
+  "wer": "be",
+  "were": "be",
+  "wert": "be",
+  "been": "be",
+
+  "has": "have",
+  "hath": "have",
+  "hast": "have",
+  "had": "have",
+
+  "doth": "do",
+  "did": "do",
+  "done": "do",
+
+  "went": "go",
+  "gone": "go",
+
+  "wilt": "will"
+}

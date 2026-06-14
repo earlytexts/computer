@@ -13,7 +13,12 @@
  * as ordinary blocks and clients render it with no diff-specific logic.
  */
 
-import type { Block, InlineElement, List, WrapperType } from "@earlytexts/markit";
+import type {
+  Block,
+  InlineElement,
+  List,
+  WrapperType,
+} from "@earlytexts/markit";
 import { blockText, markBlock } from "./text.ts";
 import { lastSegment } from "./catalog.ts";
 
@@ -200,7 +205,11 @@ const buildSpans = (block: Block): { text: string; spans: TextSpan[] } => {
 
   const add = (s: string, ctx: ContextFrame[]): void => {
     if (s === "") return;
-    spans.push({ start: text.length, end: text.length + s.length, context: ctx });
+    spans.push({
+      start: text.length,
+      end: text.length + s.length,
+      context: ctx,
+    });
     text += s;
   };
 

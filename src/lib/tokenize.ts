@@ -29,7 +29,8 @@ import variantsJson from "./variants.json" with { type: "json" };
 
 // 2: query is matched as a phrase; postings carry a capitalisation bit;
 // normalisation now Porter-stems after the variant table (plurals/inflections).
-export const TOKENIZER_VERSION = 2;
+// 3: productive spelling-class folds (-ize/-ise, -our/-or) around the stemmer.
+export const TOKENIZER_VERSION = 3;
 
 const VARIANTS = new Map<string, string>(
   Object.entries(variantsJson).filter(
@@ -198,12 +199,41 @@ export const stem = (word: string): string => {
  * table (so old and modern spellings share a form, "shew"/"show"), then
  * Porter-stems (so inflections and plurals do too, "causes"/"cause").
  */
-export const normalizeSurface = (surface: string): string => {
-  const base = surface
+/**
+ * Fold a surface to the base form the variant table is keyed on: strip
+ * apostrophes and accents, expand ligatures. This is the first step of
+ * `normalizeSurface`, before the variant table and Porter stemmer; the
+ * variants curation tool (dev/variants.ts) keys new overrides on exactly
+ * this form, so it must stay the single source of truth.
+ */
+export const foldBase = (surface: string): string =>
+  surface
     .replace(/['’]/g, "")
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
     .replace(/æ/g, "ae")
     .replace(/œ/g, "oe");
-  return stem(VARIANTS.get(base) ?? base);
+
+/**
+ * Productive spelling-class folds: classes where the two spellings are always
+ * the *same word*, so collapsing them by rule (rather than one variant-table
+ * row per word) keeps the whole family — including inflections — in one bucket
+ * consistently. Deliberately narrow; en-/in- is excluded because it
+ * distinguishes real words (ensure/insure, endure/indure).
+ *
+ *  - `-ize/-ise`: canonicalise to `-is-` *before* stemming, because the stemmer
+ *    strips `-ize` but not `-ise` and would otherwise split the family
+ *    (organize→"organ" vs organise→"organis"). The 3-char guard leaves
+ *    size/prize/maize/seize alone.
+ *  - `-our/-or`: canonicalise to `-or` *after* stemming, where the stemmer has
+ *    already reduced honours/honoured/honouring to "honour". The 3-char guard
+ *    leaves our/four/hour alone.
+ */
+const IZE_RE = /([a-z]{3,})iz(e|es|ed|ing|ation|ations|er|ers)$/;
+const OUR_RE = /([a-z]{3,})our$/;
+
+export const normalizeSurface = (surface: string): string => {
+  const base = foldBase(surface);
+  const mapped = (VARIANTS.get(base) ?? base).replace(IZE_RE, "$1is$2");
+  return stem(mapped).replace(OUR_RE, "$1or");
 };

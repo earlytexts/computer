@@ -25,17 +25,35 @@ import {
 } from "./lib/compare.ts";
 import { diffBlocks, diffToBlocks } from "./lib/diff.ts";
 import { readUnitBlock } from "./lib/artefacts.ts";
-import { matchRanges, search, type SearchOptions } from "./lib/search.ts";
+import {
+  matchRanges,
+  occurrences,
+  parseQuery,
+  search,
+  type SearchOptions,
+} from "./lib/search.ts";
+import {
+  compareLines,
+  lineParts,
+  type Sort,
+} from "./lib/concordance.ts";
+import { tokenize } from "./lib/tokenize.ts";
 import { blockText, highlightBlock, resolveBlock } from "./lib/text.ts";
 import type {
   AlignedRow,
   CatalogResponse,
   CompareResponse,
   CompareSectionResponse,
+  ConcordanceLine,
+  ConcordanceResponse,
   EditionResponse,
+  EditionSection,
+  FrequencyEntry,
+  FrequencyResponse,
   FullTextResponse,
   SearchResponse,
   SectionContent,
+  SectionFullTextResponse,
   SectionRef,
   SectionResponse,
   SectionSummary,
@@ -200,6 +218,54 @@ export const sectionResponse = async (
   };
 };
 
+export const sectionFullTextResponse = async (
+  store: BlockStore,
+  author: AuthorEntry,
+  work: WorkEntry,
+  edition: EditionEntry,
+  path: string[],
+  version: Version = "edited",
+): Promise<SectionFullTextResponse | undefined> => {
+  const skeleton = findSkeleton(edition.sections, path);
+  if (skeleton === undefined) return undefined;
+
+  const flat = flattenSkeleton(edition.sections);
+  const index = flat.findIndex((s) =>
+    s.path.join("/") === skeleton.path.join("/")
+  );
+  const ancestors = skeleton.path.slice(0, -1)
+    .map((_slug, i) =>
+      findSkeleton(edition.sections, skeleton.path.slice(0, i + 1))
+    )
+    .filter((s): s is SkeletonSection => s !== undefined);
+
+  const keys = pathKey(skeleton.path);
+  const compareEditions: EditionSection[] = work.editions
+    .filter((other) => other !== edition)
+    .flatMap((other) => {
+      const match = findSectionByKey(other.sections, keys);
+      return match === undefined
+        ? []
+        : [{ slug: other.meta.slug, path: match.path }];
+    });
+
+  return {
+    author: author.meta,
+    work: work.meta,
+    edition: edition.meta,
+    version,
+    section: await sectionContent(store, skeleton, version),
+    ancestors: ancestors.map(sectionRef),
+    prev: flat[index - 1] === undefined
+      ? undefined
+      : sectionRef(flat[index - 1]),
+    next: flat[index + 1] === undefined
+      ? undefined
+      : sectionRef(flat[index + 1]),
+    compareEditions,
+  };
+};
+
 export const compareResponse = (
   author: AuthorEntry,
   work: WorkEntry,
@@ -305,7 +371,130 @@ export type SearchParams = {
   perPage?: number;
 };
 
+export type FrequencyParams = {
+  q: string;
+  by?: string; // "author" | "work" | "edition"; defaults to "work"
+  exactSpelling?: boolean;
+  caseSensitive?: boolean;
+  version?: string;
+  author?: string;
+  work?: string;
+  edition?: string; // undefined = canonical only; "all" = every edition
+};
+
 const MAX_PER_PAGE = 100;
+
+export const frequencyResponse = (
+  artefacts: ServeArtefacts,
+  params: FrequencyParams,
+): FrequencyResponse => {
+  const q = params.q.trim();
+  const by: "author" | "work" | "edition" = params.by === "author"
+    ? "author"
+    : params.by === "edition"
+    ? "edition"
+    : "work";
+  const options: SearchOptions = {
+    exactSpelling: params.exactSpelling ?? false,
+    caseSensitive: params.caseSensitive ?? false,
+  };
+  const version: Version = params.version === "original"
+    ? "original"
+    : "edited";
+  const hits = q === "" ? [] : search(
+    artefacts,
+    q,
+    { author: params.author, work: params.work, edition: params.edition },
+    options,
+    version,
+  );
+
+  // Each phrase match contributes phraseLength positions; dividing recovers
+  // the occurrence count without re-running phrase matching.
+  const phraseLength = Math.max(1, parseQuery(q).length);
+  const { units, manifest, editionUnits } = artefacts;
+
+  // Total token count per edition index (summed once, reused across groups).
+  const editionTokenCounts = manifest.editions.map((_, i) =>
+    editionUnits[i].reduce((s, u) => s + units.tokenCount[u], 0)
+  );
+
+  type GroupData = {
+    count: number;
+    tokens: number;
+    label: string;
+    author: string;
+    work: string;
+    edition: string | null;
+  };
+  const groups = new Map<string, GroupData>();
+
+  const groupKey = (author: string, work: string, edition: string): string =>
+    by === "author"
+      ? author
+      : by === "edition"
+      ? `${author}/${work}/${edition}`
+      : `${author}/${work}`;
+
+  // First pass: count occurrences per group from hits.
+  for (const hit of hits) {
+    const ref = manifest.editions[units.edition[hit.unitIndex]];
+    const key = groupKey(ref.author, ref.work, ref.edition);
+    if (!groups.has(key)) {
+      const label = by === "author"
+        ? ref.authorName
+        : by === "edition"
+        ? `${ref.workBreadcrumb} (${ref.edition})`
+        : ref.workBreadcrumb;
+      groups.set(key, {
+        count: 0,
+        tokens: 0,
+        label,
+        author: ref.author,
+        work: ref.work,
+        edition: by === "edition" ? ref.edition : null,
+      });
+    }
+    groups.get(key)!.count += Math.round(hit.positions.length / phraseLength);
+  }
+
+  // Second pass: sum in-scope token counts as the relative-frequency denominator.
+  // Uses the same edition filter as search() so the scope is consistent.
+  for (let i = 0; i < manifest.editions.length; i++) {
+    const ref = manifest.editions[i];
+    if (params.author !== undefined && ref.author !== params.author) continue;
+    if (params.work !== undefined && ref.work !== params.work) continue;
+    if (params.edition === undefined) {
+      if (!ref.canonical) continue;
+    } else if (params.edition !== "all" && ref.edition !== params.edition) {
+      continue;
+    }
+    const key = groupKey(ref.author, ref.work, ref.edition);
+    const group = groups.get(key);
+    if (group !== undefined) group.tokens += editionTokenCounts[i];
+  }
+
+  const results: FrequencyEntry[] = [...groups.values()]
+    .sort((a, b) => b.count - a.count)
+    .map((g) => ({
+      label: g.label,
+      author: g.author,
+      work: g.work,
+      edition: g.edition,
+      count: g.count,
+      tokens: g.tokens,
+      relative: g.tokens > 0
+        ? Math.round((g.count / g.tokens) * 10000) / 10
+        : 0,
+    }));
+
+  return {
+    q,
+    by,
+    total: results.reduce((s, r) => s + r.count, 0),
+    results,
+  };
+};
 
 export const searchResponse = async (
   artefacts: ServeArtefacts,
@@ -366,5 +555,127 @@ export const searchResponse = async (
         block: highlightBlock(block, ranges, version),
       };
     })),
+  };
+};
+
+/* ---------------------------- concordance ---------------------------- */
+
+export type ConcordanceParams = {
+  q: string;
+  context?: number;
+  sort?: string; // "position" (default) | "left" | "right"
+  exactSpelling?: boolean;
+  caseSensitive?: boolean;
+  version?: string;
+  author?: string;
+  work?: string;
+  edition?: string; // undefined = canonical only; "all" = every edition
+  page?: number;
+  perPage?: number;
+};
+
+const DEFAULT_CONTEXT = 6;
+const MAX_CONTEXT = 25;
+
+/**
+ * Keyword-in-context lines for a phrase: one line per occurrence (not per
+ * block), each with a trimmed window of context on either side. Reuses search's
+ * matching, edition scoping, and version handling, then expands every hit's
+ * matched positions into occurrences. Sorting by the words nearest the keyword
+ * needs the whole occurrence list, so all matched blocks are read before the
+ * page is sliced (the block store's cache absorbs the repeated reads).
+ */
+export const concordanceResponse = async (
+  artefacts: ServeArtefacts,
+  params: ConcordanceParams,
+): Promise<ConcordanceResponse> => {
+  const q = params.q.trim();
+  const options: SearchOptions = {
+    exactSpelling: params.exactSpelling ?? false,
+    caseSensitive: params.caseSensitive ?? false,
+  };
+  const version: Version = params.version === "original"
+    ? "original"
+    : "edited";
+  const sort: Sort = params.sort === "left"
+    ? "left"
+    : params.sort === "right"
+    ? "right"
+    : "position";
+  const context = Math.min(
+    MAX_CONTEXT,
+    Math.max(1, Math.floor(params.context ?? DEFAULT_CONTEXT)),
+  );
+  const page = Math.max(1, Math.floor(params.page ?? 1));
+  const perPage = Math.min(
+    MAX_PER_PAGE,
+    Math.max(1, Math.floor(params.perPage ?? 20)),
+  );
+  const phraseLen = Math.max(1, parseQuery(q).length);
+  const hits = q === "" ? [] : search(
+    artefacts,
+    q,
+    { author: params.author, work: params.work, edition: params.edition },
+    options,
+    version,
+  );
+
+  const { units, manifest } = artefacts;
+  // Carry the sort keys and corpus position alongside each line, then strip
+  // them off after ordering and paginating.
+  type Built = ConcordanceLine & {
+    unitIndex: number;
+    start: number;
+    leftWords: string[];
+    rightWords: string[];
+  };
+  const built: Built[] = [];
+  for (const hit of hits) {
+    const block = await readUnitBlock(artefacts, hit.unitIndex);
+    const text = blockText(block, version);
+    const spans = tokenize(text);
+    const ref = manifest.editions[units.edition[hit.unitIndex]];
+    const sectionPath = units.sectionPath[hit.unitIndex];
+    for (const start of occurrences(hit.positions, phraseLen)) {
+      const parts = lineParts(text, spans, start, phraseLen, context);
+      built.push({
+        author: ref.author,
+        authorName: ref.authorName,
+        work: ref.work,
+        workBreadcrumb: ref.workBreadcrumb,
+        edition: ref.edition,
+        sectionPath: sectionPath === "" ? [] : sectionPath.split("/"),
+        sectionTitle: units.sectionTitle[hit.unitIndex],
+        blockId: units.blockId[hit.unitIndex],
+        left: parts.left,
+        keyword: parts.keyword,
+        right: parts.right,
+        leftTruncated: parts.leftTruncated,
+        rightTruncated: parts.rightTruncated,
+        unitIndex: hit.unitIndex,
+        start,
+        leftWords: parts.leftWords,
+        rightWords: parts.rightWords,
+      });
+    }
+  }
+
+  built.sort(compareLines(sort));
+  const pages = Math.max(1, Math.ceil(built.length / perPage));
+  const lines = built.slice((page - 1) * perPage, page * perPage).map(
+    ({ unitIndex: _u, start: _s, leftWords: _l, rightWords: _r, ...line }) =>
+      line,
+  );
+  return {
+    q,
+    context,
+    sort,
+    exactSpelling: options.exactSpelling,
+    caseSensitive: options.caseSensitive,
+    version,
+    total: built.length,
+    page,
+    pages,
+    lines,
   };
 };
