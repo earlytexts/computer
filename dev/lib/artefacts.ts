@@ -1,7 +1,7 @@
 /**
  * Read-only access to the built artefacts the curation tools work against.
  * They never touch the corpus directly: the surface vocabulary, its
- * frequencies, normalised forms and inferred lemmas all come from the last
+ * frequencies, canonical spellings and inferred lemmas all come from the last
  * `deno task build`. Pointing at a fresh build is how the tools "adapt when
  * the corpus is rebuilt" — every run re-reads the current vocabulary and the
  * build fingerprint, and progress is keyed by surface so it carries over.
@@ -10,13 +10,14 @@
 /** The slice of vocab.json the curation tools need. */
 export type Vocab = {
   surfaces: string[];
-  /** surface index -> index into norms */
-  surfaceNorm: number[];
+  /** surface index -> index into spellings */
+  surfaceSpelling: number[];
   /** units containing each surface */
   df: number[];
   /** total occurrences of each surface */
   cf: number[];
-  norms: string[];
+  /** distinct canonical spellings (the spelling-tolerant search bucket) */
+  spellings: string[];
   /** surface index -> heuristic citation-form lemma */
   surfaceLemma: string[];
 };

@@ -11,16 +11,17 @@
  *   /authors/:author/works/:work/editions/:edition[/full|/sections/*]  a specific edition
  *   /authors/:author/works/:work/compare/:a/:b                 aligned section lists
  *   /authors/:author/works/:work/compare/:a/:b/sections/*      diff of a section (Markit)
- *   /search?q=&exactSpelling=&caseSensitive=&version=&author=&work=&edition=&page=&perPage=  full-text search
- *   /frequency?q=&by=author|work|edition&exactSpelling=&caseSensitive=&version=&author=&work=&edition=  term/phrase frequency
- *   /concordance?q=&context=&sort=position|left|right&exactSpelling=&caseSensitive=&version=&author=&work=&edition=&page=&perPage=  keyword-in-context lines
+ *   /search?q=&match=&caseSensitive=&version=&author=&work=&edition=&page=&perPage=  full-text search
+ *   /frequency?q=&by=author|work|edition&match=&caseSensitive=&version=&author=&work=&edition=  term/phrase frequency
+ *   /concordance?q=&context=&sort=position|left|right&match=&caseSensitive=&version=&author=&work=&edition=&page=&perPage=  keyword-in-context lines
  *
  * A request without `/editions/:edition` addresses the work's canonical
  * edition. Search with no `edition` is scoped to canonical editions;
  * `edition=all` searches every edition.
  *
- * Search matches the whole query as one phrase; it is tolerant by default,
- * tightened by exactSpelling=1 and/or caseSensitive=1 (see types.ts). Text
+ * Search matches the whole query as one phrase; it is tolerant by default
+ * (match=form), tightened by match=spelling|exact and/or caseSensitive=1 (see
+ * types.ts). Text
  * routes take ?version=edited|original|both (default edited); search and
  * compare take ?version=edited|original (default edited).
  */
@@ -104,7 +105,7 @@ const route = async (
     return json(
       await searchResponse(api.artefacts, {
         q: params.get("q") ?? "",
-        exactSpelling: flag(params.get("exactSpelling")),
+        match: params.get("match") ?? undefined,
         caseSensitive: flag(params.get("caseSensitive")),
         version: params.get("version") ?? undefined,
         author: params.get("author") ?? undefined,
@@ -121,7 +122,7 @@ const route = async (
       frequencyResponse(api.artefacts, {
         q: params.get("q") ?? "",
         by: params.get("by") ?? undefined,
-        exactSpelling: flag(params.get("exactSpelling")),
+        match: params.get("match") ?? undefined,
         caseSensitive: flag(params.get("caseSensitive")),
         version: params.get("version") ?? undefined,
         author: params.get("author") ?? undefined,
@@ -137,7 +138,7 @@ const route = async (
         q: params.get("q") ?? "",
         context: Number(params.get("context")) || undefined,
         sort: params.get("sort") ?? undefined,
-        exactSpelling: flag(params.get("exactSpelling")),
+        match: params.get("match") ?? undefined,
         caseSensitive: flag(params.get("caseSensitive")),
         version: params.get("version") ?? undefined,
         author: params.get("author") ?? undefined,

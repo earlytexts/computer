@@ -1,14 +1,19 @@
 import { assert, assertEquals } from "@std/assert";
 import {
-  normalizeSurface,
+  formKey,
+  normalizeSpelling,
   stem,
   surfaceForm,
   tokenize,
 } from "../../src/lib/tokenize.ts";
 
-/** Two surfaces share a normalised form (so a tolerant search unites them). */
-const unify = (a: string, b: string): boolean =>
-  normalizeSurface(a) === normalizeSurface(b);
+/** Two surfaces share a canonical spelling (united by spelling-tolerant search). */
+const sameSpelling = (a: string, b: string): boolean =>
+  normalizeSpelling(a) === normalizeSpelling(b);
+
+/** Two surfaces share a form bucket (united by the tolerant form search). */
+const sameForm = (a: string, b: string): boolean =>
+  formKey(normalizeSpelling(a)) === formKey(normalizeSpelling(b));
 
 Deno.test("tokenize case-folds but keeps spellings and offsets", () => {
   const spans = tokenize("The Encrease of LIBERTY.");
@@ -38,31 +43,38 @@ Deno.test("surfaceForm folds a query word like corpus text", () => {
   assertEquals(surfaceForm("..."), "");
 });
 
-Deno.test("stem collapses plurals and inflections", () => {
-  // the normalised form is just a bucket key, but these anchor the behaviour
+Deno.test("normalizeSpelling canonicalises orthography to a real word", () => {
+  // accents, ligatures, apostrophes folded
+  assert(sameSpelling("’tis", "tis"));
+  assert(sameSpelling("pluralité", "pluralite"));
+  assert(sameSpelling("œconomy", "economy")); // ligature, then via variants
+  assert(sameSpelling("phænomenon", "phenomenon"));
+  // old spelling mapped to modern, via the variant table
+  assert(sameSpelling("encrease", "increase"));
+  assert(sameSpelling("betwixt", "between"));
+  assert(sameSpelling("shew", "show"));
+  // productive folds: -ise canonicalises to -ize, -our to -or
+  assertEquals(normalizeSpelling("organise"), "organize");
+  assertEquals(normalizeSpelling("honour"), "honor");
+  // but the output is a real word, NOT a stem: inflection is preserved
+  assertEquals(normalizeSpelling("encreasing"), "increasing");
+  assert(!sameSpelling("increase", "increases")); // spelling keeps the form
+});
+
+Deno.test("the productive folds leave short look-alikes alone", () => {
+  assertEquals(normalizeSpelling("rise"), "rise");
+  assertEquals(normalizeSpelling("wise"), "wise");
+  assertEquals(normalizeSpelling("four"), "four");
+  assertEquals(normalizeSpelling("flour"), "flour");
+});
+
+Deno.test("formKey collapses inflections over the canonical spelling", () => {
+  // the form key is just a bucket, but these anchor the behaviour
   assertEquals(stem("causes"), stem("cause"));
-  assertEquals(stem("effects"), stem("effect"));
-  assertEquals(stem("connection"), "connect");
-  assertEquals(stem("increase"), stem("increases"));
-});
-
-Deno.test("normalizeSurface folds apostrophes, accents, and ligatures", () => {
-  assert(unify("’tis", "tis"));
-  assert(unify("pluralité", "pluralite"));
-  assert(unify("œconomy", "economy")); // ligature, then via variants
-  assert(unify("phænomenon", "phenomenon"));
-});
-
-Deno.test("normalizeSurface unites variant spellings and inflections", () => {
-  // variant spellings
-  assert(unify("encrease", "increase"));
-  assert(unify("betwixt", "between"));
-  assert(unify("shew", "show"));
-  // plurals and inflections, including over a variant spelling
-  assert(unify("cause", "causes"));
-  assert(unify("connexion", "connections"));
-  assert(unify("encrease", "increases"));
-  // but distinct words stay distinct
-  assert(!unify("cause", "effect"));
-  assert(!unify("liberty", "liberality"));
+  assert(sameForm("cause", "causes"));
+  assert(sameForm("connexion", "connections")); // variant spelling + plural
+  assert(sameForm("encrease", "increases")); // old spelling + plural
+  // distinct words stay distinct
+  assert(!sameForm("cause", "effect"));
+  assert(!sameForm("liberty", "liberality"));
 });

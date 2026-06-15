@@ -215,7 +215,7 @@ Deno.test("search returns full formatted blocks with marks", async () => {
     `/search?q=${encodeURIComponent("liberty of the press")}`,
   );
   assert(found.total > 0);
-  assertEquals(found.exactSpelling, false);
+  assertEquals(found.match, "form");
   assertEquals(found.caseSensitive, false);
   const first = found.results[0];
   assertEquals(first.author, "test");
@@ -235,11 +235,11 @@ Deno.test("search defaults to canonical editions; edition=all widens it", async 
   // edition=all reaches the non-canonical 1750 too ("encrease").
   const all = await getJson<SearchResponse>("/search?q=encrease&edition=all");
   assertEquals(all.total, 2);
-  // exactSpelling pins to the surface as written: only 1750's "encrease".
+  // match=exact pins to the surface as written: only 1750's "encrease".
   const exact = await getJson<SearchResponse>(
-    "/search?q=encrease&exactSpelling=1&edition=all",
+    "/search?q=encrease&match=exact&edition=all",
   );
-  assertEquals(exact.exactSpelling, true);
+  assertEquals(exact.match, "exact");
   assertEquals(exact.total, 1);
   assertEquals(exact.results[0].edition, "1750");
   assertEquals(markedText(exact.results[0].block.content), ["encrease"]);

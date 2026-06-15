@@ -27,6 +27,7 @@ import { diffBlocks, diffToBlocks } from "./lib/diff.ts";
 import { readUnitBlock } from "./lib/artefacts.ts";
 import {
   matchRanges,
+  type MatchLevel,
   occurrences,
   parseQuery,
   search,
@@ -359,9 +360,13 @@ export const compareSectionResponse = async (
 
 /* ------------------------------- search ------------------------------ */
 
+/** Resolve the request's `match` string to a level; defaults to tolerant. */
+const parseMatch = (match?: string): MatchLevel =>
+  match === "exact" ? "exact" : match === "spelling" ? "spelling" : "form";
+
 export type SearchParams = {
   q: string;
-  exactSpelling?: boolean;
+  match?: string; // "exact" | "spelling" | "form"; defaults to "form"
   caseSensitive?: boolean;
   version?: string;
   author?: string;
@@ -374,7 +379,7 @@ export type SearchParams = {
 export type FrequencyParams = {
   q: string;
   by?: string; // "author" | "work" | "edition"; defaults to "work"
-  exactSpelling?: boolean;
+  match?: string; // "exact" | "spelling" | "form"; defaults to "form"
   caseSensitive?: boolean;
   version?: string;
   author?: string;
@@ -395,7 +400,7 @@ export const frequencyResponse = (
     ? "edition"
     : "work";
   const options: SearchOptions = {
-    exactSpelling: params.exactSpelling ?? false,
+    match: parseMatch(params.match),
     caseSensitive: params.caseSensitive ?? false,
   };
   const version: Version = params.version === "original"
@@ -502,7 +507,7 @@ export const searchResponse = async (
 ): Promise<SearchResponse> => {
   const q = params.q.trim();
   const options: SearchOptions = {
-    exactSpelling: params.exactSpelling ?? false,
+    match: parseMatch(params.match),
     caseSensitive: params.caseSensitive ?? false,
   };
   const version: Version = params.version === "original"
@@ -529,7 +534,7 @@ export const searchResponse = async (
   const { units, manifest } = artefacts;
   return {
     q,
-    exactSpelling: options.exactSpelling,
+    match: options.match,
     caseSensitive: options.caseSensitive,
     version,
     total: hits.length,
@@ -564,7 +569,7 @@ export type ConcordanceParams = {
   q: string;
   context?: number;
   sort?: string; // "position" (default) | "left" | "right"
-  exactSpelling?: boolean;
+  match?: string; // "exact" | "spelling" | "form"; defaults to "form"
   caseSensitive?: boolean;
   version?: string;
   author?: string;
@@ -591,7 +596,7 @@ export const concordanceResponse = async (
 ): Promise<ConcordanceResponse> => {
   const q = params.q.trim();
   const options: SearchOptions = {
-    exactSpelling: params.exactSpelling ?? false,
+    match: parseMatch(params.match),
     caseSensitive: params.caseSensitive ?? false,
   };
   const version: Version = params.version === "original"
@@ -670,7 +675,7 @@ export const concordanceResponse = async (
     q,
     context,
     sort,
-    exactSpelling: options.exactSpelling,
+    match: options.match,
     caseSensitive: options.caseSensitive,
     version,
     total: built.length,

@@ -222,6 +222,14 @@ export type CompareSectionResponse = {
 
 /* ------------------------------- search ------------------------------ */
 
+/**
+ * Which type level a query word is matched at, coarsest last:
+ *  - `exact`    the surface as written;
+ *  - `spelling` any spelling of the same form (orthography-tolerant);
+ *  - `form`     any inflection too (the tolerant default).
+ */
+export type MatchLevel = "exact" | "spelling" | "form";
+
 export type SearchResult = {
   author: string; // author slug
   authorName: string; // surname, for display
@@ -244,12 +252,12 @@ export type SearchResult = {
 export type SearchResponse = {
   q: string;
   /**
-   * The whole query is matched as one phrase. By default matching is tolerant
-   * (case- and spelling-insensitive: old/modern spellings and inflections find
-   * each other). `exactSpelling` matches the surface form as written;
-   * `caseSensitive` requires each word's initial capitalisation to agree.
+   * The whole query is matched as one phrase. `match` selects the type level:
+   * `form` (default) unites old/modern spellings and inflections, `spelling`
+   * only spellings, `exact` the surface as written. `caseSensitive` requires
+   * each word's initial capitalisation to agree.
    */
-  exactSpelling: boolean;
+  match: MatchLevel;
   caseSensitive: boolean;
   /** Which version was searched (`edited` default, or `original`). */
   version: Version;
@@ -312,7 +320,7 @@ export type ConcordanceResponse = {
    * on the `left` / `right`. */
   sort: "position" | "left" | "right";
   /** Matching options, as for search (the whole query is one phrase). */
-  exactSpelling: boolean;
+  match: MatchLevel;
   caseSensitive: boolean;
   version: Version;
   total: number; // occurrences across the whole scope

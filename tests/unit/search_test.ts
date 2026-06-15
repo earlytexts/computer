@@ -9,8 +9,9 @@ import {
 import { blockText, highlightBlock } from "../../src/lib/text.ts";
 import { testData, unitText } from "../helpers.ts";
 
-const EXACT: SearchOptions = { exactSpelling: true, caseSensitive: false };
-const CASED: SearchOptions = { exactSpelling: false, caseSensitive: true };
+const EXACT: SearchOptions = { match: "exact", caseSensitive: false };
+const SPELLING: SearchOptions = { match: "spelling", caseSensitive: false };
+const CASED: SearchOptions = { match: "form", caseSensitive: true };
 
 const editionOf = async (hit: SearchHit) => {
   const { artefacts } = await testData();
@@ -51,7 +52,7 @@ Deno.test("a phrase needs its words adjacent, not merely co-occurring", async ()
   assertEquals(search(artefacts, "agreeable avarice").length, 0);
 });
 
-Deno.test("exactSpelling matches the spelling as written", async () => {
+Deno.test("match=exact matches the spelling as written", async () => {
   const { artefacts } = await testData();
   const ALL = { work: "tw", edition: "all" };
   // tolerant unifies the spellings across both tw editions
@@ -69,6 +70,25 @@ Deno.test("exactSpelling matches the spelling as written", async () => {
   assertEquals(
     search(artefacts, "ENCREASE", { edition: "all" }, EXACT).length,
     1,
+  );
+});
+
+Deno.test("match=spelling unites spellings but keeps the surface", async () => {
+  const { artefacts } = await testData();
+  // spelling-tolerant: either spelling finds both tw editions, like the
+  // default form level (encrease <-> increase is orthographic)
+  assertEquals(
+    search(artefacts, "encrease", { work: "tw", edition: "all" }, SPELLING)
+      .length,
+    2,
+  );
+  // but it does NOT collapse inflections the way the form level does. Solo
+  // §1.2 #2 reads "causes and effects"; the form level finds it from the
+  // singular phrase, the spelling level (singular surfaces) does not.
+  assertEquals(search(artefacts, "cause and effect").length, 1); // form
+  assertEquals(
+    search(artefacts, "cause and effect", {}, SPELLING).length,
+    0, // spelling keeps "cause" distinct from the surface "causes"
   );
 });
 

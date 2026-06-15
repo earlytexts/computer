@@ -1,7 +1,9 @@
 /**
- * The corpus tokenizer and the type-level spelling normalisation.
+ * The corpus tokenizer and the type-level spelling/form normalisation.
  *
- * Two layers, kept strictly apart:
+ * Layers, kept strictly apart. The token layer is gated by TOKENIZER_VERSION;
+ * the type layers are gated by VOCAB_VERSION (see artefacts.ts), because they
+ * change only the vocabulary's derived buckets, not the stored offsets.
  *
  *  - TOKEN level (`tokenize`): where words begin and end in extracted text.
  *    Each occurrence carries its SURFACE form — case-folded but otherwise
@@ -10,19 +12,28 @@
  *    the original. Changing this layer changes every stored offset, so any
  *    change must bump TOKENIZER_VERSION (invalidating built artefacts).
  *
- *  - TYPE level (`normalizeSurface`): what distinct surface forms count as
- *    the same word for a tolerant search. Three steps, in order: fold accents,
- *    ligatures and apostrophes; map old spellings to modern through the
- *    variant table ("encrease" -> "increase"); then Porter-stem to collapse
- *    inflections and plurals ("increase"/"increases" -> "increas",
- *    "connection" -> "connect"). Applied to the ~50k distinct forms in the
- *    vocabulary, never to the corpus itself. The normalised form is only ever
- *    a bucket key (never displayed), so it can read oddly ("'tis" -> "ti") as
- *    long as a query word and the spellings it should find land in one bucket.
+ * The type layers run in SERIES, each consuming the previous, and — until the
+ * last — each producing a real, well-formed word. Applied to the ~50k distinct
+ * forms in the vocabulary, never to the corpus itself:
  *
- * TOKENIZER_VERSION gates both layers: bumping it invalidates the built
- * artefacts (the postings — whose positions now also carry a capitalisation
- * bit — and the vocabulary's normalised buckets). See artefacts.ts.
+ *  - SPELLING (`normalizeSpelling`): orthography only, inflection preserved.
+ *    Fold accents/ligatures/apostrophes, map old spellings to modern through
+ *    the variant table ("encrease" -> "increase"), then collapse productive
+ *    spelling classes by rule ("organise" -> "organize", "honour" -> "honor").
+ *    Output is the canonical spelling: "encreasing" -> "increasing", NOT a
+ *    stem. This is the spelling-tolerant search bucket and the input to both
+ *    lemmatisation and the form bucket.
+ *
+ *  - FORM (`formKey`): the inflection-collapsing recall bucket, built ON the
+ *    canonical spelling. For now just a Porter stem of the spelling
+ *    ("increasing" -> "increas") — a quick-and-dirty stand-in for a lemmatiser;
+ *    as the lemmatiser (artefacts.ts) gains coverage it can prefer the real
+ *    lemma. Only ever a bucket key, never displayed, so it may read oddly.
+ *
+ * Lemmatisation (a real citation-form headword, for statistics) is the third
+ * type layer and lives in artefacts.ts, because it checks candidate bases
+ * against the corpus spelling vocabulary; it too runs on the canonical
+ * spelling, so it never has to know about archaic orthography.
  */
 
 import variantsJson from "./variants.json" with { type: "json" };
@@ -30,6 +41,8 @@ import variantsJson from "./variants.json" with { type: "json" };
 // 2: query is matched as a phrase; postings carry a capitalisation bit;
 // normalisation now Porter-stems after the variant table (plurals/inflections).
 // 3: productive spelling-class folds (-ize/-ise, -our/-or) around the stemmer.
+// The series split (spelling/form/lemma) is a VOCAB_VERSION change, not a
+// tokenizer change: surfaces and offsets are untouched, so this stays at 3.
 export const TOKENIZER_VERSION = 3;
 
 const VARIANTS = new Map<string, string>(
@@ -194,15 +207,9 @@ export const stem = (word: string): string => {
 };
 
 /**
- * Type-level spelling normalisation: surface form -> normalised form.
- * Strips apostrophes and accents, expands ligatures, applies the variant
- * table (so old and modern spellings share a form, "shew"/"show"), then
- * Porter-stems (so inflections and plurals do too, "causes"/"cause").
- */
-/**
  * Fold a surface to the base form the variant table is keyed on: strip
  * apostrophes and accents, expand ligatures. This is the first step of
- * `normalizeSurface`, before the variant table and Porter stemmer; the
+ * `normalizeSpelling`, before the variant table and the productive folds; the
  * variants curation tool (dev/variants.ts) keys new overrides on exactly
  * this form, so it must stay the single source of truth.
  */
@@ -215,25 +222,43 @@ export const foldBase = (surface: string): string =>
     .replace(/œ/g, "oe");
 
 /**
- * Productive spelling-class folds: classes where the two spellings are always
- * the *same word*, so collapsing them by rule (rather than one variant-table
- * row per word) keeps the whole family — including inflections — in one bucket
- * consistently. Deliberately narrow; en-/in- is excluded because it
- * distinguishes real words (ensure/insure, endure/indure).
+ * Productive spelling-class folds: orthographic classes where the two
+ * spellings are always the *same word*, so collapsing them by rule (rather
+ * than one variant-table row per word) keeps the whole family in one canonical
+ * spelling consistently. Deliberately narrow; en-/in- is excluded because it
+ * distinguishes real words (ensure/insure, endure/indure). Both run on the
+ * variant-mapped base, preserving any inflectional ending.
  *
- *  - `-ize/-ise`: canonicalise to `-is-` *before* stemming, because the stemmer
- *    strips `-ize` but not `-ise` and would otherwise split the family
- *    (organize→"organ" vs organise→"organis"). The 3-char guard leaves
- *    size/prize/maize/seize alone.
- *  - `-our/-or`: canonicalise to `-or` *after* stemming, where the stemmer has
- *    already reduced honours/honoured/honouring to "honour". The 3-char guard
- *    leaves our/four/hour alone.
+ *  - `-ise/-ize`: canonicalise to `-ize` (commoner than `-ise` in early modern
+ *    British print). The 3-char stem guard leaves rise/wise/advise alone.
+ *  - `-our/-or`: canonicalise to `-or` ("honour" -> "honor"). The 3-char guard
+ *    leaves our/four/hour/flour alone.
+ *
+ * These shape the canonical spelling, so a misfire (e.g. "exercise" ->
+ * "exercize") yields a slightly odd canonical form; harmless as a search
+ * bucket, and curable per-word via the variant table if it ever surfaces in
+ * displayed lemma statistics.
  */
-const IZE_RE = /([a-z]{3,})iz(e|es|ed|ing|ation|ations|er|ers)$/;
+const ISE_RE = /([a-z]{3,})is(e|es|ed|ing|ation|ations|er|ers)$/;
 const OUR_RE = /([a-z]{3,})our$/;
 
-export const normalizeSurface = (surface: string): string => {
+/**
+ * SPELLING layer: surface -> canonical modern spelling, inflection preserved.
+ * Fold to the variant-table base, map old spelling to modern, then apply the
+ * productive folds. Output is a real word ("encreasing" -> "increasing"); it
+ * is the spelling-tolerant search bucket and the input to `formKey` and to
+ * lemmatisation.
+ */
+export const normalizeSpelling = (surface: string): string => {
   const base = foldBase(surface);
-  const mapped = (VARIANTS.get(base) ?? base).replace(IZE_RE, "$1is$2");
-  return stem(mapped).replace(OUR_RE, "$1or");
+  const mapped = VARIANTS.get(base) ?? base;
+  return mapped.replace(ISE_RE, "$1iz$2").replace(OUR_RE, "$1or");
 };
+
+/**
+ * FORM layer: canonical spelling -> inflection-collapsing recall bucket. For
+ * now a plain Porter stem of the spelling ("increasing" -> "increas"); a
+ * quick-and-dirty stand-in until the lemmatiser (artefacts.ts) is trusted
+ * enough to take over this slot. Never displayed, so a non-word stem is fine.
+ */
+export const formKey = (spelling: string): string => stem(spelling);

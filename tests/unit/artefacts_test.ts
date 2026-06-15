@@ -23,23 +23,30 @@ Deno.test("the manifest records the pipeline and the corpus", async () => {
 
 Deno.test("the vocabulary is sorted and statistically coherent", async () => {
   const { artefacts } = await testData();
-  const { surfaces, surfaceNorm, df, cf, norms } = artefacts.vocab;
+  const { surfaces, surfaceSpelling, surfaceForm, df, cf, spellings, forms } =
+    artefacts.vocab;
   for (let i = 1; i < surfaces.length; i++) {
     assert(surfaces[i - 1] < surfaces[i]);
   }
-  for (let i = 1; i < norms.length; i++) assert(norms[i - 1] < norms[i]);
+  for (let i = 1; i < spellings.length; i++) {
+    assert(spellings[i - 1] < spellings[i]);
+  }
+  for (let i = 1; i < forms.length; i++) assert(forms[i - 1] < forms[i]);
   for (let i = 0; i < surfaces.length; i++) {
     // df can be 0 for surfaces that appear only in the original (pre-editorial)
     // text: they enter the vocabulary for original-text search but are absent
     // from the edited reading text, so cf = df = 0. cf >= df always holds.
     assert(cf[i] >= df[i]);
-    assert(surfaceNorm[i] >= 0 && surfaceNorm[i] < norms.length);
+    assert(surfaceSpelling[i] >= 0 && surfaceSpelling[i] < spellings.length);
+    assert(surfaceForm[i] >= 0 && surfaceForm[i] < forms.length);
   }
-  // surfaces keep old spellings; norms unify them onto a stemmed bucket
+  // surfaces keep old spellings; the spelling layer canonicalises them to a
+  // real modern word, the form layer stems that down to a shared bucket
   assert(surfaces.includes("encrease"));
   assert(surfaces.includes("betwixt"));
-  assert(norms.includes("increas")); // encrease/increase(s) all land here
-  assert(!norms.includes("encrease"));
+  assert(spellings.includes("increase")); // encrease -> increase (real word)
+  assert(!spellings.includes("encrease"));
+  assert(forms.includes("increas")); // encrease/increase(s) all land here
 });
 
 Deno.test("postings are grouped by surface and within bounds", async () => {

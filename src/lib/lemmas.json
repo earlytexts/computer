@@ -1,5 +1,5 @@
 {
-  "NOTE": "Surface-to-lemma overrides. Keys are case-folded surface forms as they appear in vocab.surfaces; values are the citation-form lemma string. The heuristic in buildSurfaceLemma handles the bulk of regular inflections; this file covers what it cannot: suppletive forms (irregular verbs) and archaic conjugations. Extend this file on inspection of the generated table whenever the heuristic produces a wrong or opaque result.",
+  "NOTE": "Spelling-to-lemma overrides. Keys are canonical spellings (the output of normalizeSpelling, as they appear in vocab.spellings); values are the citation-form lemma string. The heuristic in inferLemma handles the bulk of regular inflections over the spelling vocabulary; this file covers what it cannot: suppletive forms (irregular verbs) and archaic conjugations. Extend this file on inspection of the generated table whenever the heuristic produces a wrong or opaque result.",
 
   "am": "be",
   "art": "be",

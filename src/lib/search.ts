@@ -5,23 +5,24 @@
  * results link straight to the matching text. The whole query is matched as
  * one phrase — its words must appear consecutively, in order — without the
  * reader having to quote it (boolean and prefix queries are deliberately left
- * for later). Matching is tolerant by default and tightened by two
- * independent options:
+ * for later). Two independent options control matching:
  *
- *   - exactSpelling: off (default) matches through the normalised layer, so
- *     old and modern spellings and inflections find each other ("connection
- *     between cause and effect" matches "connexion betwixt causes and
- *     effects"); on matches the surface form as written ("enquiry" ≠
- *     "inquiry", "causes" ≠ "cause").
+ *   - match: which type level each query word is expanded over (see the
+ *     pipeline in tokenize.ts). `exact` matches the surface as written
+ *     ("enquiry" vs "inquiry", "causes" vs "cause" stay distinct); `spelling`
+ *     unites old and modern spellings of the same form ("encrease"/"increase",
+ *     but "increase" still distinct from "increases"); `form` (the default)
+ *     additionally unites inflections ("connection between cause" matches
+ *     "connexion betwixt causes").
  *   - caseSensitive: off (default) ignores case; on requires each word's
  *     initial capitalisation to agree with the text (so "Hume" skips lowercase
  *     "hume"). Resolved from a capitalisation bit on every posting (CAP_BIT),
  *     so it stays a pure in-memory filter — no per-hit text reads.
  *
- * Either way the index is keyed by SURFACE form (distinct case-folded
- * spellings); a tolerant word is expanded to every surface sharing its
- * normalised form, an exact word to its own surface only. Results can be
- * filtered by author, work, and edition.
+ * The index is keyed by SURFACE form (distinct case-folded spellings); a query
+ * word is expanded to every surface sharing its bucket at the chosen level (or
+ * to its own surface only, for `exact`). Results can be filtered by author,
+ * work, and edition.
  *
  * Matched token positions are converted back to character ranges in a block's
  * extracted text by `matchRanges`, for highlighting via highlightBlock
@@ -35,18 +36,20 @@ import {
   type ServeArtefacts,
 } from "./artefacts.ts";
 import type { HighlightRange } from "./text.ts";
-import type { Version } from "../types.ts";
-import { normalizeSurface, tokenize } from "./tokenize.ts";
+import type { MatchLevel, Version } from "../types.ts";
+import { formKey, normalizeSpelling, tokenize } from "./tokenize.ts";
+
+export type { MatchLevel };
 
 export type SearchOptions = {
-  /** Match the surface form as written, skipping variant/inflection folding. */
-  exactSpelling: boolean;
+  /** Which type level each query word is expanded over. */
+  match: MatchLevel;
   /** Require each query word's initial capitalisation to agree with the text. */
   caseSensitive: boolean;
 };
 
 export const DEFAULT_OPTIONS: SearchOptions = {
-  exactSpelling: false,
+  match: "form",
   caseSensitive: false,
 };
 
@@ -79,19 +82,27 @@ const lookupId = (sorted: string[], value: string): number | undefined => {
   return undefined;
 };
 
-/** Surface ids matching one query word under the spelling option: the word's
- * own surface (exact) or every surface sharing its normalised form (tolerant). */
+/** Surface ids matching one query word at the chosen level: the word's own
+ * surface (`exact`), or every surface sharing its canonical spelling
+ * (`spelling`) or its form bucket (`form`). The query word is folded the same
+ * way the corresponding vocabulary level was built. */
 const surfaceIds = (
   artefacts: ServeArtefacts,
   surface: string,
-  exactSpelling: boolean,
+  match: MatchLevel,
 ): number[] => {
-  if (exactSpelling) {
-    const id = lookupId(artefacts.vocab.surfaces, surface);
+  const { vocab, spellingSurfaces, formSurfaces } = artefacts;
+  if (match === "exact") {
+    const id = lookupId(vocab.surfaces, surface);
     return id === undefined ? [] : [id];
   }
-  const normId = lookupId(artefacts.vocab.norms, normalizeSurface(surface));
-  return normId === undefined ? [] : artefacts.normSurfaces[normId];
+  const spelling = normalizeSpelling(surface);
+  if (match === "spelling") {
+    const id = lookupId(vocab.spellings, spelling);
+    return id === undefined ? [] : spellingSurfaces[id];
+  }
+  const formId = lookupId(vocab.forms, formKey(spelling));
+  return formId === undefined ? [] : formSurfaces[formId];
 };
 
 /* ------------------------------ postings ------------------------------ */
@@ -144,7 +155,7 @@ const slotPostings = (
   options: SearchOptions,
   version: Version,
 ): Slot => {
-  const ids = surfaceIds(artefacts, word.surface, options.exactSpelling);
+  const ids = surfaceIds(artefacts, word.surface, options.match);
   const requireCapital = options.caseSensitive ? word.capital : undefined;
   const out: Slot = new Map();
   if (version === "original") {

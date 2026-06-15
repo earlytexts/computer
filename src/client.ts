@@ -23,6 +23,7 @@ import type {
   EditionResponse,
   FrequencyResponse,
   FullTextResponse,
+  MatchLevel,
   SearchResponse,
   SectionFullTextResponse,
   SectionResponse,
@@ -31,8 +32,8 @@ import type {
 
 export type SearchParams = {
   q: string;
-  /** Match the surface form as written (default: tolerant of spelling). */
-  exactSpelling?: boolean;
+  /** Type level to match at (default: "form", the tolerant level). */
+  match?: MatchLevel;
   /** Require initial capitalisation to agree (default: ignore case). */
   caseSensitive?: boolean;
   /** Which text to search: edited reading text (default) or the original. */
@@ -47,7 +48,7 @@ export type FrequencyParams = {
   q: string;
   /** Group occurrences by author, work, or edition (default: work). */
   by?: "author" | "work" | "edition";
-  exactSpelling?: boolean;
+  match?: MatchLevel;
   caseSensitive?: boolean;
   version?: "edited" | "original";
   author?: string;
@@ -61,7 +62,7 @@ export type ConcordanceParams = {
   context?: number;
   /** Line order: corpus order (default) or by the nearest words on each side. */
   sort?: "position" | "left" | "right";
-  exactSpelling?: boolean;
+  match?: MatchLevel;
   caseSensitive?: boolean;
   version?: "edited" | "original";
   author?: string;
@@ -218,7 +219,7 @@ export const computerClient = (
       )),
     search: (params) => {
       const query = new URLSearchParams({ q: params.q });
-      if (params.exactSpelling) query.set("exactSpelling", "1");
+      if (params.match !== undefined) query.set("match", params.match);
       if (params.caseSensitive) query.set("caseSensitive", "1");
       if (params.version !== undefined) query.set("version", params.version);
       if (params.author !== undefined) query.set("author", params.author);
@@ -230,7 +231,7 @@ export const computerClient = (
     frequency: (params) => {
       const query = new URLSearchParams({ q: params.q });
       if (params.by !== undefined) query.set("by", params.by);
-      if (params.exactSpelling) query.set("exactSpelling", "1");
+      if (params.match !== undefined) query.set("match", params.match);
       if (params.caseSensitive) query.set("caseSensitive", "1");
       if (params.version !== undefined) query.set("version", params.version);
       if (params.author !== undefined) query.set("author", params.author);
@@ -244,7 +245,7 @@ export const computerClient = (
         query.set("context", String(params.context));
       }
       if (params.sort !== undefined) query.set("sort", params.sort);
-      if (params.exactSpelling) query.set("exactSpelling", "1");
+      if (params.match !== undefined) query.set("match", params.match);
       if (params.caseSensitive) query.set("caseSensitive", "1");
       if (params.version !== undefined) query.set("version", params.version);
       if (params.author !== undefined) query.set("author", params.author);

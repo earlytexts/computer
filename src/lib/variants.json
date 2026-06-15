@@ -1,14 +1,14 @@
 {
   "__comment": [
-    "Variant spelling mappings for search. Both indexed text and search",
-    "queries are normalised through this table, so a search for either",
-    "form finds both. Keys and values are single normalised tokens:",
-    "lower-case, accents stripped, ae/oe ligatures expanded, apostrophes",
-    "removed (so \"tho'\" appears here as \"tho\"). Add entries freely.",
-    "Normalisation Porter-stems after this table, so inflected forms no",
-    "longer need their own rows (a base \"shew\" -> \"show\" also catches",
-    "shews/shewn); the existing inflected rows are kept but redundant.",
-    "Map an old spelling to its modern spelling, not to its stem."
+    "Old-spelling -> modern-spelling mappings, applied by the SPELLING layer",
+    "(normalizeSpelling). Both indexed text and search queries pass through",
+    "this table, so a search for either form finds both. Keys are folded base",
+    "forms (lower-case, accents stripped, ae/oe ligatures expanded, apostrophes",
+    "removed, so \"tho'\" appears here as \"tho\"); values are the modern",
+    "spelling, a real word. Map the base form only: the form layer below",
+    "Porter-stems the result, so inflections (shews/shewn) are caught from a",
+    "single \"shew\" -> \"show\" row. The existing inflected rows are redundant",
+    "but harmless. Map an old spelling to its modern spelling, never to a stem."
   ],
   "tho": "though",
   "thro": "through",
