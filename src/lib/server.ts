@@ -28,6 +28,7 @@
 
 import type { ServeArtefacts } from "./artefacts.ts";
 import {
+  type BlockReader,
   type BlockStore,
   createBlockStore,
   findAuthorEntry,
@@ -56,6 +57,8 @@ import type { Version } from "../types.ts";
 
 export type Api = {
   artefacts: ServeArtefacts;
+  /** Lazy block reader, rooted at the artefacts directory. */
+  blocks: BlockReader;
   /** Per-client token bucket; omit to disable rate limiting. */
   rateLimit?: RateLimiterOptions;
 };
@@ -109,7 +112,7 @@ const route = async (
   if (segments[0] === "search" && segments.length === 1) {
     const params = url.searchParams;
     return json(
-      await searchResponse(api.artefacts, {
+      await searchResponse(store, api.artefacts, {
         q: params.get("q") ?? "",
         match: params.get("match") ?? undefined,
         caseSensitive: flag(params.get("caseSensitive")),
@@ -140,7 +143,7 @@ const route = async (
   if (segments[0] === "concordance" && segments.length === 1) {
     const params = url.searchParams;
     return json(
-      await concordanceResponse(api.artefacts, {
+      await concordanceResponse(store, api.artefacts, {
         q: params.get("q") ?? "",
         context: Number(params.get("context")) || undefined,
         sort: params.get("sort") ?? undefined,
@@ -241,7 +244,7 @@ const route = async (
 
 export const createHandler = (api: Api) => {
   // One block store (and its LRU) for the life of the handler.
-  const store = createBlockStore(api.artefacts);
+  const store = createBlockStore(api.artefacts, api.blocks);
   // The MCP server shares the block store; it serves the corpus tools over
   // Streamable HTTP at /mcp (POST/GET/DELETE), alongside the REST routes.
   const mcp = createMcpHandler(api.artefacts, store);

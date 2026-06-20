@@ -23,7 +23,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { ServeArtefacts } from "./artefacts.ts";
-import { type BlockStore, createBlockStore } from "./serve/store.ts";
+import type { BlockStore } from "./serve/store.ts";
 import { localComputer } from "./serve/localComputer.ts";
 import { createTools, type ToolSet } from "./serve/tools.ts";
 
@@ -73,13 +73,12 @@ const buildMcpServer = (tools: ToolSet): Server => {
 
 /**
  * A connectable MCP Server over the computer's artefacts, ready for any
- * transport — stdio.ts connects it to a StdioServerTransport. Pass a block
- * store to share one (the HTTP path shares the REST routes' store); omit it and
- * a private store is created.
+ * transport — stdio.ts connects it to a StdioServerTransport. The caller
+ * supplies the block store (the HTTP path shares the REST routes' store).
  */
 export const createMcpServer = (
   artefacts: ServeArtefacts,
-  store: BlockStore = createBlockStore(artefacts),
+  store: BlockStore,
 ): Server => buildMcpServer(corpusTools(artefacts, store));
 
 /**

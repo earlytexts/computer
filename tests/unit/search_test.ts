@@ -1,5 +1,4 @@
 import { assert, assertEquals } from "@std/assert";
-import { readUnitBlock } from "../../src/lib/serve/store.ts";
 import {
   matchRanges,
   search,
@@ -181,7 +180,7 @@ Deno.test("search hits highlight across formatting boundaries", async () => {
   const data = await testData();
   const hits = search(data.artefacts, "natural liberty of");
   assertEquals(hits.length, 1);
-  const block = await readUnitBlock(data.artefacts, hits[0].unitIndex);
+  const block = await data.store.unitBlock(hits[0].unitIndex);
   const text = blockText(block);
   assertEquals(
     text,
@@ -214,7 +213,7 @@ Deno.test("a token split by a page break is still highlighted", async () => {
   const data = await testData();
   const hits = search(data.artefacts, "recorded");
   assertEquals(hits.length, 1);
-  const block = await readUnitBlock(data.artefacts, hits[0].unitIndex);
+  const block = await data.store.unitBlock(hits[0].unitIndex);
   const text = blockText(block);
   assert(text.includes("recorded")); // re//42//corded in the source
   const ranges = matchRanges(text, hits[0].positions);

@@ -1,9 +1,5 @@
-import { assert, assertEquals, assertRejects } from "@std/assert";
-import { artefactsFresh, PIPELINE_VERSION } from "../../src/lib/artefacts.ts";
-import {
-  loadServeArtefacts,
-  readUnitBlock,
-} from "../../src/lib/serve/store.ts";
+import { assert, assertEquals } from "@std/assert";
+import { isFresh, PIPELINE_VERSION } from "../../src/lib/artefacts.ts";
 import { blockText } from "../../src/lib/text/text.ts";
 import { testData, unitText } from "../helpers.ts";
 
@@ -105,11 +101,11 @@ Deno.test(
   },
 );
 
-Deno.test("blocks read back from disk match the text blob", async () => {
+Deno.test("blocks read back by byte range match the text blob", async () => {
   const data = await testData();
-  const { artefacts } = data;
+  const { artefacts, store } = data;
   for (let i = 0; i < artefacts.units.edition.length; i++) {
-    const block = await readUnitBlock(artefacts, i);
+    const block = await store.unitBlock(i);
     assertEquals(blockText(block), unitText(data, i));
     assertEquals(
       artefacts.units.blockId[i],
@@ -135,13 +131,9 @@ Deno.test("token streams point at their surfaces in the blob", async () => {
 
 Deno.test("freshness tracks pipeline version and corpus fingerprint", async () => {
   const { artefacts, scan } = await testData();
-  assert(await artefactsFresh(artefacts.dir, scan));
-  assert(
-    !(await artefactsFresh(artefacts.dir, { ...scan, files: scan.files + 1 })),
-  );
-  assert(
-    !(await artefactsFresh(artefacts.dir, { ...scan, modified: Date.now() })),
-  );
-  assert(!(await artefactsFresh(artefacts.dir + "-nope", scan)));
-  await assertRejects(() => loadServeArtefacts(artefacts.dir + "-nope"));
+  const { manifest } = artefacts;
+  assert(isFresh(manifest, scan));
+  assert(!isFresh(manifest, { ...scan, files: scan.files + 1 }));
+  assert(!isFresh(manifest, { ...scan, modified: Date.now() }));
+  assert(!isFresh({ ...manifest, pipelineVersion: "x0.t0.v0" }, scan));
 });

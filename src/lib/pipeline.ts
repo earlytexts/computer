@@ -6,21 +6,23 @@
  *   LOAD    artefacts/ ──► in-memory ServeArtefacts, rebuilding first if the
  *           on-disk artefacts are stale or missing (loadForServing)
  *
- * build.ts is the CLI for the build; main.ts and stdio.ts call loadForServing
- * to get ready-to-serve artefacts. The freshness-then-rebuild logic lives here
- * only, so "build" and "serve" are no longer tangled in the entry points.
+ * Both take an Io adapter: all filesystem effects go through it, and the steps
+ * between (buildCatalog, buildArtefacts, the codec, isFresh) are pure. build.ts
+ * is the CLI for the build; main.ts and stdio.ts call loadForServing. The
+ * freshness-then-rebuild logic lives here only.
  */
 
 import {
   type Artefacts,
-  artefactsFresh,
   type CorpusScan,
-  scanCorpus,
+  isFresh,
+  parseArtefacts,
+  serializeArtefacts,
   type ServeArtefacts,
 } from "./artefacts.ts";
-import { buildArtefacts, writeArtefacts } from "./build/builder.ts";
-import { loadServeArtefacts } from "./serve/store.ts";
-import { loadCatalog } from "./build/catalog.ts";
+import { buildArtefacts } from "./build/builder.ts";
+import { buildCatalog } from "./build/catalog.ts";
+import type { Io } from "./io.ts";
 
 /**
  * Compile the corpus and write every derived artefact to `artefactsDir`,
@@ -28,14 +30,15 @@ import { loadCatalog } from "./build/catalog.ts";
  * Pass `scan` to reuse a fingerprint already taken; otherwise it is computed.
  */
 export const buildArtefactsToDisk = async (
+  io: Io,
   corpusDir: string,
   artefactsDir: string,
   scan?: CorpusScan,
 ): Promise<Artefacts> => {
-  const { catalog, warnings } = await loadCatalog(corpusDir);
-  const corpusScan = scan ?? await scanCorpus(corpusDir);
+  const { catalog, warnings } = await buildCatalog(io.corpus, corpusDir);
+  const corpusScan = scan ?? await io.scanCorpus(corpusDir);
   const artefacts = buildArtefacts(catalog, warnings, corpusScan);
-  await writeArtefacts(artefactsDir, artefacts);
+  await io.writeArtefacts(artefactsDir, serializeArtefacts(artefacts));
   return artefacts;
 };
 
@@ -47,16 +50,18 @@ export const buildArtefactsToDisk = async (
  * quiet.
  */
 export const loadForServing = async (
+  io: Io,
   corpusDir: string,
   artefactsDir: string,
   log: (message: string) => void = () => {},
 ): Promise<ServeArtefacts> => {
-  const scan = await scanCorpus(corpusDir);
-  if (await artefactsFresh(artefactsDir, scan)) {
+  const scan = await io.scanCorpus(corpusDir);
+  const manifest = await io.readManifest(artefactsDir);
+  if (manifest !== null && isFresh(manifest, scan)) {
     log(`Artefacts: ${artefactsDir} (fresh)`);
   } else {
     log(`Artefacts: ${artefactsDir} (stale or missing; rebuilding)`);
-    await buildArtefactsToDisk(corpusDir, artefactsDir, scan);
+    await buildArtefactsToDisk(io, corpusDir, artefactsDir, scan);
   }
-  return loadServeArtefacts(artefactsDir);
+  return parseArtefacts(await io.readArtefacts(artefactsDir));
 };

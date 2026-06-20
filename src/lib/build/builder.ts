@@ -1,8 +1,8 @@
 /**
  * Build-time construction of the artefacts: fold the compiled corpus into the
- * in-memory tables (buildArtefacts) and write them to disk (writeArtefacts).
- * The serve side (store.ts) reads back what this writes; both share the on-disk
- * format defined in artefacts.ts.
+ * in-memory tables (buildArtefacts). Turning those tables into bytes and back
+ * is the codec in artefacts.ts (serializeArtefacts / parseArtefacts); the io
+ * adapter does the disk writes.
  *
  * The invariant everything rests on: text.txt is exactly the output of
  * blockText over blocks.jsonl, and every offset in tokens.bin/units.json points
@@ -22,20 +22,20 @@ import {
   type Work,
 } from "./catalog.ts";
 import type { AuthorMeta, EditionMeta, WorkMeta } from "../../types.ts";
-import { blockText, hasEditorial } from "../text/text.ts";
 import {
+  blockText,
   buildSurfaceLemma,
   formKey,
+  hasEditorial,
   normalizeSpelling,
   tokenize,
-} from "../text/tokenize.ts";
+} from "../text/mod.ts";
 import {
   type Artefacts,
   type BuiltEdition,
   CAP_BIT,
   type CatalogArtefact,
   type CorpusScan,
-  editionDir,
   type EditionRef,
   PIPELINE_VERSION,
   type Postings,
@@ -443,87 +443,4 @@ export const buildArtefacts = (
     affectedUnits,
     editions,
   };
-};
-
-/* ------------------------------ write ------------------------------- */
-
-const concat = (parts: Uint8Array[], bytes: number): Uint8Array => {
-  const out = new Uint8Array(bytes);
-  let at = 0;
-  for (const part of parts) {
-    out.set(part, at);
-    at += part.length;
-  }
-  return out;
-};
-
-const asBytes = (array: Uint32Array): Uint8Array =>
-  new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
-
-/**
- * Write artefacts to `dir`, replacing what was there. Refuses to clear a
- * directory that doesn't look like an artefacts directory. The manifest is
- * written last, so a directory with a manifest is a complete build.
- */
-export const writeArtefacts = async (
-  dir: string,
-  artefacts: Artefacts,
-): Promise<void> => {
-  let existing: string[] = [];
-  try {
-    for await (const entry of Deno.readDir(dir)) existing.push(entry.name);
-  } catch {
-    existing = [];
-  }
-  if (existing.length > 0) {
-    if (!existing.includes("manifest.json")) {
-      throw new Error(
-        `${dir} is not empty and has no manifest.json; refusing to replace it`,
-      );
-    }
-    await Deno.remove(dir, { recursive: true });
-  }
-  await Deno.mkdir(dir, { recursive: true });
-
-  for (const edition of artefacts.editions) {
-    const subdir = `${dir}/${editionDir(edition)}`;
-    await Deno.mkdir(subdir, { recursive: true });
-    const bytes = edition.blockLines.reduce((n, l) => n + l.length, 0);
-    await Deno.writeFile(
-      `${subdir}/blocks.jsonl`,
-      concat(edition.blockLines, bytes),
-    );
-    await Deno.writeTextFile(`${subdir}/text.txt`, edition.text);
-    await Deno.writeFile(`${subdir}/tokens.bin`, asBytes(edition.tokens));
-  }
-  const writePostings = (name: string, postings: Postings): Promise<void> =>
-    Deno.writeFile(
-      `${dir}/${name}`,
-      concat(
-        [asBytes(postings.offsets), asBytes(postings.pairs)],
-        postings.offsets.byteLength + postings.pairs.byteLength,
-      ),
-    );
-  await writePostings("postings.bin", artefacts.postings);
-  await writePostings("postings-original.bin", artefacts.overlayPostings);
-  await Deno.writeTextFile(
-    `${dir}/overlay.json`,
-    JSON.stringify({ affectedUnits: artefacts.affectedUnits }),
-  );
-  await Deno.writeTextFile(
-    `${dir}/catalog.json`,
-    JSON.stringify(artefacts.catalog),
-  );
-  await Deno.writeTextFile(
-    `${dir}/vocab.json`,
-    JSON.stringify(artefacts.vocab),
-  );
-  await Deno.writeTextFile(
-    `${dir}/units.json`,
-    JSON.stringify(artefacts.units),
-  );
-  await Deno.writeTextFile(
-    `${dir}/manifest.json`,
-    JSON.stringify(artefacts.manifest, null, 2),
-  );
 };

@@ -8,11 +8,13 @@
 import { artefactsDir, corpusDir, serverOptions } from "./lib/config.ts";
 import { loadForServing } from "./lib/pipeline.ts";
 import { createHandler } from "./lib/server.ts";
+import { denoIo } from "./lib/io.ts";
 
 const corpus = corpusDir();
+const dir = artefactsDir();
 
 const t0 = performance.now();
-const artefacts = await loadForServing(corpus, artefactsDir(), console.log);
+const artefacts = await loadForServing(denoIo, corpus, dir, console.log);
 const elapsed = Math.round(performance.now() - t0);
 
 const { stats, warnings } = artefacts.manifest;
@@ -29,4 +31,7 @@ if (warnings.length > 0) {
 }
 
 const { port, rateLimit } = serverOptions();
-Deno.serve({ port }, createHandler({ artefacts, rateLimit }));
+Deno.serve(
+  { port },
+  createHandler({ artefacts, blocks: denoIo.blockReader(dir), rateLimit }),
+);

@@ -129,9 +129,9 @@ export const localComputer = (
           version,
         );
     },
-    search: (params) => searchResponse(artefacts, params),
+    search: (params) => searchResponse(store, artefacts, params),
     frequency: (params) =>
       Promise.resolve(frequencyResponse(artefacts, params)),
-    concordance: (params) => concordanceResponse(artefacts, params),
+    concordance: (params) => concordanceResponse(store, artefacts, params),
   };
 };

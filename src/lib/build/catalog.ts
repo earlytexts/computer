@@ -22,6 +22,21 @@
 
 import { compile, type MarkitDocument } from "@earlytexts/markit";
 
+/**
+ * The filesystem capability the catalog scan needs. The corpus file set is
+ * discovered by parsing (children references, case-insensitive lookups), so the
+ * I/O cannot be hoisted ahead of the walk — it is injected as this port instead.
+ * The io adapter supplies the Deno-backed implementation; tests an in-memory one.
+ * `readFile` and `stat` return null when the path is absent; `readDir` throws
+ * (as Deno.readDir does) so a missing corpus directory surfaces.
+ */
+export interface CorpusFs {
+  readFile(path: string): Promise<string | null>;
+  readDir(path: string): Promise<Deno.DirEntry[]>;
+  realPath(path: string): Promise<string>;
+  stat(path: string): Promise<{ isFile: boolean } | null>;
+}
+
 export type Author = {
   slug: string;
   forename: string;
@@ -125,11 +140,14 @@ const dirOf = (path: string): string => path.slice(0, path.lastIndexOf("/"));
  * references like "../NHR/1757" work on case-sensitive systems too.
  * Returns the actual path if found, otherwise undefined.
  */
-const findFile = async (path: string): Promise<string | undefined> => {
+const findFile = async (
+  fs: CorpusFs,
+  path: string,
+): Promise<string | undefined> => {
   try {
     // realPath canonicalises letter case, so that "../NHR/1757" and
     // "../nhr/1757" cache and attribute identically.
-    if ((await Deno.stat(path)).isFile) return await Deno.realPath(path);
+    if ((await fs.stat(path))?.isFile) return await fs.realPath(path);
   } catch {
     // fall through to the case-insensitive walk
   }
@@ -138,7 +156,7 @@ const findFile = async (path: string): Promise<string | undefined> => {
   for (const part of parts) {
     let matched: string | undefined;
     try {
-      for await (const entry of Deno.readDir(current === "" ? "/" : current)) {
+      for (const entry of await fs.readDir(current === "" ? "/" : current)) {
         if (entry.name.toLowerCase() === part.toLowerCase()) {
           matched = entry.name;
           break;
@@ -151,7 +169,7 @@ const findFile = async (path: string): Promise<string | undefined> => {
     current = `${current}/${matched}`;
   }
   try {
-    if ((await Deno.stat(current)).isFile) return await Deno.realPath(current);
+    if ((await fs.stat(current))?.isFile) return await fs.realPath(current);
   } catch {
     return undefined;
   }
@@ -159,6 +177,7 @@ const findFile = async (path: string): Promise<string | undefined> => {
 };
 
 type LoadContext = {
+  fs: CorpusFs;
   cache: Map<string, MarkitDocument | null>;
   stack: Set<string>;
   sources: WeakMap<MarkitDocument, string>;
@@ -180,10 +199,8 @@ const loadDocument = async (
     ctx.warnings.push(`circular child reference involving ${key}`);
     return null;
   }
-  let text: string;
-  try {
-    text = await Deno.readTextFile(key);
-  } catch {
+  const text = await ctx.fs.readFile(key);
+  if (text === null) {
     ctx.cache.set(key, null);
     return null;
   }
@@ -225,8 +242,8 @@ const resolveChildren = async (
       resolved.push(inlineMatch);
       continue;
     }
-    const file = (await findFile(normalizePath(`${dir}/${ref}.mit`))) ??
-      (await findFile(normalizePath(`${dir}/${ref}/index.mit`)));
+    const file = (await findFile(ctx.fs, normalizePath(`${dir}/${ref}.mit`))) ??
+      (await findFile(ctx.fs, normalizePath(`${dir}/${ref}/index.mit`)));
     const child = file === undefined ? null : await loadDocument(file, ctx);
     if (child !== null) {
       resolved.push(child);
@@ -279,14 +296,14 @@ const loadWork = async (
 ): Promise<Work | undefined> => {
   if (!entry.isDirectory) return undefined;
   const dir = `${authorDir}/${entry.name}`;
-  const indexPath = await findFile(`${dir}/index.mit`);
+  const indexPath = await findFile(ctx.fs, `${dir}/index.mit`);
   if (indexPath === undefined) return undefined; // not a work
   const slug = entry.name.toLowerCase();
   const stub = await loadDocument(indexPath, ctx);
   if (stub === null) return undefined;
 
   const editionSlugs: string[] = [];
-  for await (const sub of Deno.readDir(dir)) {
+  for (const sub of await ctx.fs.readDir(dir)) {
     const name = sub.isFile && sub.name.endsWith(".mit")
       ? sub.name.slice(0, -4)
       : sub.isDirectory
@@ -299,8 +316,8 @@ const loadWork = async (
   editionSlugs.sort();
   const editions: Edition[] = [];
   for (const editionSlug of editionSlugs) {
-    const file = (await findFile(`${dir}/${editionSlug}.mit`)) ??
-      (await findFile(`${dir}/${editionSlug}/index.mit`));
+    const file = (await findFile(ctx.fs, `${dir}/${editionSlug}.mit`)) ??
+      (await findFile(ctx.fs, `${dir}/${editionSlug}/index.mit`));
     const doc = file === undefined ? null : await loadDocument(file, ctx);
     if (doc !== null) {
       editions.push(makeEdition(authorSlug, slug, editionSlug, doc));
@@ -351,12 +368,14 @@ const makeAuthor = (slug: string, doc: MarkitDocument | null): Author => ({
   works: [],
 });
 
-export const loadCatalog = async (
+export const buildCatalog = async (
+  fs: CorpusFs,
   corpusDir: string,
 ): Promise<{ catalog: Catalog; warnings: string[] }> => {
   // Canonicalise so that work directories and child-reference paths agree.
-  corpusDir = await Deno.realPath(corpusDir);
+  corpusDir = await fs.realPath(corpusDir);
   const ctx: LoadContext = {
+    fs,
     cache: new Map(),
     stack: new Set(),
     sources: new WeakMap(),
@@ -365,7 +384,7 @@ export const loadCatalog = async (
   const byAuthor = new Map<string, Author>();
 
   try {
-    for await (const entry of Deno.readDir(`${corpusDir}/authors`)) {
+    for (const entry of await fs.readDir(`${corpusDir}/authors`)) {
       if (!entry.isFile || !entry.name.endsWith(".mit")) continue;
       const slug = entry.name.slice(0, -4).toLowerCase();
       const doc = await loadDocument(`${corpusDir}/authors/${entry.name}`, ctx);
@@ -375,7 +394,7 @@ export const loadCatalog = async (
     ctx.warnings.push(`no authors directory in ${corpusDir}`);
   }
 
-  for await (const entry of Deno.readDir(`${corpusDir}/works`)) {
+  for (const entry of await fs.readDir(`${corpusDir}/works`)) {
     if (!entry.isDirectory) continue;
     const authorSlug = entry.name.toLowerCase();
     let author = byAuthor.get(authorSlug);
@@ -385,7 +404,7 @@ export const loadCatalog = async (
       byAuthor.set(authorSlug, author);
     }
     const authorDir = `${corpusDir}/works/${entry.name}`;
-    for await (const sub of Deno.readDir(authorDir)) {
+    for (const sub of await fs.readDir(authorDir)) {
       const work = await loadWork(authorSlug, sub, authorDir, ctx);
       if (work !== undefined) author.works.push(work);
     }

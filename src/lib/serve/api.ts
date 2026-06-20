@@ -18,22 +18,25 @@ import {
 import {
   type AlignedSection,
   alignSections,
+  blockText,
+  compareLines,
+  diffBlocks,
+  diffToBlocks,
   findSectionByKey,
-  pathKey,
-} from "../text/compare.ts";
-import { diffBlocks, diffToBlocks } from "../text/diff.ts";
-import { type BlockStore, findEditionEntry, readUnitBlock } from "./store.ts";
-import {
+  highlightBlock,
+  lineParts,
   type MatchLevel,
   matchRanges,
   occurrences,
   parseQuery,
+  pathKey,
+  resolveBlock,
   search,
   type SearchOptions,
-} from "../text/search.ts";
-import { compareLines, lineParts, type Sort } from "../text/concordance.ts";
-import { tokenize } from "../text/tokenize.ts";
-import { blockText, highlightBlock, resolveBlock } from "../text/text.ts";
+  type Sort,
+  tokenize,
+} from "../text/mod.ts";
+import { type BlockStore, findEditionEntry } from "./store.ts";
 import type {
   AlignedRow,
   CatalogResponse,
@@ -496,6 +499,7 @@ export const frequencyResponse = (
 };
 
 export const searchResponse = async (
+  store: BlockStore,
   artefacts: ServeArtefacts,
   params: SearchParams,
 ): Promise<SearchResponse> => {
@@ -537,7 +541,7 @@ export const searchResponse = async (
     results: await Promise.all(pageHits.map(async (hit) => {
       // Positions index into the version's tokenization; highlightBlock
       // resolves the block to that version and injects the marks in one walk.
-      const block: Block = await readUnitBlock(artefacts, hit.unitIndex);
+      const block: Block = await store.unitBlock(hit.unitIndex);
       const ranges = matchRanges(blockText(block, version), hit.positions);
       const ref = manifest.editions[units.edition[hit.unitIndex]];
       const sectionPath = units.sectionPath[hit.unitIndex];
@@ -585,6 +589,7 @@ const MAX_CONTEXT = 25;
  * page is sliced (the block store's cache absorbs the repeated reads).
  */
 export const concordanceResponse = async (
+  store: BlockStore,
   artefacts: ServeArtefacts,
   params: ConcordanceParams,
 ): Promise<ConcordanceResponse> => {
@@ -630,7 +635,7 @@ export const concordanceResponse = async (
   };
   const built: Built[] = [];
   for (const hit of hits) {
-    const block = await readUnitBlock(artefacts, hit.unitIndex);
+    const block = await store.unitBlock(hit.unitIndex);
     const text = blockText(block, version);
     const spans = tokenize(text);
     const ref = manifest.editions[units.edition[hit.unitIndex]];

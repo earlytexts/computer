@@ -8,12 +8,13 @@
 import { artefactsDir, corpusDir } from "./lib/config.ts";
 import { PIPELINE_VERSION } from "./lib/artefacts.ts";
 import { buildArtefactsToDisk } from "./lib/pipeline.ts";
+import { denoIo } from "./lib/io.ts";
 
 const corpus = corpusDir();
 const dir = artefactsDir();
 
 const t0 = performance.now();
-const { manifest } = await buildArtefactsToDisk(corpus, dir);
+const { manifest } = await buildArtefactsToDisk(denoIo, corpus, dir);
 const elapsed = Math.round(performance.now() - t0);
 
 const { stats, warnings } = manifest;

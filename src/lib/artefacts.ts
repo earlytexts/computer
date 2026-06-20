@@ -1,9 +1,11 @@
 /**
  * The on-disk artefact format: the types describing every derived artefact, the
- * pipeline version that stamps them, and the corpus fingerprint used to tell
- * fresh artefacts from stale. The builder (builder.ts) writes this format and
- * the store (store.ts) reads it; this module is the contract between them and
- * imports neither.
+ * pipeline version that stamps them, the corpus fingerprint used to tell fresh
+ * artefacts from stale, and the codec that turns built artefacts into bytes and
+ * back (serializeArtefacts / parseArtefacts). The builder (builder.ts) produces
+ * the in-memory Artefacts and the store (store.ts) consumes the ServeArtefacts;
+ * this module is the format authority between them, doing no I/O of its own (the
+ * io adapter reads and writes the bytes) and importing neither side.
  *
  * Layout of the artefacts directory:
  *
@@ -42,17 +44,16 @@
  * points into it. The pipeline version (extraction + tokenizer) is stamped
  * into the manifest; artefacts from another version are never served.
  *
- * The serve-time loader (store.ts) reads only the manifest, catalog, vocab,
- * units, and postings (tens of MB); block content is fetched from blocks.jsonl
- * on demand (by byte range per search hit, or a whole edition at a time,
- * cached, for the text and compare routes), and the text blobs and token
- * streams are not loaded at all (they exist for future corpus analysis and for
- * rebuilding the index quickly).
+ * parseArtefacts reads only the manifest, catalog, vocab, units, and postings
+ * (tens of MB) into the in-memory ServeArtefacts; block content is fetched from
+ * blocks.jsonl on demand through a BlockReader (by byte range per search hit,
+ * or a whole edition at a time, cached, for the text and compare routes), and
+ * the text blobs and token streams are not read at all (they exist for future
+ * corpus analysis and for rebuilding the index quickly).
  */
 
 import type { AuthorMeta, EditionMeta, WorkMeta } from "../types.ts";
-import { EXTRACTION_VERSION } from "./text/text.ts";
-import { TOKENIZER_VERSION } from "./text/tokenize.ts";
+import { EXTRACTION_VERSION, TOKENIZER_VERSION } from "./text/mod.ts";
 
 /** Bump when the Vocab schema changes (invalidates built artefacts). */
 export const VOCAB_VERSION = 2;
@@ -71,6 +72,24 @@ export const POSITION_MASK = 0x7fffffff;
 /** An edition's subdirectory under the artefacts root (its on-disk location). */
 export const editionDir = (ref: EditionRef): string =>
   `editions/${ref.author}/${ref.work}/${ref.edition}`;
+
+/**
+ * The fixed-name artefact files (everything but the per-edition subdirectories).
+ * Owned here so the format — names and codec alike — has one authority; the io
+ * adapter reads and writes whatever these name without knowing the layout.
+ */
+export const ARTEFACT_FILES = {
+  manifest: "manifest.json",
+  catalog: "catalog.json",
+  vocab: "vocab.json",
+  units: "units.json",
+  postings: "postings.bin",
+  postingsOriginal: "postings-original.bin",
+  overlay: "overlay.json",
+} as const;
+
+/** The serialized artefacts: a relative path -> bytes map (see serializeArtefacts). */
+export type ArtefactFiles = Map<string, Uint8Array>;
 
 /* ------------------------------- types ------------------------------- */
 
@@ -242,7 +261,6 @@ export type Artefacts = {
 
 /** Everything the server holds in memory to answer requests. */
 export type ServeArtefacts = {
-  dir: string;
   manifest: Manifest;
   catalog: CatalogArtefact;
   vocab: Vocab;
@@ -262,41 +280,129 @@ export type ServeArtefacts = {
 
 /* ----------------------------- freshness ----------------------------- */
 
-/** Fingerprint the corpus: .mit file count and latest modification time. */
-export const scanCorpus = async (corpusDir: string): Promise<CorpusScan> => {
-  let files = 0;
-  let modified = 0;
-  const walk = async (dir: string): Promise<void> => {
-    for await (const entry of Deno.readDir(dir)) {
-      const path = `${dir}/${entry.name}`;
-      if (entry.isDirectory) await walk(path);
-      else if (entry.isFile && entry.name.endsWith(".mit")) {
-        files++;
-        const info = await Deno.stat(path);
-        modified = Math.max(modified, info.mtime?.getTime() ?? 0);
-      }
-    }
-  };
-  await walk(corpusDir);
-  return { files, modified };
+/**
+ * Whether a manifest describes artefacts built by this pipeline version from a
+ * corpus matching `scan`. Pure: the manifest read (and the "no manifest" case)
+ * live in the io adapter, which passes what it found here for the decision.
+ */
+export const isFresh = (manifest: Manifest, scan: CorpusScan): boolean =>
+  manifest.pipelineVersion === PIPELINE_VERSION &&
+  manifest.corpus.files === scan.files &&
+  manifest.corpus.modified === scan.modified;
+
+/* ------------------------------- codec ------------------------------- */
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+const concat = (parts: Uint8Array[]): Uint8Array => {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
+};
+
+const asBytes = (array: Uint32Array): Uint8Array =>
+  new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
+
+const postingsBytes = (postings: Postings): Uint8Array =>
+  concat([asBytes(postings.offsets), asBytes(postings.pairs)]);
+
+/**
+ * Serialize built artefacts to a relative-path -> bytes map: the in-memory
+ * tables become exactly the bytes the io adapter writes to disk, with no
+ * filesystem concerns here. The per-edition files live under editionDir(); the
+ * fixed tables under ARTEFACT_FILES. The inverse is parseArtefacts.
+ */
+export const serializeArtefacts = (artefacts: Artefacts): ArtefactFiles => {
+  const files: ArtefactFiles = new Map();
+  for (const edition of artefacts.editions) {
+    const subdir = editionDir(edition);
+    files.set(`${subdir}/blocks.jsonl`, concat(edition.blockLines));
+    files.set(`${subdir}/text.txt`, encoder.encode(edition.text));
+    files.set(`${subdir}/tokens.bin`, asBytes(edition.tokens));
+  }
+  files.set(ARTEFACT_FILES.postings, postingsBytes(artefacts.postings));
+  files.set(
+    ARTEFACT_FILES.postingsOriginal,
+    postingsBytes(artefacts.overlayPostings),
+  );
+  const json = (value: unknown, pretty = false): Uint8Array =>
+    encoder.encode(JSON.stringify(value, null, pretty ? 2 : undefined));
+  files.set(
+    ARTEFACT_FILES.overlay,
+    json({ affectedUnits: artefacts.affectedUnits }),
+  );
+  files.set(ARTEFACT_FILES.catalog, json(artefacts.catalog));
+  files.set(ARTEFACT_FILES.vocab, json(artefacts.vocab));
+  files.set(ARTEFACT_FILES.units, json(artefacts.units));
+  files.set(ARTEFACT_FILES.manifest, json(artefacts.manifest, true));
+  return files;
+};
+
+const readPostings = (bytes: Uint8Array, split: number): Postings => {
+  const words = new Uint32Array(
+    bytes.buffer,
+    bytes.byteOffset,
+    bytes.length / 4,
+  );
+  return { offsets: words.subarray(0, split), pairs: words.subarray(split) };
 };
 
 /**
- * Whether the artefacts in `dir` were built by this pipeline version from
- * a corpus matching `scan`.
+ * Parse the fixed artefact tables into the in-memory state the server holds,
+ * deriving the surface/spelling/form and edition->unit indices. Block content
+ * is not read here — it is fetched lazily through a BlockReader at serve time.
+ * The inverse of serializeArtefacts; throws on a pipeline-version mismatch.
  */
-export const artefactsFresh = async (
-  dir: string,
-  scan: CorpusScan,
-): Promise<boolean> => {
-  try {
-    const manifest = JSON.parse(
-      await Deno.readTextFile(`${dir}/manifest.json`),
-    ) as Manifest;
-    return manifest.pipelineVersion === PIPELINE_VERSION &&
-      manifest.corpus.files === scan.files &&
-      manifest.corpus.modified === scan.modified;
-  } catch {
-    return false;
+export const parseArtefacts = (files: ArtefactFiles): ServeArtefacts => {
+  const text = (name: string): string => decoder.decode(files.get(name));
+  const manifest = JSON.parse(text(ARTEFACT_FILES.manifest)) as Manifest;
+  if (manifest.pipelineVersion !== PIPELINE_VERSION) {
+    throw new Error(
+      `artefacts were built by pipeline ${manifest.pipelineVersion}; ` +
+        `this is ${PIPELINE_VERSION}`,
+    );
   }
+  const catalog = JSON.parse(text(ARTEFACT_FILES.catalog)) as CatalogArtefact;
+  const vocab = JSON.parse(text(ARTEFACT_FILES.vocab)) as Vocab;
+  const units = JSON.parse(text(ARTEFACT_FILES.units)) as UnitTable;
+  const split = vocab.surfaces.length + 1;
+  const postings = readPostings(files.get(ARTEFACT_FILES.postings)!, split);
+  const overlayPostings = readPostings(
+    files.get(ARTEFACT_FILES.postingsOriginal)!,
+    split,
+  );
+  const overlay = JSON.parse(text(ARTEFACT_FILES.overlay)) as {
+    affectedUnits: number[];
+  };
+  const spellingSurfaces: number[][] = vocab.spellings.map(() => []);
+  for (let id = 0; id < vocab.surfaceSpelling.length; id++) {
+    spellingSurfaces[vocab.surfaceSpelling[id]].push(id);
+  }
+  const formSurfaces: number[][] = vocab.forms.map(() => []);
+  for (let id = 0; id < vocab.surfaceForm.length; id++) {
+    formSurfaces[vocab.surfaceForm[id]].push(id);
+  }
+  // Units are written to each edition's blocks.jsonl in units.edition order,
+  // so this groups them in blocks.jsonl line order.
+  const editionUnits: number[][] = manifest.editions.map(() => []);
+  for (let unit = 0; unit < units.edition.length; unit++) {
+    editionUnits[units.edition[unit]].push(unit);
+  }
+  return {
+    manifest,
+    catalog,
+    vocab,
+    units,
+    postings,
+    overlayPostings,
+    affectedUnits: new Set(overlay.affectedUnits),
+    spellingSurfaces,
+    formSurfaces,
+    editionUnits,
+  };
 };
