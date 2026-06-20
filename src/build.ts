@@ -5,10 +5,8 @@
  * (fast deploys, CI checks), not a requirement.
  */
 
-import { artefactsDir, corpusDir } from "./lib/config.ts";
-import { PIPELINE_VERSION } from "./lib/artefacts.ts";
-import { buildArtefactsToDisk } from "./lib/pipeline.ts";
-import { denoIo } from "./lib/io.ts";
+import { artefactsDir, corpusDir } from "./config.ts";
+import { buildArtefactsToDisk, denoIo, PIPELINE_VERSION } from "./core/mod.ts";
 
 const corpus = corpusDir();
 const dir = artefactsDir();

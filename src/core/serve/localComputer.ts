@@ -12,20 +12,23 @@ import {
   findAuthorEntry,
   findEditionEntry,
   findWorkEntry,
+  type TokenStore,
 } from "./store.ts";
 import {
   catalogResponse,
+  collocationsResponse,
   compareResponse,
   compareSectionResponse,
   concordanceResponse,
   editionResponse,
   frequencyResponse,
   fullTextResponse,
+  keywordsResponse,
   searchResponse,
   sectionFullTextResponse,
   sectionResponse,
 } from "./api.ts";
-import type { Computer } from "../../client.ts";
+import type { Computer } from "../../types.ts";
 
 const lower = (slug: string): string => slug.toLowerCase();
 const lowerPath = (path: string[]): string[] => path.map(lower);
@@ -33,6 +36,7 @@ const lowerPath = (path: string[]): string[] => path.map(lower);
 export const localComputer = (
   artefacts: ServeArtefacts,
   store: BlockStore,
+  tokens: TokenStore,
 ): Computer => {
   // Resolve author and work entries; slugs are lowercased to match the HTTP
   // routes (server.ts lowercases every path segment).
@@ -133,5 +137,7 @@ export const localComputer = (
     frequency: (params) =>
       Promise.resolve(frequencyResponse(artefacts, params)),
     concordance: (params) => concordanceResponse(store, artefacts, params),
+    keywords: (params) => Promise.resolve(keywordsResponse(artefacts, params)),
+    collocations: (params) => collocationsResponse(tokens, artefacts, params),
   };
 };

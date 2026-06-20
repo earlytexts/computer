@@ -33,12 +33,35 @@ export {
 export type { TokenSpan } from "./tokenize.ts";
 
 /* search */
-export { matchRanges, occurrences, parseQuery, search } from "./search.ts";
+export {
+  matchRanges,
+  occurrences,
+  parseQuery,
+  search,
+  surfaceIds,
+} from "./search.ts";
 export type { MatchLevel, SearchHit, SearchOptions } from "./search.ts";
+
+/* keyness (statistical over-representation) */
+export { keyness, OUT, REFERENCE, TARGET } from "./keywords.ts";
+export type {
+  KeyMode,
+  KeynessOptions,
+  KeynessResult,
+  KeynessRow,
+} from "./keywords.ts";
+
+/* collocations (positional co-occurrence) */
+export { collocations, IN_SCOPE } from "./collocations.ts";
+export type {
+  CollocationOptions,
+  CollocationResult,
+  CollocationRow,
+} from "./collocations.ts";
 
 /* diff, edition comparison, concordance */
 export { diffBlocks, diffToBlocks } from "./diff.ts";
 export { alignSections, findSectionByKey, pathKey } from "./compare.ts";
-export type { AlignedSection } from "./compare.ts";
+export type { AlignedSection, SectionNode } from "./compare.ts";
 export { compareLines, lineParts } from "./concordance.ts";
 export type { Sort } from "./concordance.ts";

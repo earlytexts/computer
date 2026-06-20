@@ -35,9 +35,10 @@ missing, so `deno task build` is an optimisation, not a requirement. The corpus
 is compiled into memory only to (re)build the artefacts; once they are fresh the
 server runs entirely from them and boots in well under a second. Every route is
 answered from the artefacts: search from the inverted index and units (~50MB
-heap, ms-fast), and the text/compare routes from `catalog.json` (the metadata
-tree and per-edition section skeletons) plus block content read lazily from each
-edition's `blocks.jsonl` under a small LRU.
+heap, ms-fast), the text/compare routes from `catalog.json` (the metadata tree
+and per-edition section skeletons) plus block content read lazily from each
+edition's `blocks.jsonl` under a small LRU, and collocations from the
+per-edition `tokens.bin` read lazily under its own small LRU.
 
 Clients are identified by the first `X-Forwarded-For` hop when present (set by a
 reverse proxy or a trusted upstream site forwarding its visitors' IPs), else the
@@ -52,9 +53,9 @@ deno task dev:lemmas    # manage the lemmas.json citation table
 
 The search and frequency/concordance layers are built on top of a spelling table
 (`variants.json`) and a citation table (`lemmas.json`), which are maintained in
-the `src/lib/text/` directory. The `dev:variants` and `dev:lemmas` scripts run a
-REPL that lets you inspect, add, and remove entries from these tables, and write
-them back to disk. The tables are used at build time to expand queries and
+the `src/core/text/` directory. The `dev:variants` and `dev:lemmas` scripts run
+a REPL that lets you inspect, add, and remove entries from these tables, and
+write them back to disk. The tables are used at build time to expand queries and
 compute canonical forms.
 
 ## API
@@ -77,16 +78,18 @@ served over MCP (Streamable HTTP) at `/mcp`.
 | `/search?q=&match=&caseSensitive=&version=&author=&work=&edition=&page=&perPage=`                     | ranked full-text hits, highlighted             |
 | `/frequency?q=&by=&match=&caseSensitive=&version=&author=&work=&edition=`                             | phrase counts grouped by author/work/edition   |
 | `/concordance?q=&context=&sort=&match=&caseSensitive=&version=&author=&work=&edition=&page=&perPage=` | keyword-in-context lines                       |
+| `/keywords?author=&work=&edition=&by=&version=&min=&limit=`                                           | a subcorpus's distinctive words (keyness)      |
+| `/collocations?q=&by=&match=&window=&min=&limit=&author=&work=&edition=`                              | words occurring near a node word               |
 | `/mcp` (POST/GET/DELETE)                                                                              | the corpus tools over MCP                      |
 
 Edition slugs are year slugs like `1757` or `1742a`. A request without
 `/editions/:edition` addresses the work's **canonical** edition (its default
-printing); `edition=all` on search/frequency/concordance covers every printing,
-and omitting `edition` scopes them to canonical editions only. Authors are
-ordered by year of first publication; works chronologically within an author.
-Every work, edition, and section carries an `imported` flag (sections inherit it
-from their ancestors): `false` means the text is a stub — catalogued, but with
-no content to link to.
+printing); `edition=all` on search/frequency/concordance/keywords covers every
+printing, and omitting `edition` scopes them to canonical editions only. Authors
+are ordered by year of first publication; works chronologically within an
+author. Every work, edition, and section carries an `imported` flag (sections
+inherit it from their ancestors): `false` means the text is a stub — catalogued,
+but with no content to link to.
 
 ### Search
 
@@ -97,8 +100,8 @@ deliberately left for later). Two independent options control matching:
 - `match` — the type level each word is expanded over: `exact` (the spelling as
   written, case-folded), `spelling` (old and modern spellings of the same form,
   "encrease" ↔ "increase", via accent/ligature/apostrophe folding plus the
-  variant table in [src/lib/text/variants.json](src/lib/text/variants.json)), or
-  `form` (the tolerant default — also unites plurals and inflections, so
+  variant table in [src/core/text/variants.json](src/core/text/variants.json)),
+  or `form` (the tolerant default — also unites plurals and inflections, so
   "connection between cause" matches "connexion betwixt causes");
 - `caseSensitive` — off by default (case ignored); on requires each word's
   initial capitalisation to agree.
@@ -115,11 +118,67 @@ search for "show" highlights _shew_.
 occurrence counts with a relative rate (per 1000 tokens), concordance one
 keyword-in-context line per occurrence.
 
+### Keywords
+
+`keywords` is the one search-family route that takes **no query** — it is a
+discovery tool. Name a target subcorpus (`author`, optionally narrowed to a
+`work`) and it returns the words that subcorpus uses more than the rest of the
+corpus does: its distinctive vocabulary, ranked by **keyness**. The reference is
+the rest of the edition universe — canonical editions by default, the `edition`
+scope otherwise (`all`, or a year slug) — so every unit is partitioned into
+target, reference, or out of scope. With neither `author` nor `work` there is no
+target and the result is empty.
+
+Each term carries two complementary numbers, the standard corpus-linguistics
+pairing: **log-likelihood** (Dunning's G²), the strength of evidence that the
+term's rate differs between target and reference; and **log-ratio**, the effect
+size (log₂ of the ratio of relative frequencies, with a zero reference count
+smoothed by half an occurrence). Results are the over-represented terms
+(positive log-ratio) ranked by G². No stop-word list is applied — function words
+occur at similar rates in like prose and so score low, while a genuine stylistic
+marker (_betwixt_ for _between_) is exactly what keyness is meant to surface.
+
+`by` chooses the level terms are grouped and reported at: `lemma` (the default —
+citation forms, so "causes"/"caused" count as "cause"), `form` (the
+inflection-tolerant bucket), or `surface` (the spellings as written). `version`
+counts over the `edited` reading text (default) or the `original`. `min` is the
+noise floor on target occurrences (default 5); `limit` caps the rows (default
+50). The route is answered entirely from `vocab.json` + `units.json` +
+`postings.bin` — no block reads and no pipeline changes.
+
+### Collocations
+
+Where keyness finds distinctive _terms_, `collocations` finds distinctive
+_pairings_: given a node word `q`, the words that occur near it more often than
+chance — the conceptual neighbourhood of a term (what clusters around _liberty_,
+_cause_, _passion_). Unlike keyness it is **positional**, so it is the one route
+that reads the ordered token stream (`tokens.bin`): the node word's in-scope
+units are walked and a window of ±`window` tokens (default 5, max 25) is taken
+around each occurrence, clamped to the unit (a block) so context never crosses a
+paragraph boundary. Overlapping windows count each context position once, so a
+collocate's co-occurrence can never exceed its total frequency. Scope mirrors
+the search family: the whole corpus (canonical editions) by default, narrowed by
+`author`/`work`/`edition`; the node word is matched at the `match` level
+(tolerant by default). Counting is over the edited reading text only — the token
+stream exists for that version alone.
+
+Each collocate carries three complementary association measures, which disagree
+by design so a client can rank by the question it is asking: **log-likelihood**
+(G², the default ranking — a 2×2 significance test that favours confident, often
+grammatical collocates), **PMI** (the effect size — log₂ observed/expected,
+favouring rarer, tightly-bound lexical neighbours), and a **t-score**
+(frequency-weighted confidence, the companion to PMI). No stop-word list is
+applied: t-score and G² surface the function-word collocates, PMI the lexical
+ones. `by` groups collocates as `lemma` (default), `form`, or `surface`; `min`
+is the co-occurrence noise floor (default 3); `limit` caps the rows (default
+50). Marginal frequencies come from `postings.bin`, so only the node word's own
+units are read from `tokens.bin` (cached per edition) — never the whole scope.
+
 ## Artefacts
 
 `deno task build` compiles the corpus and writes everything derived to
 `ARTEFACTS_DIR`. The on-disk format is defined in
-[src/lib/artefacts.ts](src/lib/artefacts.ts):
+[src/core/artefacts.ts](src/core/artefacts.ts):
 
 - `manifest.json` — pipeline version, corpus fingerprint, edition list, stats,
   build warnings.
@@ -144,14 +203,16 @@ keyword-in-context line per occurrence.
 - `editions/<author>/<work>/<edition>/blocks.jsonl` + `text.txt` + `tokens.bin`
   — each compiled block as a JSON line (search hits are read back by byte
   range), the extracted plain text of every block, and the token stream as
-  (surface id, char offset) pairs for future corpus analysis.
+  (surface id, char offset) pairs. The collocations route reads `tokens.bin`
+  lazily (the node word's units only, cached per edition); `text.txt` is for
+  rebuilding the index and future corpus analysis.
 
 The design invariant: `text.txt` is exactly the output of `blockText` over the
 compiled blocks, and every stored offset points into it. Extraction and
 highlight-injection are the same traversal
-([src/lib/text/text.ts](src/lib/text/text.ts)), which is what lets match offsets
-recorded at build time be mapped back into a block's formatted structure at
-serve time with no stored offset map. Anything that changes extraction or
+([src/core/text/text.ts](src/core/text/text.ts)), which is what lets match
+offsets recorded at build time be mapped back into a block's formatted structure
+at serve time with no stored offset map. Anything that changes extraction or
 tokenization must bump the version constant next to it; the pipeline version is
 stamped into the manifest and mismatched artefacts are rebuilt, while type-level
 changes (variants.json, lemmas) only change vocab.json.
@@ -165,109 +226,130 @@ matrices for vectors/topic models can all be derived from `vocab.json` +
 
 ## Architecture
 
-The shape is **thin entry points → a small set of units → free internals**.
+Four layers stack upward: the **corpus** on disk → a swappable **reader** → the
+**core** that answers every read/search/diff/frequency query over it → the
+**HTTP and MCP servers** on top. The keystone is the `Computer` interface
+([src/types.ts](src/types.ts)): the core's whole surface, with two
+interchangeable implementations — the in-process one over the artefacts
+(`localComputer`) and the HTTP client that unwraps the wire (`computerClient` in
+[src/client.ts](src/client.ts)). The servers are written against `Computer` and
+do not care which they hold; the artefact cache is an internal optimisation
+hidden entirely inside the core.
 
 ### Entry points (`src/`)
 
 Thin doers that wire a unit or two together and run; they carry no business
 logic of their own.
 
-- [src/build.ts](src/build.ts) — CLI: compile the corpus and write the
-  artefacts.
-- [src/main.ts](src/main.ts) — HTTP: load the artefacts (rebuilding if stale),
-  then serve the REST + MCP routes.
+- [src/build.ts](src/build.ts) — CLI: compile the corpus and warm the artefact
+  cache on disk.
+- [src/main.ts](src/main.ts) — HTTP: `openComputer`, then serve the REST + MCP
+  routes.
 - [src/stdio.ts](src/stdio.ts) — the same corpus tools over MCP on stdio.
+- [src/config.ts](src/config.ts) — environment → settings (corpus/artefacts
+  dirs, port, rate limit); the core itself takes explicit paths.
 - [src/types.ts](src/types.ts) + [src/client.ts](src/client.ts) — the public
-  contract: the response types and the typed HTTP client that other repos
-  vendor.
+  contract: the response types and the `Computer` interface (types.ts), and the
+  typed HTTP client that other repos vendor (client.ts).
 
-### The units (`src/lib/`)
+### The servers (`src/`)
 
-The seam between the entry points and the internals.
+Above the core, depending only on the `Computer` interface.
 
-- `config.ts` — environment → settings (corpus/artefacts dirs, port, rate
-  limit).
-- `io.ts` — the imperative shell: the only module that touches the filesystem.
+- `server.ts` — the HTTP shell: it parses each request into a `Computer` method
+  call and serializes the result, plus routing, rate limiting, and the `/mcp`
+  mount. `ratelimit.ts` is the token bucket.
+- `mcp.ts` — the MCP server: `createMcpServer` (a connectable Server, for stdio)
+  and `createMcpHandler` (the stateless HTTP handler), both over a `Computer`.
+  `tools.ts` defines the corpus tools and `render.ts` renders responses to plain
+  text for tool results.
+
+### The core (`src/core/`)
+
+- `mod.ts` — the front door: `openComputer(io, paths)` loads the artefacts
+  (rebuilding from the corpus first if stale), wires the lazy block and token
+  stores, and returns a `Computer`. The artefact format never escapes this seam.
+- `io.ts` — the swappable reader: the only module that touches the filesystem.
   It implements the `Io` adapter (corpus scan, artefact read/write, the lazy
   block reader) backed by Deno; everything below it is pure or reaches the disk
-  through an injected port.
-- `pipeline.ts` — the two phase transitions, as pure orchestration over an `Io`:
-  `buildArtefactsToDisk` (corpus → artefacts on disk) and `loadForServing`
-  (ensure-fresh, rebuilding if stale, then load into memory).
-- `server.ts` — the HTTP handler: routing, JSON, rate limiting, and the `/mcp`
-  mount; owns the per-handler block store (the blocks.jsonl LRU).
-- `mcp.ts` — the MCP server: `createMcpServer` (a connectable Server, for stdio)
-  and `createMcpHandler` (the stateless HTTP handler), both over the same tools.
+  through an injected port. Tests pass an in-memory `Io` over a dummy corpus.
+- `pipeline.ts` — the two phase transitions over an `Io`: `buildArtefactsToDisk`
+  (corpus → artefacts on disk) and `loadForServing` (ensure-fresh, rebuilding if
+  stale, then load into memory).
 - `artefacts.ts` — the artefact-format authority: the types, version constants,
   freshness check, and the `serializeArtefacts`/`parseArtefacts` codec the build
   and serve sides share. It does no I/O of its own and imports neither side.
-
-### The internals (`src/lib/{build,serve,text}/`)
-
-Below the units, grouped so the build/serve boundary is enforced by the import
-graph — `build/` and `serve/` both sit on `text/`, and neither imports the
-other.
-
 - `build/` — corpus → in-memory artefacts. `catalog.ts` (scan the corpus through
   an injected `CorpusFs`, compile Markit, resolve `children` references and
   cascade metadata — how composite works like ETSS/FD/HE share text) and
-  `builder.ts` (fold the corpus into the tables; the codec in `artefacts.ts`
-  turns them into bytes).
-- `serve/` — artefacts → API responses. `store.ts` (lazy block reads — the
-  block-store LRU and byte-range reads, over an injected `BlockReader` — and
-  catalog lookups), `api.ts` (pure response builders), `localComputer.ts` (an
-  in-process implementation of the client's `Computer` interface, so the MCP
-  tools run with no HTTP hop), `tools.ts` (the MCP tool definitions),
-  `render.ts` (plain-text rendering of responses for tool results), and
-  `ratelimit.ts` (the token bucket).
+  `builder.ts` (fold the corpus into the tables).
+- `serve/` — artefacts → API responses. `store.ts` (lazy block and token-stream
+  reads — the block-store and token-store LRUs and byte-range reads, over an
+  injected `BlockReader` — and catalog lookups), `api.ts` (pure response
+  builders), and `localComputer.ts` (the in-process `Computer`, resolving slugs
+  and the canonical default over the api builders).
 - `text/` — the pure text/search engine, behind `mod.ts` (its public API; the
   leaves are internal). `text.ts` (plain-text extraction and highlight
   injection, one shared traversal), `tokenize.ts` (the tokenizer plus the
-  spelling/form/ lemma type layers), `search.ts` (query parsing, vocabulary
-  expansion, postings intersection with phrase positions), `diff.ts` (Myers
-  word/punctuation diff, block alignment by Markit ids), `compare.ts`
-  (section-tree alignment between editions), and `concordance.ts`
-  (keyword-in-context lines). `build/` and `serve/` import only `text/mod.ts`;
-  the leaves keep their own characterization tests.
+  spelling/form/lemma type layers), `search.ts` (query parsing, vocabulary
+  expansion, postings intersection with phrase positions), `keywords.ts`
+  (keyness: log-likelihood and log-ratio over a target/reference partition),
+  `collocations.ts` (positional co-occurrence around a node word, scored by
+  G²/PMI/t-score), `diff.ts` (Myers word/punctuation diff, block alignment by
+  Markit ids), `compare.ts` (section-tree alignment between editions), and
+  `concordance.ts` (keyword-in-context lines). `build/` and `serve/` import only
+  `text/mod.ts`.
 
-Imports run strictly downward: entry points → units → `{build, serve}` →
-`text/mod.ts` → `artefacts.ts`/`types.ts`. (`artefacts.ts` also reads the two
-`*_VERSION` constants through `text/mod.ts` to compose the pipeline version.)
+Imports run strictly downward: entry points → `server.ts`/`mcp.ts` →
+`core/mod.ts` → `{build, serve}` → `text/mod.ts` → `artefacts.ts`/`types.ts`.
 The filesystem is the one inversion: `io.ts` is the sole I/O module, and
 `build/` and `serve/` reach the disk only through the `CorpusFs` and
 `BlockReader` ports they define, which `io.ts` implements — so the rest of the
-tree is pure and unit-testable with in-memory fakes.
+tree is pure and testable with in-memory fakes.
 
 ## Testing
 
 ```sh
-deno task test    # the suite, against tests/fixtures/corpus
+deno task test    # the suite, over an in-memory corpus
 deno task check   # typecheck + lint + format check
 ```
 
-The intent (an aspiration the current suite is being migrated toward): **test at
-the units, leave the internals free**. The seam units are the contract — pinning
-their behaviour lets everything below them be refactored freely:
+The principle: **one fat behavioural seam, everything else thin wiring.** Every
+read/search/diff/frequency behaviour is pinned once, through the `Computer`
+interface, over a corpus authored in memory — so the entire core beneath it
+(catalog, build, codec, index, serve) is free to be refactored without touching
+a test. The corpus is built in code, not on disk: `tests/corpus.ts` provides a
+`corpus()` builder and `memoryCorpus` (a `CorpusFs` over a path → `.mit` map),
+and `tests/helpers.ts`'s `openTestComputer` opens a `Computer` over it through
+the real `openComputer` (artefacts kept in memory, no temp directory).
 
-- the **build** unit, run against the fixture corpus, exercises catalog loading,
-  compilation, tokenization, indexing, and the `serializeArtefacts`/
-  `parseArtefacts` codec through one in-memory round-trip;
-- the **io** unit covers the on-disk path — write, read, byte-range block reads,
-  the freshness/replace guards — against a temp directory;
-- the **HTTP** and **MCP** units exercise the serve-side internals (api, store,
-  search, diff, compare, concordance, render) through requests and tool calls.
+- **`tests/core/`** — the behavioural seam, one file per `Computer` method
+  (`catalog`, `edition`, `section`, `compare`, `search`, `frequency`,
+  `concordance`), each driving the shared in-memory `Computer`. This is where
+  match levels, scoping, pagination, grouping, version handling, highlighting,
+  diffs, navigation and not-found are all pinned. `cache_test.ts` is the one
+  test that knows the artefact cache exists — it pins the two properties the
+  rest rely on being invisible: the codec round-trips, and a stale corpus is
+  rebuilt while a fresh one is not.
+- **`tests/wiring/`** — thin tests that the servers translate to and from the
+  `Computer` correctly, not the corpus behaviour. `http_test.ts` (createHandler:
+  routing, query parsing, status codes, headers, the rate limiter with an
+  injected clock, the `/mcp` mount) and `mcp_test.ts` (createMcpServer through a
+  real client: tool definitions, argument mapping, dispatch, error wrapping, and
+  rendering).
+- **`tests/io_test.ts`** — the real Deno disk adapter (serialize → write → read
+  → parse, byte-range block reads, the freshness/replace guards) against a temp
+  directory. **`tests/config_test.ts`** — environment → settings.
+- **`tests/e2e/`** — one spawned-process test per entry point. Each materializes
+  the in-memory corpus to a temp directory, then runs `build.ts` / `main.ts`
+  (driven through the vendored client plus the `/mcp` mount) / `stdio.ts`
+  (driven by a real MCP client over stdin/stdout) — just enough to prove the
+  wiring (env → config, the Deno io adapter, `Deno.serve`, the MCP transports)
+  holds.
 
-This is overridable where it earns its keep: the algorithmic leaves in `text/`
-(the tokenizer, the extraction/offset invariant in `text.ts`, the Myers diff)
-keep direct characterization tests, because routing every edge case through a
-seam is uneconomical and these are where subtle regressions hide; `ratelimit`
-keeps its own test too (it needs injected time). Migrating the remaining
-internal unit tests up to the seams is future work.
-
-The tests never touch a real corpus: `tests/fixtures/corpus` is a miniature one
-(two authors; a single-file work, a three-edition work with textual variants and
-inline formatting, a composite work borrowing another work's text, and an
-unimported stub). The fixture artefacts are built once per test run and
-round-tripped through the codec in memory (no temp directory), so most tests run
-disk-free; the `io` test exercises the on-disk path — write, read, byte-range
-block reads — against a temp directory of its own.
+The shared corpus (`testCorpus()`) is a miniature one — two authors; a
+single-file work, a three-edition work with textual variants and inline
+formatting, a composite work borrowing another work's text, and an unimported
+stub. Its variants and inflections are deliberate, so behaviours like match
+levels and grouping stay observable in real output. Only the `io` and `e2e`
+tests reach the disk.

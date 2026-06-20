@@ -1,9 +1,9 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { parseArtefacts } from "../../src/lib/artefacts.ts";
-import { createBlockStore } from "../../src/lib/serve/store.ts";
-import { denoIo } from "../../src/lib/io.ts";
-import { blockText } from "../../src/lib/text/text.ts";
-import { testData, unitText } from "../helpers.ts";
+import { parseArtefacts } from "../src/core/artefacts.ts";
+import { createBlockStore } from "../src/core/serve/store.ts";
+import { denoIo } from "../src/core/io.ts";
+import { blockText } from "../src/core/text/mod.ts";
+import { testData, unitText } from "./helpers.ts";
 
 // The io adapter is the only module that touches the filesystem, so it is
 // exercised directly here: serialize -> write -> read -> parse, plus the

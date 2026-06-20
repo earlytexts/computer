@@ -86,7 +86,7 @@ const lookupId = (sorted: string[], value: string): number | undefined => {
  * surface (`exact`), or every surface sharing its canonical spelling
  * (`spelling`) or its form bucket (`form`). The query word is folded the same
  * way the corresponding vocabulary level was built. */
-const surfaceIds = (
+export const surfaceIds = (
   artefacts: ServeArtefacts,
   surface: string,
   match: MatchLevel,

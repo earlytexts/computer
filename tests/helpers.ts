@@ -1,71 +1,156 @@
-import { buildCatalog, type Catalog } from "../src/lib/build/catalog.ts";
+/**
+ * Test harness for the core seam. `openTestComputer` opens a `Computer` over an
+ * in-memory corpus through the real `openComputer` front door (the same path the
+ * entry points drive), keeping the artefact cache in memory — no temp directory,
+ * no fixture files. The behavioural suite (tests/core/) drives this `Computer`;
+ * the thin wiring tests (tests/wiring/) wrap it in the HTTP/MCP servers.
+ *
+ * `testData` exposes the lower-level artefact build (the in-memory `Artefacts`,
+ * the serialized files, the loaded `ServeArtefacts`, a block store) for the two
+ * tests that care about the cache itself — io_test (the disk adapter) and
+ * cache_test (the freshness/codec optimisation).
+ */
+
 import {
+  ARTEFACT_FILES,
   type ArtefactFiles,
   type Artefacts,
   type CorpusScan,
-  parseArtefacts,
-  serializeArtefacts,
+  type Manifest,
   type ServeArtefacts,
-} from "../src/lib/artefacts.ts";
-import { buildArtefacts } from "../src/lib/build/builder.ts";
+} from "../src/core/artefacts.ts";
 import {
   type BlockReader,
   type BlockStore,
   createBlockStore,
-} from "../src/lib/serve/store.ts";
-import { denoIo } from "../src/lib/io.ts";
+} from "../src/core/serve/store.ts";
+import { buildArtefactsToDisk, loadForServing } from "../src/core/pipeline.ts";
+import { type Io, openComputer } from "../src/core/mod.ts";
+import type { Computer } from "../src/types.ts";
+import { CORPUS_ROOT, countMit, memoryCorpus, testCorpus } from "./corpus.ts";
 
-export const fixtureCorpus = decodeURIComponent(
-  new URL("fixtures/corpus", import.meta.url).pathname,
-);
+const decoder = new TextDecoder();
+
+/**
+ * An `Io` over an in-memory corpus and an in-memory artefact store: a faithful
+ * adapter (the codec round-trip and freshness probe both run) that touches no
+ * disk. `state.builds` counts rebuilds, so cache_test can watch the freshness
+ * logic; the corpus map is read live, so adding a file makes the scan stale.
+ */
+export type MemoryHarness = {
+  io: Io;
+  /** The (mutable) corpus map; mutate it to make the next open rebuild. */
+  files: Record<string, string>;
+  state: { builds: number };
+  /** Every serialized artefact file written so far (tables + per-edition). */
+  written: () => ArtefactFiles;
+};
+
+export const memoryHarness = (
+  files: Record<string, string> = testCorpus(),
+): MemoryHarness => {
+  const corpus = memoryCorpus(files);
+  let store: ArtefactFiles = new Map();
+  const state = { builds: 0 };
+  const io: Io = {
+    corpus,
+    scanCorpus: () => Promise.resolve({ files: countMit(files), modified: 0 }),
+    readManifest: () => {
+      const bytes = store.get(ARTEFACT_FILES.manifest);
+      return Promise.resolve(
+        bytes === undefined
+          ? null
+          : JSON.parse(decoder.decode(bytes)) as Manifest,
+      );
+    },
+    readArtefacts: () => {
+      const out: ArtefactFiles = new Map();
+      for (const name of Object.values(ARTEFACT_FILES)) {
+        const bytes = store.get(name);
+        if (bytes !== undefined) out.set(name, bytes);
+      }
+      return Promise.resolve(out);
+    },
+    writeArtefacts: (_dir, written) => {
+      store = new Map(written);
+      state.builds++;
+      return Promise.resolve();
+    },
+    blockReader: (): BlockReader => ({
+      readText: (relPath) => {
+        const bytes = store.get(relPath);
+        return Promise.resolve(
+          bytes === undefined ? null : decoder.decode(bytes),
+        );
+      },
+      readRange: (relPath, offset, length) => {
+        const bytes = store.get(relPath);
+        if (bytes === undefined) throw new Error(`no file ${relPath}`);
+        return Promise.resolve(bytes.subarray(offset, offset + length));
+      },
+      readBytes: (relPath) => Promise.resolve(store.get(relPath) ?? null),
+    }),
+  };
+  return { io, files, state, written: () => store };
+};
+
+const PATHS = { corpusDir: CORPUS_ROOT, artefactsDir: "memory" };
+
+/** Open a `Computer` over a corpus map (the shared one by default). */
+export const openTestComputer = async (
+  files: Record<string, string> = testCorpus(),
+): Promise<{ computer: Computer; harness: MemoryHarness }> => {
+  const harness = memoryHarness(files);
+  const { computer } = await openComputer(harness.io, PATHS);
+  return { computer, harness };
+};
+
+let shared: Promise<Computer> | undefined;
+
+/** The shared `Computer` over the test corpus, opened once per test process. */
+export const testComputer = (): Promise<Computer> =>
+  shared ??= openTestComputer().then((r) => r.computer);
+
+/* ----------------------- artefact-level fixtures ---------------------- */
 
 export type TestData = {
-  catalog: Catalog;
   /** In-memory build output (includes text blobs and token streams). */
   built: Artefacts;
-  /** The serialized artefact files (relpath -> bytes), as written to disk. */
+  /** The serialized artefact files (relpath → bytes), as written by the build. */
   files: ArtefactFiles;
-  /** The artefacts parsed back into served state (no disk round-trip). */
+  /** The artefacts loaded back into served state, as the server loads them. */
   artefacts: ServeArtefacts;
-  /** A block reader over `files`, and a store built on it. */
+  /** A block reader over the built files, and a store built on it. */
   blocks: BlockReader;
   store: BlockStore;
   scan: CorpusScan;
   warnings: string[];
 };
 
-const decoder = new TextDecoder();
-
-/** A BlockReader backed by an in-memory file map (mirrors io.blockReader). */
-const mapBlockReader = (files: ArtefactFiles): BlockReader => ({
-  readText: (relPath) => {
-    const bytes = files.get(relPath);
-    return Promise.resolve(bytes === undefined ? null : decoder.decode(bytes));
-  },
-  readRange: (relPath, offset, length) => {
-    const bytes = files.get(relPath);
-    if (bytes === undefined) throw new Error(`no file ${relPath}`);
-    return Promise.resolve(bytes.subarray(offset, offset + length));
-  },
-});
-
 let loaded: Promise<TestData> | undefined;
 
-/** Build the fixture corpus's artefacts once per test process. */
+/**
+ * Build the test corpus's artefacts once per process, through the same pipeline
+ * the entry points drive (`buildArtefactsToDisk` then `loadForServing`) over an
+ * in-memory `Io` — codec round-trip and freshness path included, no temp dir.
+ */
 export const testData = (): Promise<TestData> =>
   loaded ??= (async () => {
-    const { catalog, warnings } = await buildCatalog(
-      denoIo.corpus,
-      fixtureCorpus,
-    );
-    const scan = await denoIo.scanCorpus(fixtureCorpus);
-    const built = buildArtefacts(catalog, warnings, scan);
-    // Round-trip through the codec, all in memory — no temp directory.
-    const files = serializeArtefacts(built);
-    const artefacts = parseArtefacts(files);
-    const blocks = mapBlockReader(files);
+    const { io, written } = memoryHarness();
+    const built = await buildArtefactsToDisk(io, CORPUS_ROOT, "memory");
+    const artefacts = await loadForServing(io, CORPUS_ROOT, "memory");
+    const blocks = io.blockReader("memory");
     const store = createBlockStore(artefacts, blocks);
-    return { catalog, built, files, artefacts, blocks, store, scan, warnings };
+    const scan = await io.scanCorpus(CORPUS_ROOT);
+    return {
+      built,
+      files: written(),
+      artefacts,
+      blocks,
+      store,
+      scan,
+      warnings: built.manifest.warnings,
+    };
   })();
 
 /** A unit's extracted text, sliced from the built text blob. */

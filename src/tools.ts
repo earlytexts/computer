@@ -8,14 +8,16 @@
  * interface, so it runs over HTTP (a client) or in-process (localComputer).
  */
 
-import type { Computer } from "../../client.ts";
-import type { MatchLevel } from "../../types.ts";
+import type { Computer, KeyMode, MatchLevel } from "./types.ts";
 import {
   renderAuthors,
+  renderCollocations,
   renderCompare,
   renderCompareSection,
+  renderConcordance,
   renderEdition,
   renderFrequency,
+  renderKeywords,
   renderSearch,
   renderSection,
   renderWorks,
@@ -185,6 +187,127 @@ export const createTools = (computer: Computer): ToolSet => {
       },
     },
     {
+      name: "concordance",
+      description:
+        "Show every occurrence of a phrase keyword-in-context: one line per occurrence (not per block), with a window of context words on each side and the keyword marked «…». Like search, the whole query is matched as one phrase and matching is tolerant by default (use match and/or caseSensitive to tighten it). Call this to study how a word or phrase is actually used across the corpus — the words it keeps company with — rather than reading whole blocks. Lines can be ordered by corpus position (default) or by the words nearest the keyword on the left or right. Optionally scope to an author, work, or single edition.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          q: { type: "string", description: "The phrase to show in context." },
+          context: {
+            type: "number",
+            description:
+              "Context words to keep on each side of the keyword (default 6, max 25).",
+          },
+          sort: {
+            type: "string",
+            enum: ["position", "left", "right"],
+            description:
+              'Line order: "position" (corpus order, the default), or by the words nearest the keyword on the "left" or "right".',
+          },
+          match: matchProperty,
+          caseSensitive: {
+            type: "boolean",
+            description:
+              "Require each word's initial capitalisation to agree with the text. Defaults to false (case is ignored).",
+          },
+          author: authorProperty,
+          work: workProperty,
+          edition: slugProperty(
+            'Limit to one edition (a year slug like "1751"), or "all" for every printing. Omit to use canonical editions only (the default).',
+          ),
+          page: {
+            type: "number",
+            description: "Result page, starting at 1; defaults to 1.",
+          },
+        },
+        required: ["q"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "keywords",
+      description:
+        'Find the words a part of the corpus uses more than the rest of it — its distinctive vocabulary (keyness). Unlike search and frequency, this takes no phrase: name a target author (and optionally a work) and it returns the terms statistically over-represented there compared with the rest of the corpus, ranked by log-likelihood (G², the strength of evidence) with a log-ratio (the effect size). Use it to characterise an author or work — to answer "what is distinctively Humean", "what marks out this treatise". Terms are grouped by lemma by default (causes/caused → cause); use "form" to also keep spelling variants together, or "surface" for the exact spellings as written. No phrase needed — the statistics surface the words for you.',
+      inputSchema: {
+        type: "object",
+        properties: {
+          author: {
+            ...authorProperty,
+            description:
+              'Target author slug, e.g. "hume" — the author whose distinctive words you want.',
+          },
+          work: {
+            ...workProperty,
+            description:
+              "Optional target work slug within the author, to find what is distinctive of one work rather than the whole author.",
+          },
+          edition: slugProperty(
+            'Edition universe both sides are drawn from: a year slug, "all" for every printing, or omit for canonical editions only (the default).',
+          ),
+          by: {
+            type: "string",
+            enum: ["lemma", "form", "surface"],
+            description:
+              'How to group terms. "lemma" (default): citation forms (causes/caused → cause). "form": unite spelling variants and inflections. "surface": the exact spellings as written.',
+          },
+          min: {
+            type: "number",
+            description:
+              "Minimum occurrences in the target for a term to be considered (default 5); raise it to cut rare-word noise.",
+          },
+          limit: {
+            type: "number",
+            description: "Maximum terms to return (default 50, max 500).",
+          },
+        },
+        required: ["author"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "collocations",
+      description:
+        'Find the words that cluster around a node word — its collocates, the company it keeps. Give a word and it returns the terms that occur within a few tokens of it more often than chance, the conceptual neighbourhood of the term (what surrounds "liberty", "cause", "passion"). Each collocate carries three association measures, which disagree by design: log-likelihood (G², the default ranking — confident, often grammatical collocates), PMI (the effect size — rarer, tightly-bound lexical neighbours like a fixed phrase), and a t-score (frequency-weighted confidence). Like search, the node word is matched tolerantly by default (use match to tighten it); collocates are grouped by lemma by default (use "form" or "surface"). By default the whole corpus (canonical editions) is measured; scope to an author, work, or single edition. This complements keywords: keywords finds distinctive single words, collocations finds distinctive pairings.',
+      inputSchema: {
+        type: "object",
+        properties: {
+          q: {
+            type: "string",
+            description: "The node word whose collocates you want.",
+          },
+          by: {
+            type: "string",
+            enum: ["lemma", "form", "surface"],
+            description:
+              'How to group collocates. "lemma" (default): citation forms (causes/caused → cause). "form": unite spelling variants and inflections. "surface": the exact spellings as written.',
+          },
+          match: matchProperty,
+          window: {
+            type: "number",
+            description:
+              "How many tokens on each side of the node word count as its neighbourhood (default 5, max 25).",
+          },
+          min: {
+            type: "number",
+            description:
+              "Minimum times a collocate must occur near the node word to be reported (default 3); raise it to cut noise.",
+          },
+          limit: {
+            type: "number",
+            description: "Maximum collocates to return (default 50, max 500).",
+          },
+          author: authorProperty,
+          work: workProperty,
+          edition: slugProperty(
+            'Limit to one edition (a year slug like "1751"), or "all" for every printing. Omit to use canonical editions only (the default).',
+          ),
+        },
+        required: ["q"],
+        additionalProperties: false,
+      },
+    },
+    {
       name: "get_edition",
       description:
         "Get an edition's metadata, front matter, and full table of contents (section paths, titles, and stub flags). With no edition, returns the work's canonical edition. Call this before fetching sections, to find the right section paths.",
@@ -286,6 +409,49 @@ export const createTools = (computer: Computer): ToolSet => {
           by: strOpt(input, "by") as "author" | "work" | "edition" | undefined,
           match: strOpt(input, "match") as MatchLevel | undefined,
           caseSensitive: boolOpt(input, "caseSensitive"),
+          author: strOpt(input, "author"),
+          work: strOpt(input, "work"),
+          edition: strOpt(input, "edition"),
+        }),
+      ),
+    concordance: async (input) =>
+      renderConcordance(
+        await computer.concordance({
+          q: str(input, "q"),
+          context: numOpt(input, "context"),
+          sort: strOpt(input, "sort") as
+            | "position"
+            | "left"
+            | "right"
+            | undefined,
+          match: strOpt(input, "match") as MatchLevel | undefined,
+          caseSensitive: boolOpt(input, "caseSensitive"),
+          author: strOpt(input, "author"),
+          work: strOpt(input, "work"),
+          edition: strOpt(input, "edition"),
+          page: numOpt(input, "page"),
+        }),
+      ),
+    keywords: async (input) =>
+      renderKeywords(
+        await computer.keywords({
+          author: str(input, "author"),
+          work: strOpt(input, "work"),
+          edition: strOpt(input, "edition"),
+          by: strOpt(input, "by") as KeyMode | undefined,
+          min: numOpt(input, "min"),
+          limit: numOpt(input, "limit"),
+        }),
+      ),
+    collocations: async (input) =>
+      renderCollocations(
+        await computer.collocations({
+          q: str(input, "q"),
+          by: strOpt(input, "by") as KeyMode | undefined,
+          match: strOpt(input, "match") as MatchLevel | undefined,
+          window: numOpt(input, "window"),
+          min: numOpt(input, "min"),
+          limit: numOpt(input, "limit"),
           author: strOpt(input, "author"),
           work: strOpt(input, "work"),
           edition: strOpt(input, "edition"),

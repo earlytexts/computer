@@ -12,17 +12,17 @@ const env = (name: string): string | undefined => {
   return value === undefined || value === "" ? undefined : value;
 };
 
-/** Absolute path resolved relative to this module (src/lib/). */
+/** Absolute path resolved relative to this module (src/). */
 const fromHere = (relative: string): string =>
   decodeURIComponent(new URL(relative, import.meta.url).pathname);
 
 /** The corpus directory: `$CORPUS_DIR`, else `../corpus` (sibling of computer). */
 export const corpusDir = (): string =>
-  env("CORPUS_DIR") ?? fromHere("../../../corpus");
+  env("CORPUS_DIR") ?? fromHere("../../corpus");
 
 /** The artefacts directory: `$ARTEFACTS_DIR`, else `./artefacts` in computer. */
 export const artefactsDir = (): string =>
-  env("ARTEFACTS_DIR") ?? fromHere("../../artefacts");
+  env("ARTEFACTS_DIR") ?? fromHere("../artefacts");
 
 /** HTTP server options for main.ts, all from the environment with defaults. */
 export const serverOptions = (): {

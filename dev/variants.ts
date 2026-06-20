@@ -1,5 +1,5 @@
 /**
- * Curate src/lib/variants.json — the old-spelling → modern-spelling table the
+ * Curate src/core/variants.json — the old-spelling → modern-spelling table the
  * SPELLING layer (`normalizeSpelling`) applies to canonicalise orthography.
  *
  * Walks every surface form in the corpus (commonest first), shows which
@@ -13,7 +13,7 @@
  *   deno task dev:variants
  */
 
-import { foldBase } from "../src/lib/text/tokenize.ts";
+import { foldBase } from "../src/core/text/tokenize.ts";
 import { loadArtefacts } from "./lib/artefacts.ts";
 import { loadOverrides, lookup, saveOverrides } from "./lib/overrides.ts";
 import { runCuration } from "./lib/curate.ts";
@@ -21,7 +21,7 @@ import { groupBy, groupLine } from "./lib/groups.ts";
 import { cyan, dim } from "./lib/term.ts";
 
 const variantsPath = decodeURIComponent(
-  new URL("../src/lib/variants.json", import.meta.url).pathname,
+  new URL("../src/core/variants.json", import.meta.url).pathname,
 );
 const progressPath = decodeURIComponent(
   new URL("./state/variants-progress.json", import.meta.url).pathname,
@@ -71,7 +71,7 @@ await runCuration({
   },
   isModified: (i) =>
     lookup(variants, foldBase(vocab.surfaces[i])) !== undefined,
-  overrideRelPath: "src/lib/variants.json",
+  overrideRelPath: "src/core/variants.json",
   progressPath,
   builtAt: manifest.builtAt,
 });

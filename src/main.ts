@@ -1,23 +1,26 @@
 /**
- * HTTP entry point: load the artefacts (rebuilding them from the corpus first
- * if stale), then serve the REST + MCP routes. All building logic lives in
- * lib/pipeline.ts; this script only loads the in-memory state and starts the
- * server.
+ * HTTP entry point: open the computer over the corpus (rebuilding the artefact
+ * cache first if stale), then serve the REST + MCP routes. All the work lives
+ * behind `openComputer`; this script only wires the Deno io adapter and config
+ * to it and starts the server.
  */
 
-import { artefactsDir, corpusDir, serverOptions } from "./lib/config.ts";
-import { loadForServing } from "./lib/pipeline.ts";
-import { createHandler } from "./lib/server.ts";
-import { denoIo } from "./lib/io.ts";
+import { artefactsDir, corpusDir, serverOptions } from "./config.ts";
+import { denoIo, openComputer } from "./core/mod.ts";
+import { createHandler } from "./server.ts";
 
 const corpus = corpusDir();
 const dir = artefactsDir();
 
 const t0 = performance.now();
-const artefacts = await loadForServing(denoIo, corpus, dir, console.log);
+const { computer, manifest } = await openComputer(
+  denoIo,
+  { corpusDir: corpus, artefactsDir: dir },
+  console.log,
+);
 const elapsed = Math.round(performance.now() - t0);
 
-const { stats, warnings } = artefacts.manifest;
+const { stats, warnings } = manifest;
 console.log(
   `Corpus: ${corpus}\n` +
     `Ready in ${elapsed}ms: ` +
@@ -31,7 +34,4 @@ if (warnings.length > 0) {
 }
 
 const { port, rateLimit } = serverOptions();
-Deno.serve(
-  { port },
-  createHandler({ artefacts, blocks: denoIo.blockReader(dir), rateLimit }),
-);
+Deno.serve({ port }, createHandler({ computer, rateLimit }));

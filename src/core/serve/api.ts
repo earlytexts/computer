@@ -19,36 +19,51 @@ import {
   type AlignedSection,
   alignSections,
   blockText,
+  collocations,
   compareLines,
   diffBlocks,
   diffToBlocks,
   findSectionByKey,
   highlightBlock,
+  IN_SCOPE,
+  type KeyMode,
+  keyness,
   lineParts,
   type MatchLevel,
   matchRanges,
   occurrences,
   parseQuery,
   pathKey,
+  REFERENCE,
   resolveBlock,
   search,
   type SearchOptions,
   type Sort,
+  surfaceIds,
+  TARGET,
   tokenize,
 } from "../text/mod.ts";
-import { type BlockStore, findEditionEntry } from "./store.ts";
+import { type BlockStore, findEditionEntry, type TokenStore } from "./store.ts";
 import type {
   AlignedRow,
   CatalogResponse,
+  CollocationEntry,
+  CollocationsParams,
+  CollocationsResponse,
   CompareResponse,
   CompareSectionResponse,
   ConcordanceLine,
+  ConcordanceParams,
   ConcordanceResponse,
   EditionResponse,
   EditionSection,
   FrequencyEntry,
+  FrequencyParams,
   FrequencyResponse,
   FullTextResponse,
+  KeywordsParams,
+  KeywordsResponse,
+  SearchParams,
   SearchResponse,
   SectionContent,
   SectionFullTextResponse,
@@ -357,32 +372,9 @@ export const compareSectionResponse = async (
 
 /* ------------------------------- search ------------------------------ */
 
-/** Resolve the request's `match` string to a level; defaults to tolerant. */
-const parseMatch = (match?: string): MatchLevel =>
+/** Resolve the request's `match` level; defaults to tolerant. */
+const parseMatch = (match?: MatchLevel): MatchLevel =>
   match === "exact" ? "exact" : match === "spelling" ? "spelling" : "form";
-
-export type SearchParams = {
-  q: string;
-  match?: string; // "exact" | "spelling" | "form"; defaults to "form"
-  caseSensitive?: boolean;
-  version?: string;
-  author?: string;
-  work?: string;
-  edition?: string;
-  page?: number;
-  perPage?: number;
-};
-
-export type FrequencyParams = {
-  q: string;
-  by?: string; // "author" | "work" | "edition"; defaults to "work"
-  match?: string; // "exact" | "spelling" | "form"; defaults to "form"
-  caseSensitive?: boolean;
-  version?: string;
-  author?: string;
-  work?: string;
-  edition?: string; // undefined = canonical only; "all" = every edition
-};
 
 const MAX_PER_PAGE = 100;
 
@@ -498,6 +490,225 @@ export const frequencyResponse = (
   };
 };
 
+/* ------------------------------ keywords ----------------------------- */
+
+const MAX_KEYWORDS = 500;
+const DEFAULT_KEYWORDS = 50;
+const DEFAULT_MIN_COUNT = 5;
+
+const parseMode = (by?: KeyMode): KeyMode =>
+  by === "surface" ? "surface" : by === "form" ? "form" : "lemma";
+
+const per1000 = (count: number, tokens: number): number =>
+  tokens > 0 ? Math.round((count / tokens) * 10000) / 10 : 0;
+
+/**
+ * Keyness: the terms a target subcorpus uses more than the rest of the corpus.
+ * The target is the author/work named in `params`; the reference is the rest of
+ * the edition universe (canonical editions by default, or the `edition` scope) —
+ * so every unit is partitioned into target, reference, or out of scope, and
+ * `keyness` scores the difference. With no author or work there is no target, so
+ * the result is empty (as an empty query is for the search family).
+ */
+export const keywordsResponse = (
+  artefacts: ServeArtefacts,
+  params: KeywordsParams,
+): KeywordsResponse => {
+  const mode = parseMode(params.by);
+  const version: "edited" | "original" = params.version === "original"
+    ? "original"
+    : "edited";
+  const minCount = Math.max(1, Math.floor(params.min ?? DEFAULT_MIN_COUNT));
+  const limit = Math.min(
+    MAX_KEYWORDS,
+    Math.max(1, Math.floor(params.limit ?? DEFAULT_KEYWORDS)),
+  );
+  const editionScope = params.edition;
+  const empty: KeywordsResponse = {
+    by: mode,
+    version,
+    author: params.author ?? null,
+    work: params.work ?? null,
+    edition: editionScope ?? null,
+    targetTokens: 0,
+    referenceTokens: 0,
+    total: 0,
+    results: [],
+  };
+  // No target scope, no keywords (a target needs at least an author or a work).
+  if (params.author === undefined && params.work === undefined) return empty;
+
+  const { manifest, units } = artefacts;
+  // Classify each edition once (target / reference / out), then label its units.
+  const inUniverse = (canonical: boolean, edition: string): boolean =>
+    editionScope === undefined
+      ? canonical
+      : editionScope === "all" || edition === editionScope;
+  const editionClass = manifest.editions.map((ref) => {
+    if (!inUniverse(ref.canonical, ref.edition)) return 0;
+    const isTarget =
+      (params.author === undefined || ref.author === params.author) &&
+      (params.work === undefined || ref.work === params.work);
+    return isTarget ? TARGET : REFERENCE;
+  });
+  const scope = new Int8Array(units.edition.length);
+  for (let unit = 0; unit < scope.length; unit++) {
+    scope[unit] = editionClass[units.edition[unit]];
+  }
+
+  const result = keyness(artefacts, scope, { mode, version, minCount, limit });
+  return {
+    by: mode,
+    version,
+    author: params.author ?? null,
+    work: params.work ?? null,
+    edition: editionScope ?? null,
+    targetTokens: result.targetTokens,
+    referenceTokens: result.referenceTokens,
+    total: result.rows.length,
+    results: result.rows.map((row) => ({
+      term: row.term,
+      target: row.target,
+      reference: row.reference,
+      targetRelative: per1000(row.target, result.targetTokens),
+      referenceRelative: per1000(row.reference, result.referenceTokens),
+      logLikelihood: row.logLikelihood,
+      logRatio: row.logRatio,
+    })),
+  };
+};
+
+/* ---------------------------- collocations --------------------------- */
+
+const MAX_COLLOCATIONS = 500;
+const DEFAULT_COLLOCATIONS = 50;
+const DEFAULT_COLLOCATION_MIN = 3;
+const DEFAULT_WINDOW = 5;
+const MAX_WINDOW = 25;
+
+/**
+ * Collocations: the words that occur near a node word more than chance. The
+ * node word is resolved to its surface ids at the requested match level; the
+ * scope (the corpus of canonical editions by default, or the author/work/
+ * edition named in `params`) fixes which units count. Marginal frequencies come
+ * from the inverted index over that scope, but the windows are positional, so
+ * the node word's in-scope units are read from the ordered token stream and
+ * walked here before the pure `collocations` scores every collocate.
+ */
+export const collocationsResponse = async (
+  tokens: TokenStore,
+  artefacts: ServeArtefacts,
+  params: CollocationsParams,
+): Promise<CollocationsResponse> => {
+  const q = params.q.trim();
+  const mode = parseMode(params.by);
+  const match = parseMatch(params.match);
+  const window = Math.min(
+    MAX_WINDOW,
+    Math.max(1, Math.floor(params.window ?? DEFAULT_WINDOW)),
+  );
+  const minCount = Math.max(
+    1,
+    Math.floor(params.min ?? DEFAULT_COLLOCATION_MIN),
+  );
+  const limit = Math.min(
+    MAX_COLLOCATIONS,
+    Math.max(1, Math.floor(params.limit ?? DEFAULT_COLLOCATIONS)),
+  );
+  const editionScope = params.edition;
+  const empty: CollocationsResponse = {
+    q,
+    by: mode,
+    match,
+    window,
+    author: params.author ?? null,
+    work: params.work ?? null,
+    edition: editionScope ?? null,
+    scopeTokens: 0,
+    nodeCount: 0,
+    windowTokens: 0,
+    total: 0,
+    results: [],
+  };
+  if (q === "") return empty;
+
+  // The node word's surfaces, united across the query's words at the match level.
+  const nodeSurfaces = new Set<number>();
+  for (const word of parseQuery(q)) {
+    for (const id of surfaceIds(artefacts, word.surface, match)) {
+      nodeSurfaces.add(id);
+    }
+  }
+  if (nodeSurfaces.size === 0) return empty;
+
+  const { manifest, units, postings } = artefacts;
+  // Classify each edition once (in scope / out), then label its units. The
+  // universe mirrors search/keywords: canonical editions by default, or the
+  // named edition slug ("all" for every printing).
+  const inUniverse = (canonical: boolean, edition: string): boolean =>
+    editionScope === undefined
+      ? canonical
+      : editionScope === "all" || edition === editionScope;
+  const editionInScope = manifest.editions.map((ref) =>
+    inUniverse(ref.canonical, ref.edition) &&
+    (params.author === undefined || ref.author === params.author) &&
+    (params.work === undefined || ref.work === params.work)
+  );
+  const scope = new Int8Array(units.edition.length);
+  for (let unit = 0; unit < scope.length; unit++) {
+    if (editionInScope[units.edition[unit]]) scope[unit] = IN_SCOPE;
+  }
+
+  // The in-scope units that contain the node word — the only ones whose token
+  // streams must be read (windows never reach beyond a unit).
+  const nodeUnitIndices = new Set<number>();
+  for (const id of nodeSurfaces) {
+    for (
+      let i = postings.offsets[id] * 2;
+      i < postings.offsets[id + 1] * 2;
+      i += 2
+    ) {
+      const unit = postings.pairs[i];
+      if (scope[unit] === IN_SCOPE) nodeUnitIndices.add(unit);
+    }
+  }
+  const nodeUnits = new Map<number, Uint32Array>();
+  await Promise.all(
+    [...nodeUnitIndices].map(async (unit) => {
+      nodeUnits.set(unit, await tokens.unitSurfaces(unit));
+    }),
+  );
+
+  const result = collocations(artefacts, scope, nodeSurfaces, nodeUnits, {
+    mode,
+    window,
+    minCount,
+    limit,
+  });
+  return {
+    q,
+    by: mode,
+    match,
+    window,
+    author: params.author ?? null,
+    work: params.work ?? null,
+    edition: editionScope ?? null,
+    scopeTokens: result.scopeTokens,
+    nodeCount: result.nodeCount,
+    windowTokens: result.windowTokens,
+    total: result.rows.length,
+    results: result.rows.map((row): CollocationEntry => ({
+      term: row.term,
+      cooccurrence: row.cooccurrence,
+      total: row.total,
+      relative: per1000(row.cooccurrence, result.windowTokens),
+      pmi: row.pmi,
+      logLikelihood: row.logLikelihood,
+      tScore: row.tScore,
+    })),
+  };
+};
+
 export const searchResponse = async (
   store: BlockStore,
   artefacts: ServeArtefacts,
@@ -562,20 +773,6 @@ export const searchResponse = async (
 };
 
 /* ---------------------------- concordance ---------------------------- */
-
-export type ConcordanceParams = {
-  q: string;
-  context?: number;
-  sort?: string; // "position" (default) | "left" | "right"
-  match?: string; // "exact" | "spelling" | "form"; defaults to "form"
-  caseSensitive?: boolean;
-  version?: string;
-  author?: string;
-  work?: string;
-  edition?: string; // undefined = canonical only; "all" = every edition
-  page?: number;
-  perPage?: number;
-};
 
 const DEFAULT_CONTEXT = 6;
 const MAX_CONTEXT = 25;

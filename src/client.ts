@@ -15,109 +15,7 @@
  * base URL for a minute to spare one round-trip per page view.
  */
 
-import type {
-  CatalogResponse,
-  CompareResponse,
-  CompareSectionResponse,
-  ConcordanceResponse,
-  EditionResponse,
-  FrequencyResponse,
-  FullTextResponse,
-  MatchLevel,
-  SearchResponse,
-  SectionFullTextResponse,
-  SectionResponse,
-  Version,
-} from "./types.ts";
-
-export type SearchParams = {
-  q: string;
-  /** Type level to match at (default: "form", the tolerant level). */
-  match?: MatchLevel;
-  /** Require initial capitalisation to agree (default: ignore case). */
-  caseSensitive?: boolean;
-  /** Which text to search: edited reading text (default) or the original. */
-  version?: "edited" | "original";
-  author?: string;
-  work?: string;
-  edition?: string;
-  page?: number;
-};
-
-export type FrequencyParams = {
-  q: string;
-  /** Group occurrences by author, work, or edition (default: work). */
-  by?: "author" | "work" | "edition";
-  match?: MatchLevel;
-  caseSensitive?: boolean;
-  version?: "edited" | "original";
-  author?: string;
-  work?: string;
-  edition?: string;
-};
-
-export type ConcordanceParams = {
-  q: string;
-  /** Context words on each side of the keyword (default 6, max 25). */
-  context?: number;
-  /** Line order: corpus order (default) or by the nearest words on each side. */
-  sort?: "position" | "left" | "right";
-  match?: MatchLevel;
-  caseSensitive?: boolean;
-  version?: "edited" | "original";
-  author?: string;
-  work?: string;
-  edition?: string;
-  page?: number;
-};
-
-export type Computer = {
-  catalog: () => Promise<CatalogResponse>;
-  /** Omit `edition` to address the work's canonical edition. */
-  edition: (
-    author: string,
-    work: string,
-    edition?: string,
-    version?: Version,
-  ) => Promise<EditionResponse | undefined>;
-  fullText: (
-    author: string,
-    work: string,
-    edition?: string,
-    version?: Version,
-  ) => Promise<FullTextResponse | undefined>;
-  section: (
-    author: string,
-    work: string,
-    edition: string | undefined,
-    path: string[],
-    version?: Version,
-  ) => Promise<SectionResponse | undefined>;
-  sectionFullText: (
-    author: string,
-    work: string,
-    edition: string | undefined,
-    path: string[],
-    version?: Version,
-  ) => Promise<SectionFullTextResponse | undefined>;
-  compare: (
-    author: string,
-    work: string,
-    a: string,
-    b: string,
-  ) => Promise<CompareResponse | undefined>;
-  compareSection: (
-    author: string,
-    work: string,
-    a: string,
-    b: string,
-    path: string[],
-    version?: Version,
-  ) => Promise<CompareSectionResponse | undefined>;
-  search: (params: SearchParams) => Promise<SearchResponse>;
-  frequency: (params: FrequencyParams) => Promise<FrequencyResponse>;
-  concordance: (params: ConcordanceParams) => Promise<ConcordanceResponse>;
-};
+import type { CatalogResponse, Computer, Version } from "./types.ts";
 
 const CATALOG_TTL_MS = 60_000;
 const catalogCache = new Map<string, { at: number; value: CatalogResponse }>();
@@ -226,6 +124,9 @@ export const computerClient = (
       if (params.work !== undefined) query.set("work", params.work);
       if (params.edition !== undefined) query.set("edition", params.edition);
       if (params.page !== undefined) query.set("page", String(params.page));
+      if (params.perPage !== undefined) {
+        query.set("perPage", String(params.perPage));
+      }
       return must(`/search?${query}`);
     },
     frequency: (params) => {
@@ -252,7 +153,35 @@ export const computerClient = (
       if (params.work !== undefined) query.set("work", params.work);
       if (params.edition !== undefined) query.set("edition", params.edition);
       if (params.page !== undefined) query.set("page", String(params.page));
+      if (params.perPage !== undefined) {
+        query.set("perPage", String(params.perPage));
+      }
       return must(`/concordance?${query}`);
+    },
+    keywords: (params) => {
+      const query = new URLSearchParams();
+      if (params.author !== undefined) query.set("author", params.author);
+      if (params.work !== undefined) query.set("work", params.work);
+      if (params.edition !== undefined) query.set("edition", params.edition);
+      if (params.by !== undefined) query.set("by", params.by);
+      if (params.version !== undefined) query.set("version", params.version);
+      if (params.min !== undefined) query.set("min", String(params.min));
+      if (params.limit !== undefined) query.set("limit", String(params.limit));
+      return must(`/keywords?${query}`);
+    },
+    collocations: (params) => {
+      const query = new URLSearchParams({ q: params.q });
+      if (params.by !== undefined) query.set("by", params.by);
+      if (params.match !== undefined) query.set("match", params.match);
+      if (params.window !== undefined) {
+        query.set("window", String(params.window));
+      }
+      if (params.min !== undefined) query.set("min", String(params.min));
+      if (params.limit !== undefined) query.set("limit", String(params.limit));
+      if (params.author !== undefined) query.set("author", params.author);
+      if (params.work !== undefined) query.set("work", params.work);
+      if (params.edition !== undefined) query.set("edition", params.edition);
+      return must(`/collocations?${query}`);
     },
   };
 };

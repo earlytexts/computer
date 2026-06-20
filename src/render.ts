@@ -16,16 +16,19 @@ import type {
 import type {
   AlignedRow,
   CatalogAuthor,
+  CollocationsResponse,
   CompareResponse,
   CompareSectionResponse,
+  ConcordanceResponse,
   EditionMeta,
   EditionResponse,
   FrequencyResponse,
+  KeywordsResponse,
   SearchResponse,
   SectionResponse,
   SectionSummary,
   WorkMeta,
-} from "../../types.ts";
+} from "./types.ts";
 
 /* ------------------------------ blocks ------------------------------- */
 
@@ -272,6 +275,71 @@ export const renderFrequency = (response: FrequencyResponse): string => {
     response.total === 1 ? "" : "s"
   } of the phrase "${response.q}", grouped by ${response.by} ` +
     `(sorted by count; relative = per 1000 tokens):\n\n${rows}`;
+};
+
+/* ---------------------------- concordance ---------------------------- */
+
+export const renderConcordance = (response: ConcordanceResponse): string => {
+  if (response.total === 0) {
+    return `No occurrences of the phrase "${response.q}".`;
+  }
+  const lines = response.lines.map((line) => {
+    const left = (line.leftTruncated ? "… " : "") + line.left;
+    const right = line.right + (line.rightTruncated ? " …" : "");
+    const cite = `${line.author}/${line.work}/${line.edition} § ${
+      line.sectionPath.join("/")
+    } [${line.blockId}]`;
+    return `${left} «${line.keyword}» ${right}\n    — ${cite}`;
+  }).join("\n");
+  return `${response.total} occurrence${
+    response.total === 1 ? "" : "s"
+  } of the phrase "${response.q}" in context ` +
+    `(page ${response.page} of ${response.pages}; keyword marked «…»):\n\n${lines}`;
+};
+
+/* ------------------------------ keywords ----------------------------- */
+
+export const renderKeywords = (response: KeywordsResponse): string => {
+  const scope = [response.author, response.work].filter((p) => p !== null)
+    .join("/") || "the corpus";
+  if (response.total === 0) {
+    return `No distinctive vocabulary found for ${scope} ` +
+      `(by ${response.by}). It may have too little text, or no reference to ` +
+      `compare against.`;
+  }
+  const rows = response.results.map((entry, index) =>
+    `${index + 1}. ${entry.term} — G²=${entry.logLikelihood}, ` +
+    `log-ratio=${entry.logRatio} ` +
+    `(${entry.target}× here vs ${entry.reference}× elsewhere; ` +
+    `${entry.targetRelative} vs ${entry.referenceRelative} per 1000)`
+  ).join("\n");
+  return `Words distinctive of ${scope}, by ${response.by} ` +
+    `(${response.version} text), ranked by log-likelihood (G²); ` +
+    `log-ratio is the effect size:\n\n${rows}`;
+};
+
+/* ---------------------------- collocations --------------------------- */
+
+export const renderCollocations = (response: CollocationsResponse): string => {
+  const scope = [response.author, response.work].filter((p) => p !== null)
+    .join("/") || "the corpus";
+  if (response.nodeCount === 0) {
+    return `No occurrences of "${response.q}" found in ${scope}, so there ` +
+      `are no collocations to report.`;
+  }
+  if (response.total === 0) {
+    return `"${response.q}" occurs ${response.nodeCount}× in ${scope}, but no ` +
+      `collocate meets the minimum count. Lower min, or widen the window.`;
+  }
+  const rows = response.results.map((entry, index) =>
+    `${index + 1}. ${entry.term} — G²=${entry.logLikelihood}, ` +
+    `PMI=${entry.pmi}, t=${entry.tScore} ` +
+    `(${entry.cooccurrence}× near, ${entry.total}× total)`
+  ).join("\n");
+  return `Words collocating with "${response.q}" in ${scope}, by ` +
+    `${response.by} within ±${response.window} tokens ` +
+    `(${response.nodeCount} occurrences), ranked by log-likelihood (G²); ` +
+    `PMI is the effect size, t a frequency-weighted confidence:\n\n${rows}`;
 };
 
 /* ------------------------------ compare ------------------------------ */

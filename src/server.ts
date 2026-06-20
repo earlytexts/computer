@@ -1,6 +1,9 @@
 /**
- * The HTTP shell around the API builders in api.ts: routing, JSON
- * serialization, rate limiting, and errors. Kept as thin as possible.
+ * The HTTP shell over a `Computer`: it parses each request into a `Computer`
+ * method call and serializes the result as JSON, plus routing, rate limiting,
+ * and errors. It holds no corpus logic of its own — slug resolution, the
+ * canonical-edition default, scoping, and pagination all live in the `Computer`
+ * it is handed (the same interface the MCP server and the HTTP client use).
  *
  * Routes (all GET):
  *   /                                                          health/info
@@ -14,6 +17,8 @@
  *   /search?q=&match=&caseSensitive=&version=&author=&work=&edition=&page=&perPage=  full-text search
  *   /frequency?q=&by=author|work|edition&match=&caseSensitive=&version=&author=&work=&edition=  term/phrase frequency
  *   /concordance?q=&context=&sort=position|left|right&match=&caseSensitive=&version=&author=&work=&edition=&page=&perPage=  keyword-in-context lines
+ *   /keywords?author=&work=&edition=&by=lemma|form|surface&version=&min=&limit=  keyness: a subcorpus's distinctive words
+ *   /collocations?q=&by=lemma|form|surface&match=&window=&min=&limit=&author=&work=&edition=  words that occur near a node word
  *
  * A request without `/editions/:edition` addresses the work's canonical
  * edition. Search with no `edition` is scoped to canonical editions;
@@ -21,46 +26,25 @@
  *
  * Search matches the whole query as one phrase; it is tolerant by default
  * (match=form), tightened by match=spelling|exact and/or caseSensitive=1 (see
- * types.ts). Text
- * routes take ?version=edited|original|both (default edited); search and
- * compare take ?version=edited|original (default edited).
+ * types.ts). Text routes take ?version=edited|original|both (default edited);
+ * search and compare take ?version=edited|original (default edited).
  */
 
-import type { ServeArtefacts } from "./artefacts.ts";
-import {
-  type BlockReader,
-  type BlockStore,
-  createBlockStore,
-  findAuthorEntry,
-  findEditionEntry,
-  findWorkEntry,
-} from "./serve/store.ts";
-import {
-  catalogResponse,
-  compareResponse,
-  compareSectionResponse,
-  concordanceResponse,
-  editionResponse,
-  frequencyResponse,
-  fullTextResponse,
-  searchResponse,
-  sectionFullTextResponse,
-  sectionResponse,
-} from "./serve/api.ts";
 import {
   clientKey,
   createRateLimiter,
   type RateLimiterOptions,
-} from "./serve/ratelimit.ts";
+} from "./ratelimit.ts";
 import { createMcpHandler } from "./mcp.ts";
-import type { Version } from "../types.ts";
+import type { Computer, KeyMode, MatchLevel, Version } from "./types.ts";
 
 export type Api = {
-  artefacts: ServeArtefacts;
-  /** Lazy block reader, rooted at the artefacts directory. */
-  blocks: BlockReader;
+  /** The computer the routes call; the same interface MCP and the client use. */
+  computer: Computer;
   /** Per-client token bucket; omit to disable rate limiting. */
   rateLimit?: RateLimiterOptions;
+  /** Clock for the rate limiter; defaults to `Date.now` (injected in tests). */
+  now?: () => number;
 };
 
 /** ?version for text routes: edited (default), original, or both. */
@@ -71,8 +55,8 @@ const textVersion = (url: URL): Version =>
     ? "both"
     : "edited";
 
-/** ?version for compare: edited (default) or original (no `both`). */
-const compareVersion = (url: URL): Version =>
+/** ?version for search/compare: edited (default) or original (no `both`). */
+const editedOrOriginal = (url: URL): "edited" | "original" =>
   url.searchParams.get("version") === "original" ? "original" : "edited";
 
 /** A boolean query flag: "1" or "true" (case-insensitive) is on. */
@@ -90,16 +74,17 @@ const json = (value: unknown, status = 200): Response =>
 
 const notFound = (): Response => json({ error: "not found" }, 404);
 
-const route = async (
-  api: Api,
-  store: BlockStore,
-  url: URL,
-): Promise<Response> => {
-  const { catalog } = api.artefacts;
+/** Serialize a `Computer` read result: 404 when it resolved nothing. */
+const found = (value: unknown): Response =>
+  value === undefined ? notFound() : json(value);
+
+const route = async (computer: Computer, url: URL): Promise<Response> => {
   const segments = url.pathname.split("/").map(decodeURIComponent)
     .filter((s) => s !== "").map((s) => s.toLowerCase());
+  const p = url.searchParams;
 
   if (segments.length === 0) {
+    const catalog = await computer.catalog();
     return json({
       service: "computer",
       authors: catalog.authors.length,
@@ -107,54 +92,89 @@ const route = async (
     });
   }
   if (segments[0] === "catalog" && segments.length === 1) {
-    return json(catalogResponse(catalog));
+    return json(await computer.catalog());
   }
   if (segments[0] === "search" && segments.length === 1) {
-    const params = url.searchParams;
     return json(
-      await searchResponse(store, api.artefacts, {
-        q: params.get("q") ?? "",
-        match: params.get("match") ?? undefined,
-        caseSensitive: flag(params.get("caseSensitive")),
-        version: params.get("version") ?? undefined,
-        author: params.get("author") ?? undefined,
-        work: params.get("work") ?? undefined,
-        edition: params.get("edition") ?? undefined,
-        page: Number(params.get("page")) || undefined,
-        perPage: Number(params.get("perPage")) || undefined,
+      await computer.search({
+        q: p.get("q") ?? "",
+        match: (p.get("match") ?? undefined) as MatchLevel | undefined,
+        caseSensitive: flag(p.get("caseSensitive")),
+        version: editedOrOriginal(url),
+        author: p.get("author") ?? undefined,
+        work: p.get("work") ?? undefined,
+        edition: p.get("edition") ?? undefined,
+        page: Number(p.get("page")) || undefined,
+        perPage: Number(p.get("perPage")) || undefined,
       }),
     );
   }
   if (segments[0] === "frequency" && segments.length === 1) {
-    const params = url.searchParams;
     return json(
-      frequencyResponse(api.artefacts, {
-        q: params.get("q") ?? "",
-        by: params.get("by") ?? undefined,
-        match: params.get("match") ?? undefined,
-        caseSensitive: flag(params.get("caseSensitive")),
-        version: params.get("version") ?? undefined,
-        author: params.get("author") ?? undefined,
-        work: params.get("work") ?? undefined,
-        edition: params.get("edition") ?? undefined,
+      await computer.frequency({
+        q: p.get("q") ?? "",
+        by: (p.get("by") ?? undefined) as
+          | "author"
+          | "work"
+          | "edition"
+          | undefined,
+        match: (p.get("match") ?? undefined) as MatchLevel | undefined,
+        caseSensitive: flag(p.get("caseSensitive")),
+        version: editedOrOriginal(url),
+        author: p.get("author") ?? undefined,
+        work: p.get("work") ?? undefined,
+        edition: p.get("edition") ?? undefined,
       }),
     );
   }
   if (segments[0] === "concordance" && segments.length === 1) {
-    const params = url.searchParams;
     return json(
-      await concordanceResponse(store, api.artefacts, {
-        q: params.get("q") ?? "",
-        context: Number(params.get("context")) || undefined,
-        sort: params.get("sort") ?? undefined,
-        match: params.get("match") ?? undefined,
-        caseSensitive: flag(params.get("caseSensitive")),
-        version: params.get("version") ?? undefined,
-        author: params.get("author") ?? undefined,
-        work: params.get("work") ?? undefined,
-        edition: params.get("edition") ?? undefined,
-        page: Number(params.get("page")) || undefined,
-        perPage: Number(params.get("perPage")) || undefined,
+      await computer.concordance({
+        q: p.get("q") ?? "",
+        context: Number(p.get("context")) || undefined,
+        sort: (p.get("sort") ?? undefined) as
+          | "position"
+          | "left"
+          | "right"
+          | undefined,
+        match: (p.get("match") ?? undefined) as MatchLevel | undefined,
+        caseSensitive: flag(p.get("caseSensitive")),
+        version: editedOrOriginal(url),
+        author: p.get("author") ?? undefined,
+        work: p.get("work") ?? undefined,
+        edition: p.get("edition") ?? undefined,
+        page: Number(p.get("page")) || undefined,
+        perPage: Number(p.get("perPage")) || undefined,
+      }),
+    );
+  }
+
+  if (segments[0] === "keywords" && segments.length === 1) {
+    return json(
+      await computer.keywords({
+        author: p.get("author") ?? undefined,
+        work: p.get("work") ?? undefined,
+        edition: p.get("edition") ?? undefined,
+        by: (p.get("by") ?? undefined) as KeyMode | undefined,
+        version: editedOrOriginal(url),
+        min: Number(p.get("min")) || undefined,
+        limit: Number(p.get("limit")) || undefined,
+      }),
+    );
+  }
+
+  if (segments[0] === "collocations" && segments.length === 1) {
+    return json(
+      await computer.collocations({
+        q: p.get("q") ?? "",
+        by: (p.get("by") ?? undefined) as KeyMode | undefined,
+        match: (p.get("match") ?? undefined) as MatchLevel | undefined,
+        window: Number(p.get("window")) || undefined,
+        min: Number(p.get("min")) || undefined,
+        limit: Number(p.get("limit")) || undefined,
+        author: p.get("author") ?? undefined,
+        work: p.get("work") ?? undefined,
+        edition: p.get("edition") ?? undefined,
       }),
     );
   }
@@ -162,30 +182,30 @@ const route = async (
   if (
     segments[0] !== "authors" || segments[2] !== "works" || segments.length < 4
   ) return notFound();
-  const author = findAuthorEntry(catalog, segments[1]);
-  const work = author === undefined
-    ? undefined
-    : findWorkEntry(author, segments[3]);
-  if (author === undefined || work === undefined) return notFound();
+  const author = segments[1];
+  const work = segments[3];
 
   if (segments[4] !== "compare") {
     // An explicit `/editions/:slug/...` names the edition; otherwise the path
-    // addresses the work's canonical edition directly.
-    const [edition, rest] = segments[4] === "editions"
-      ? [findEditionEntry(work, segments[5]), segments.slice(6)] as const
-      : [
-        findEditionEntry(work, work.meta.canonicalSlug),
-        segments.slice(4),
-      ] as const;
-    if (edition === undefined) return notFound();
+    // addresses the work's canonical edition (resolved by the computer).
+    let edition: string | undefined;
+    let rest: string[];
+    if (segments[4] === "editions") {
+      if (segments[5] === undefined) return notFound();
+      edition = segments[5];
+      rest = segments.slice(6);
+    } else {
+      edition = undefined;
+      rest = segments.slice(4);
+    }
     if (rest.length === 0) {
-      return json(
-        await editionResponse(store, author, work, edition, textVersion(url)),
+      return found(
+        await computer.edition(author, work, edition, textVersion(url)),
       );
     }
     if (rest.length === 1 && rest[0] === "full") {
-      return json(
-        await fullTextResponse(store, author, work, edition, textVersion(url)),
+      return found(
+        await computer.fullText(author, work, edition, textVersion(url)),
       );
     }
     if (rest[0] === "sections" && rest.length > 1) {
@@ -195,25 +215,25 @@ const route = async (
         sectionPath.length > 1 &&
         sectionPath[sectionPath.length - 1] === "full"
       ) {
-        const data = await sectionFullTextResponse(
-          store,
+        return found(
+          await computer.sectionFullText(
+            author,
+            work,
+            edition,
+            sectionPath.slice(0, -1),
+            textVersion(url),
+          ),
+        );
+      }
+      return found(
+        await computer.section(
           author,
           work,
           edition,
-          sectionPath.slice(0, -1),
+          sectionPath,
           textVersion(url),
-        );
-        return data === undefined ? notFound() : json(data);
-      }
-      const section = await sectionResponse(
-        store,
-        author,
-        work,
-        edition,
-        sectionPath,
-        textVersion(url),
+        ),
       );
-      return section === undefined ? notFound() : json(section);
     }
     return notFound();
   }
@@ -221,20 +241,19 @@ const route = async (
   if (segments[4] === "compare" && segments.length >= 7) {
     const [a, b, ...rest] = segments.slice(5);
     if (rest.length === 0) {
-      const compared = compareResponse(author, work, a, b);
-      return compared === undefined ? notFound() : json(compared);
+      return found(await computer.compare(author, work, a, b));
     }
     if (rest[0] === "sections" && rest.length > 1) {
-      const compared = await compareSectionResponse(
-        store,
-        author,
-        work,
-        a,
-        b,
-        rest.slice(1),
-        compareVersion(url),
+      return found(
+        await computer.compareSection(
+          author,
+          work,
+          a,
+          b,
+          rest.slice(1),
+          editedOrOriginal(url),
+        ),
       );
-      return compared === undefined ? notFound() : json(compared);
     }
     return notFound();
   }
@@ -243,14 +262,13 @@ const route = async (
 };
 
 export const createHandler = (api: Api) => {
-  // One block store (and its LRU) for the life of the handler.
-  const store = createBlockStore(api.artefacts, api.blocks);
-  // The MCP server shares the block store; it serves the corpus tools over
-  // Streamable HTTP at /mcp (POST/GET/DELETE), alongside the REST routes.
-  const mcp = createMcpHandler(api.artefacts, store);
+  // The MCP server is mounted on the same computer, served over Streamable HTTP
+  // at /mcp (POST/GET/DELETE), alongside the REST routes.
+  const mcp = createMcpHandler(api.computer);
   const limiter = api.rateLimit === undefined
     ? undefined
     : createRateLimiter(api.rateLimit);
+  const now = api.now ?? Date.now;
   return async (
     req: Request,
     info?: Deno.ServeHandlerInfo,
@@ -259,7 +277,7 @@ export const createHandler = (api: Api) => {
       ? undefined
       : info.remoteAddr.hostname;
     if (limiter !== undefined) {
-      if (!limiter.allow(clientKey(req, remoteAddr))) {
+      if (!limiter.allow(clientKey(req, remoteAddr), now())) {
         return new Response(
           JSON.stringify({ error: "rate limit exceeded" }),
           {
@@ -280,7 +298,7 @@ export const createHandler = (api: Api) => {
       return json({ error: "method not allowed" }, 405);
     }
     try {
-      return await route(api, store, new URL(req.url));
+      return await route(api.computer, new URL(req.url));
     } catch (error) {
       console.error(error);
       return json({ error: "internal error" }, 500);

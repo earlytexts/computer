@@ -155,6 +155,13 @@ const blockReader = (dir: string): BlockReader => ({
     }
     return buffer;
   },
+  readBytes: async (relPath) => {
+    try {
+      return await Deno.readFile(`${dir}/${relPath}`);
+    } catch {
+      return null; // a stub edition has no tokens file
+    }
+  },
 });
 
 /** The production io adapter, backed by Deno's filesystem. */

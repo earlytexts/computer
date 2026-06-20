@@ -1,0 +1,272 @@
+/**
+ * The MCP wiring: the corpus tools served through a real MCP client/server pair
+ * (createMcpServer over the test computer, an in-memory transport). These tests
+ * own what MCP adds over the `Computer` — the tool definitions and schemas,
+ * argument mapping and dispatch, error wrapping, and the plain-text rendering of
+ * each response. The corpus behaviour is pinned in tests/core; one representative
+ * call per tool here confirms the wiring and the rendering.
+ */
+
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { createMcpServer } from "../../src/mcp.ts";
+import { testComputer } from "../helpers.ts";
+
+type CallResult = {
+  content: { type: string; text: string }[];
+  isError?: boolean;
+};
+
+/** A connected MCP client over the test computer, plus a close hook. */
+const connect = async (): Promise<
+  { client: Client; close: () => Promise<void> }
+> => {
+  const computer = await testComputer();
+  const server = createMcpServer(computer);
+  const [clientTransport, serverTransport] = InMemoryTransport
+    .createLinkedPair();
+  await server.connect(serverTransport);
+  const client = new Client({ name: "test", version: "1.0.0" });
+  await client.connect(clientTransport);
+  return {
+    client,
+    close: async () => {
+      await client.close();
+      await server.close();
+    },
+  };
+};
+
+/** Run a tool and return its rendered text and error flag. */
+const call = async (
+  client: Client,
+  name: string,
+  args: Record<string, unknown> = {},
+): Promise<{ text: string; isError: boolean }> => {
+  const result = await client.callTool({ name, arguments: args }) as CallResult;
+  return { text: result.content[0].text, isError: result.isError === true };
+};
+
+Deno.test("lists every tool with a name, description, and object schema", async () => {
+  const { client, close } = await connect();
+  try {
+    const { tools } = await client.listTools();
+    assertEquals(tools.length, 11);
+    assertEquals(
+      tools.map((t: { name: string }) => t.name).sort(),
+      [
+        "collocations",
+        "compare_editions",
+        "compare_section",
+        "concordance",
+        "frequency",
+        "get_author_works",
+        "get_edition",
+        "get_section",
+        "keywords",
+        "list_authors",
+        "search",
+      ],
+    );
+    for (const tool of tools) {
+      assert(tool.description && tool.description.length > 0);
+      assertEquals(tool.inputSchema.type, "object");
+    }
+    const search = tools.find((t: { name: string }) => t.name === "search")!;
+    assertEquals(search.inputSchema.required, ["q"]);
+  } finally {
+    await close();
+  }
+});
+
+Deno.test("list_authors renders the catalog", async () => {
+  const { client, close } = await connect();
+  try {
+    const { text } = await call(client, "list_authors");
+    assertStringIncludes(text, "test —");
+    assertStringIncludes(text, "Test");
+    assertStringIncludes(text, "other —");
+  } finally {
+    await close();
+  }
+});
+
+Deno.test("get_author_works resolves an author and reports unknown slugs", async () => {
+  const { client, close } = await connect();
+  try {
+    const works = await call(client, "get_author_works", { author: "test" });
+    assertStringIncludes(works.text, "Works of");
+    assertStringIncludes(works.text, "tw");
+    const unknown = await call(client, "get_author_works", {
+      author: "berkeley",
+    });
+    assertStringIncludes(unknown.text, 'Not found: author "berkeley"');
+  } finally {
+    await close();
+  }
+});
+
+Deno.test("get_edition defaults to the work's canonical edition", async () => {
+  const { client, close } = await connect();
+  try {
+    const { text } = await call(client, "get_edition", {
+      author: "test",
+      work: "tw",
+    });
+    assertStringIncludes(text, 'edition "1760"');
+    assertStringIncludes(text, "Sections");
+  } finally {
+    await close();
+  }
+});
+
+Deno.test("get_section renders a section and reports not-found paths", async () => {
+  const { client, close } = await connect();
+  try {
+    const found = await call(client, "get_section", {
+      author: "test",
+      work: "tw",
+      path: ["1"],
+    });
+    assertStringIncludes(found.text, "§ 1");
+    const missing = await call(client, "get_section", {
+      author: "test",
+      work: "tw",
+      path: ["99"],
+    });
+    assertStringIncludes(missing.text, "Not found: section test/tw/canonical");
+  } finally {
+    await close();
+  }
+});
+
+Deno.test("search renders highlighted hits, and match maps through", async () => {
+  const { client, close } = await connect();
+  try {
+    const tolerant = await call(client, "search", {
+      q: "liberty of the press",
+    });
+    assertStringIncludes(tolerant.text, "«liberty of the press»");
+    assertStringIncludes(tolerant.text, "tolerant"); // the default match level
+    const exact = await call(client, "search", {
+      q: "encrease",
+      edition: "all",
+      match: "exact",
+    });
+    assertStringIncludes(exact.text, "exact spelling");
+    assertStringIncludes(exact.text, "test/tw/1750");
+  } finally {
+    await close();
+  }
+});
+
+Deno.test("frequency renders grouped counts", async () => {
+  const { client, close } = await connect();
+  try {
+    const { text } = await call(client, "frequency", {
+      q: "liberty",
+      by: "work",
+    });
+    assertStringIncludes(text, "grouped by work");
+    assertStringIncludes(text, "per 1000");
+  } finally {
+    await close();
+  }
+});
+
+Deno.test("concordance renders keyword-in-context lines", async () => {
+  const { client, close } = await connect();
+  try {
+    const { text } = await call(client, "concordance", {
+      q: "liberty",
+      edition: "all",
+    });
+    assertStringIncludes(text, "«liberty»");
+    assertStringIncludes(text, "in context");
+  } finally {
+    await close();
+  }
+});
+
+Deno.test("keywords renders a subcorpus's distinctive words", async () => {
+  const { client, close } = await connect();
+  try {
+    const { text } = await call(client, "keywords", {
+      author: "test",
+      work: "tw",
+      min: 1,
+    });
+    assertStringIncludes(text, "distinctive of test/tw");
+    assertStringIncludes(text, "G²=");
+  } finally {
+    await close();
+  }
+});
+
+Deno.test("collocations renders a node word's neighbourhood", async () => {
+  const { client, close } = await connect();
+  try {
+    const { text } = await call(client, "collocations", {
+      q: "liberty",
+      author: "test",
+      work: "tw",
+      min: 1,
+    });
+    assertStringIncludes(text, 'collocating with "liberty" in test/tw');
+    assertStringIncludes(text, "G²=");
+    assertStringIncludes(text, "PMI=");
+  } finally {
+    await close();
+  }
+});
+
+Deno.test("compare_editions and compare_section render the differences", async () => {
+  const { client, close } = await connect();
+  try {
+    const aligned = await call(client, "compare_editions", {
+      author: "test",
+      work: "tw",
+      a: "1750",
+      b: "1760",
+    });
+    assertStringIncludes(aligned.text, "aligned with edition");
+    assertStringIncludes(aligned.text, "ONLY IN");
+    const section = await call(client, "compare_section", {
+      author: "test",
+      work: "tw",
+      a: "1750",
+      b: "1760",
+      path: ["1"],
+    });
+    assertStringIncludes(section.text, "[-"); // text only in 1750
+    assertStringIncludes(section.text, "{+"); // text only in 1760
+  } finally {
+    await close();
+  }
+});
+
+Deno.test("bad arguments and unknown tools come back as tool errors", async () => {
+  const { client, close } = await connect();
+  try {
+    const missing = await call(client, "search", {});
+    assert(missing.isError);
+    assertStringIncludes(missing.text, 'missing required string argument "q"');
+
+    const noPath = await call(client, "get_section", {
+      author: "test",
+      work: "tw",
+    });
+    assert(noPath.isError);
+    assertStringIncludes(
+      noPath.text,
+      'missing required string array argument "path"',
+    );
+
+    const unknown = await call(client, "nonsense");
+    assert(unknown.isError);
+    assertStringIncludes(unknown.text, 'unknown tool "nonsense"');
+  } finally {
+    await close();
+  }
+});

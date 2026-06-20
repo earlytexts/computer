@@ -36,6 +36,8 @@ export type BlockReader = {
     offset: number,
     length: number,
   ) => Promise<Uint8Array>;
+  /** A whole binary file (the edition's tokens.bin), or null when absent. */
+  readBytes: (relPath: string) => Promise<Uint8Array | null>;
 };
 
 /* --------------------------- block store ----------------------------- */
@@ -116,6 +118,74 @@ export const createBlockStore = (
     block,
     blocks: (unitIndices) => Promise.all(unitIndices.map(block)),
     unitBlock,
+  };
+};
+
+/* --------------------------- token store ----------------------------- */
+
+/**
+ * Reads the ordered token stream for the collocations route, which (unlike the
+ * inverted index) needs to know what stands next to a given token. Each
+ * edition's tokens.bin is `(surface id, char offset)` Uint32 pairs in reading
+ * order; a unit's tokens are the contiguous run after the token counts of the
+ * units before it in the edition (units are written in blocks.jsonl order, the
+ * order they were tokenized). Whole editions are cached under a small LRU — a
+ * collocation query touches only the node word's units, clustered in a handful
+ * of editions — and only the surface ids are returned (the char offsets serve
+ * future work).
+ */
+export type TokenStore = {
+  /** The surface ids of a unit's tokens, in reading order. */
+  unitSurfaces: (unitIndex: number) => Promise<Uint32Array>;
+};
+
+export const createTokenStore = (
+  artefacts: ServeArtefacts,
+  reader: BlockReader,
+  maxEditions = 8,
+): TokenStore => {
+  // First token (pair) index of every unit within its edition's stream.
+  const unitTokenStart = new Int32Array(artefacts.units.edition.length);
+  for (const unitIndices of artefacts.editionUnits) {
+    let at = 0;
+    for (const unit of unitIndices) {
+      unitTokenStart[unit] = at;
+      at += artefacts.units.tokenCount[unit];
+    }
+  }
+
+  const cache = new Map<number, Promise<Uint32Array>>();
+  const editionTokens = (editionIndex: number): Promise<Uint32Array> => {
+    const cached = cache.get(editionIndex);
+    if (cached !== undefined) {
+      cache.delete(editionIndex); // reinsert as most-recently-used
+      cache.set(editionIndex, cached);
+      return cached;
+    }
+    const ref = artefacts.manifest.editions[editionIndex];
+    const loading = reader.readBytes(`${editionDir(ref)}/tokens.bin`).then(
+      (bytes) =>
+        bytes === null
+          ? new Uint32Array(0)
+          // Copy to a fresh buffer so the Uint32 view is always 4-aligned.
+          : new Uint32Array(bytes.slice().buffer),
+    );
+    cache.set(editionIndex, loading);
+    while (cache.size > maxEditions) {
+      cache.delete(cache.keys().next().value!);
+    }
+    return loading;
+  };
+
+  return {
+    unitSurfaces: async (unitIndex) => {
+      const words = await editionTokens(artefacts.units.edition[unitIndex]);
+      const count = artefacts.units.tokenCount[unitIndex];
+      const start = unitTokenStart[unitIndex];
+      const surfaces = new Uint32Array(count);
+      for (let k = 0; k < count; k++) surfaces[k] = words[(start + k) * 2];
+      return surfaces;
+    },
   };
 };
 

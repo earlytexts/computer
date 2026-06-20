@@ -1,8 +1,9 @@
 /**
  * The MCP server: exposes the corpus tools (tools.ts) over the Model Context
  * Protocol, so any MCP client — the Companion, Claude Desktop, an editor — gets
- * the same rendered tools the Companion configures its model with. Tools run
- * in-process against the artefacts via localComputer (no HTTP hop).
+ * the same rendered tools the Companion configures its model with. Both
+ * factories take a `Computer`; in production that is the in-process core (so the
+ * tools run with no HTTP hop), but it could equally be the HTTP client.
  *
  * Two transports, one tool set:
  *   - createMcpServer — a connectable Server for stdio (stdio.ts) or any
@@ -12,7 +13,7 @@
  *     transport requires this), replying with a single JSON response rather
  *     than an SSE stream.
  *
- * Both build their tools the same way (corpusTools); the HTTP handler builds
+ * Both build their tools the same way (createTools); the HTTP handler builds
  * them once and reuses them across requests.
  */
 
@@ -22,17 +23,11 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { ServeArtefacts } from "./artefacts.ts";
-import type { BlockStore } from "./serve/store.ts";
-import { localComputer } from "./serve/localComputer.ts";
-import { createTools, type ToolSet } from "./serve/tools.ts";
+import { createTools, type ToolSet } from "./tools.ts";
+import type { Computer } from "./types.ts";
 
 /** A JSON Schema object, as the MCP tool list expects each `inputSchema`. */
 type JsonSchemaObject = { type: "object" } & Record<string, unknown>;
-
-/** The corpus tool set bound to in-process artefacts (no HTTP hop). */
-const corpusTools = (artefacts: ServeArtefacts, store: BlockStore): ToolSet =>
-  createTools(localComputer(artefacts, store));
 
 /** Wrap a tool set in an MCP Server, ready to connect to any transport. */
 const buildMcpServer = (tools: ToolSet): Server => {
@@ -72,27 +67,23 @@ const buildMcpServer = (tools: ToolSet): Server => {
 };
 
 /**
- * A connectable MCP Server over the computer's artefacts, ready for any
- * transport — stdio.ts connects it to a StdioServerTransport. The caller
- * supplies the block store (the HTTP path shares the REST routes' store).
+ * A connectable MCP Server over a `Computer`, ready for any transport — stdio.ts
+ * connects it to a StdioServerTransport.
  */
-export const createMcpServer = (
-  artefacts: ServeArtefacts,
-  store: BlockStore,
-): Server => buildMcpServer(corpusTools(artefacts, store));
+export const createMcpServer = (computer: Computer): Server =>
+  buildMcpServer(createTools(computer));
 
 /**
- * Build an MCP request handler over the computer's artefacts. The returned
- * function turns one Streamable HTTP `Request` into its `Response`; mount it on
- * a route (see server.ts) for POST/GET/DELETE to `/mcp`. The tool set is built
- * once; a fresh Server + transport is made per request (stateless HTTP
- * transports are single-use).
+ * Build an MCP request handler over a `Computer`. The returned function turns
+ * one Streamable HTTP `Request` into its `Response`; mount it on a route (see
+ * server.ts) for POST/GET/DELETE to `/mcp`. The tool set is built once; a fresh
+ * Server + transport is made per request (stateless HTTP transports are
+ * single-use).
  */
 export const createMcpHandler = (
-  artefacts: ServeArtefacts,
-  store: BlockStore,
+  computer: Computer,
 ): (req: Request) => Promise<Response> => {
-  const tools = corpusTools(artefacts, store);
+  const tools = createTools(computer);
   return async (req: Request): Promise<Response> => {
     const server = buildMcpServer(tools);
     const transport = new WebStandardStreamableHTTPServerTransport({

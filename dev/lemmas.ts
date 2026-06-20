@@ -1,5 +1,5 @@
 /**
- * Curate src/lib/lemmas.json — the surface → citation-form overrides that
+ * Curate src/core/lemmas.json — the surface → citation-form overrides that
  * correct the lemma heuristic (`buildSurfaceLemma`) for forms it gets wrong.
  *
  * Walks every surface form in the corpus (commonest first), shows the lemma
@@ -18,7 +18,7 @@ import { groupBy, groupLine } from "./lib/groups.ts";
 import { cyan } from "./lib/term.ts";
 
 const lemmasPath = decodeURIComponent(
-  new URL("../src/lib/lemmas.json", import.meta.url).pathname,
+  new URL("../src/core/lemmas.json", import.meta.url).pathname,
 );
 const progressPath = decodeURIComponent(
   new URL("./state/lemmas-progress.json", import.meta.url).pathname,
@@ -65,7 +65,7 @@ await runCuration({
     await saveOverrides(lemmasPath, lemmas);
   },
   isModified: (i) => lookup(lemmas, vocab.surfaces[i]) !== undefined,
-  overrideRelPath: "src/lib/lemmas.json",
+  overrideRelPath: "src/core/lemmas.json",
   progressPath,
   builtAt: manifest.builtAt,
 });
