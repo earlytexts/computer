@@ -9,10 +9,8 @@
 import type { Block } from "@earlytexts/markit";
 import {
   type AuthorEntry,
-  type BlockStore,
   type CatalogArtefact,
   type EditionEntry,
-  findEditionEntry,
   type ServeArtefacts,
   type SkeletonSection,
   type WorkEntry,
@@ -24,7 +22,7 @@ import {
   pathKey,
 } from "./compare.ts";
 import { diffBlocks, diffToBlocks } from "./diff.ts";
-import { readUnitBlock } from "./artefacts.ts";
+import { type BlockStore, findEditionEntry, readUnitBlock } from "./store.ts";
 import {
   type MatchLevel,
   matchRanges,

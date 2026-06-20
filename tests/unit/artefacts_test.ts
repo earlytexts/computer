@@ -1,10 +1,6 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import {
-  artefactsFresh,
-  loadServeArtefacts,
-  PIPELINE_VERSION,
-  readUnitBlock,
-} from "../../src/lib/artefacts.ts";
+import { artefactsFresh, PIPELINE_VERSION } from "../../src/lib/artefacts.ts";
+import { loadServeArtefacts, readUnitBlock } from "../../src/lib/store.ts";
 import { blockText } from "../../src/lib/text.ts";
 import { testData, unitText } from "../helpers.ts";
 

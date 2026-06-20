@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "@std/assert";
-import { readUnitBlock } from "../../src/lib/artefacts.ts";
+import { readUnitBlock } from "../../src/lib/store.ts";
 import {
   matchRanges,
   search,

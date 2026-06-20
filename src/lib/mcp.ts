@@ -16,7 +16,8 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { BlockStore, ServeArtefacts } from "./artefacts.ts";
+import type { ServeArtefacts } from "./artefacts.ts";
+import type { BlockStore } from "./store.ts";
 import { localComputer } from "./localComputer.ts";
 import { createTools, type ToolSet } from "./tools.ts";
 

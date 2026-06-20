@@ -6,13 +6,13 @@
  * the typed responses (or undefined for not-found) the interface promises.
  */
 
+import type { ServeArtefacts } from "./artefacts.ts";
 import {
   type BlockStore,
   findAuthorEntry,
   findEditionEntry,
   findWorkEntry,
-  type ServeArtefacts,
-} from "./artefacts.ts";
+} from "./store.ts";
 import {
   catalogResponse,
   compareResponse,

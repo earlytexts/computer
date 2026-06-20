@@ -26,14 +26,14 @@
  * compare take ?version=edited|original (default edited).
  */
 
+import type { ServeArtefacts } from "./artefacts.ts";
 import {
   type BlockStore,
   createBlockStore,
   findAuthorEntry,
   findEditionEntry,
   findWorkEntry,
-  type ServeArtefacts,
-} from "./artefacts.ts";
+} from "./store.ts";
 import {
   catalogResponse,
   compareResponse,

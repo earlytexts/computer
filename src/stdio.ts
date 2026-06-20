@@ -18,7 +18,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { artefactsDir, corpusDir } from "./lib/config.ts";
 import { loadForServing } from "./lib/pipeline.ts";
-import { createBlockStore } from "./lib/artefacts.ts";
+import { createBlockStore } from "./lib/store.ts";
 import { localComputer } from "./lib/localComputer.ts";
 import { buildMcpServer } from "./lib/mcp.ts";
 import { createTools } from "./lib/tools.ts";

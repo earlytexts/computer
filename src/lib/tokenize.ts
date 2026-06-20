@@ -31,12 +31,13 @@
  *    lemma. Only ever a bucket key, never displayed, so it may read oddly.
  *
  * Lemmatisation (a real citation-form headword, for statistics) is the third
- * type layer and lives in artefacts.ts, because it checks candidate bases
- * against the corpus spelling vocabulary; it too runs on the canonical
- * spelling, so it never has to know about archaic orthography.
+ * type layer (`buildSurfaceLemma`, below): it checks candidate bases against
+ * the corpus spelling vocabulary, and it too runs on the canonical spelling, so
+ * it never has to know about archaic orthography.
  */
 
 import variantsJson from "./variants.json" with { type: "json" };
+import lemmaOverrides from "./lemmas.json" with { type: "json" };
 
 // 2: query is matched as a phrase; postings carry a capitalisation bit;
 // normalisation now Porter-stems after the variant table (plurals/inflections).
@@ -262,3 +263,97 @@ export const normalizeSpelling = (surface: string): string => {
  * enough to take over this slot. Never displayed, so a non-word stem is fine.
  */
 export const formKey = (spelling: string): string => stem(spelling);
+
+/* ------------------------------- lemmas ------------------------------- */
+
+/**
+ * Infer a citation-form lemma for a single canonical SPELLING by trying to
+ * strip common inflectional suffixes and checking whether the result exists in
+ * the corpus spelling vocabulary. Candidates are tested against the actual
+ * spelling set so the heuristic can never invent a form that doesn't appear in
+ * the texts. Running on the canonical spelling means archaic orthography is
+ * already gone, so a single path handles "encreases" and "increases" alike.
+ * Overrides from lemmas.json win unconditionally (suppletive forms, -ied/-ies
+ * where the base ends in -y, and any other case the rules get wrong).
+ */
+const inferLemma = (surface: string, surfaceSet: Set<string>): string => {
+  const has = (s: string) => s.length > 0 && surfaceSet.has(s);
+
+  // -ing: strip and check; also try restoring silent -e (causing → cause)
+  if (surface.endsWith("ing") && surface.length > 4) {
+    const b = surface.slice(0, -3);
+    if (has(b)) return b;
+    if (has(b + "e")) return b + "e";
+  }
+  // -ied: -y → -ied inflection (tried → try, denied → deny)
+  if (surface.endsWith("ied") && surface.length > 4) {
+    const b = surface.slice(0, -3) + "y";
+    if (has(b)) return b;
+  }
+  // -ies: -y → -ies inflection (tries → try, qualities → quality)
+  if (surface.endsWith("ies") && surface.length > 4) {
+    const b = surface.slice(0, -3) + "y";
+    if (has(b)) return b;
+  }
+  // -est: superlative (greatest → great)
+  if (surface.endsWith("est") && surface.length > 4) {
+    const b = surface.slice(0, -3);
+    if (has(b)) return b;
+  }
+  // -eth: archaic 3rd-person singular (causeth → cause, hath handled in overrides)
+  if (surface.endsWith("eth") && surface.length > 4) {
+    const b = surface.slice(0, -3);
+    if (has(b)) return b;
+    if (has(b + "e")) return b + "e";
+  }
+  // -ed: try strip -d first (pleased → please), then strip -ed (called → call)
+  if (surface.endsWith("ed") && surface.length > 3) {
+    const d = surface.slice(0, -1);
+    if (has(d)) return d;
+    const ed = surface.slice(0, -2);
+    if (has(ed)) return ed;
+  }
+  // -er: comparative or agentive; also try restoring silent -e (larger → large)
+  if (surface.endsWith("er") && surface.length > 3) {
+    const b = surface.slice(0, -2);
+    if (has(b)) return b;
+    if (has(b + "e")) return b + "e";
+  }
+  // -es: plural/3rd-person; also try restoring silent -e (goes → go, dies → die)
+  if (surface.endsWith("es") && surface.length > 3) {
+    const b = surface.slice(0, -2);
+    if (has(b)) return b;
+    if (has(b + "e")) return b + "e";
+  }
+  // -ly: adverb (naturally → natural)
+  if (surface.endsWith("ly") && surface.length > 3) {
+    const b = surface.slice(0, -2);
+    if (has(b)) return b;
+  }
+  // -st: archaic 2nd-person singular (causest → cause, wouldst → would)
+  if (surface.endsWith("st") && surface.length > 3) {
+    const b = surface.slice(0, -2);
+    if (has(b)) return b;
+    if (has(b + "e")) return b + "e";
+  }
+  // -s: plural / 3rd-person (only for longer words to avoid stripping "was", "has")
+  if (surface.endsWith("s") && surface.length > 3) {
+    const b = surface.slice(0, -1);
+    if (has(b)) return b;
+  }
+  return surface;
+};
+
+/**
+ * Citation-form lemma for each surface, keyed off its canonical spelling.
+ * `spellingOf[i]` is surface i's normalized spelling; lemmas are inferred over
+ * the distinct spelling set, so two surfaces sharing a spelling share a lemma.
+ * Overrides in lemmas.json are keyed on the canonical spelling too. The result
+ * is always a real word (the spelling itself when nothing applies), never a
+ * stem, so it is safe to display in lemma statistics.
+ */
+export const buildSurfaceLemma = (spellingOf: string[]): string[] => {
+  const spellingSet = new Set(spellingOf);
+  const overrides = lemmaOverrides as Record<string, string>;
+  return spellingOf.map((s) => overrides[s] ?? inferLemma(s, spellingSet));
+};

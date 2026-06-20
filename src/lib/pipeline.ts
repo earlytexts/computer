@@ -14,13 +14,12 @@
 import {
   type Artefacts,
   artefactsFresh,
-  buildArtefacts,
   type CorpusScan,
-  loadServeArtefacts,
   scanCorpus,
   type ServeArtefacts,
-  writeArtefacts,
 } from "./artefacts.ts";
+import { buildArtefacts, writeArtefacts } from "./builder.ts";
+import { loadServeArtefacts } from "./store.ts";
 import { loadCatalog } from "./catalog.ts";
 
 /**
