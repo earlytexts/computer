@@ -6,7 +6,7 @@ import {
   highlightBlock,
   markBlock,
   resolveBlock,
-} from "../../src/lib/text.ts";
+} from "../../src/lib/text/text.ts";
 
 /** The single paragraph block of a compiled snippet. */
 const block = (source: string): Block =>

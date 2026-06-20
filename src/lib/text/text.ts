@@ -30,7 +30,7 @@ import type {
   InlineElement,
   List,
 } from "@earlytexts/markit";
-import type { Version } from "../types.ts";
+import type { Version } from "../../types.ts";
 
 // 2: editorial insertions/deletions are resolved per version (was: both
 // sides of every correction were extracted, matching neither version).

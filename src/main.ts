@@ -8,7 +8,6 @@
 import { artefactsDir, corpusDir, serverOptions } from "./lib/config.ts";
 import { loadForServing } from "./lib/pipeline.ts";
 import { createHandler } from "./lib/server.ts";
-import { createRateLimiter } from "./lib/ratelimit.ts";
 
 const corpus = corpusDir();
 
@@ -30,5 +29,4 @@ if (warnings.length > 0) {
 }
 
 const { port, rateLimit } = serverOptions();
-const limiter = createRateLimiter(rateLimit);
-Deno.serve({ port }, createHandler({ artefacts, limiter }));
+Deno.serve({ port }, createHandler({ artefacts, rateLimit }));

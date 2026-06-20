@@ -5,7 +5,7 @@ import {
   stem,
   surfaceForm,
   tokenize,
-} from "../../src/lib/tokenize.ts";
+} from "../../src/lib/text/tokenize.ts";
 
 /** Two surfaces share a canonical spelling (united by spelling-tolerant search). */
 const sameSpelling = (a: string, b: string): boolean =>

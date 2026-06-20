@@ -51,8 +51,8 @@
  */
 
 import type { AuthorMeta, EditionMeta, WorkMeta } from "../types.ts";
-import { EXTRACTION_VERSION } from "./text.ts";
-import { TOKENIZER_VERSION } from "./tokenize.ts";
+import { EXTRACTION_VERSION } from "./text/text.ts";
+import { TOKENIZER_VERSION } from "./text/tokenize.ts";
 
 /** Bump when the Vocab schema changes (invalidates built artefacts). */
 export const VOCAB_VERSION = 2;

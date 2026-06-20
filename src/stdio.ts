@@ -18,10 +18,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { artefactsDir, corpusDir } from "./lib/config.ts";
 import { loadForServing } from "./lib/pipeline.ts";
-import { createBlockStore } from "./lib/store.ts";
-import { localComputer } from "./lib/localComputer.ts";
-import { buildMcpServer } from "./lib/mcp.ts";
-import { createTools } from "./lib/tools.ts";
+import { createMcpServer } from "./lib/mcp.ts";
 
 // Startup logs go to stderr; stdout carries the MCP protocol.
 const artefacts = await loadForServing(
@@ -30,7 +27,4 @@ const artefacts = await loadForServing(
   console.error,
 );
 
-const store = createBlockStore(artefacts);
-const tools = createTools(localComputer(artefacts, store));
-const server = buildMcpServer(tools);
-await server.connect(new StdioServerTransport());
+await createMcpServer(artefacts).connect(new StdioServerTransport());

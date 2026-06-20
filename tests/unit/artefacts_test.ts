@@ -1,7 +1,10 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { artefactsFresh, PIPELINE_VERSION } from "../../src/lib/artefacts.ts";
-import { loadServeArtefacts, readUnitBlock } from "../../src/lib/store.ts";
-import { blockText } from "../../src/lib/text.ts";
+import {
+  loadServeArtefacts,
+  readUnitBlock,
+} from "../../src/lib/serve/store.ts";
+import { blockText } from "../../src/lib/text/text.ts";
 import { testData, unitText } from "../helpers.ts";
 
 Deno.test("the manifest records the pipeline and the corpus", async () => {

@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import type { FrequencyParams, SearchParams } from "../src/client.ts";
-import { createTools } from "../src/lib/tools.ts";
+import { createTools } from "../src/lib/serve/tools.ts";
 import { fakeComputer, frequency, search, section } from "./toolFixtures.ts";
 
 Deno.test("every definition has a matching handler", async () => {

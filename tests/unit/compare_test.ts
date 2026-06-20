@@ -1,10 +1,10 @@
 import { assert, assertEquals, assertExists } from "@std/assert";
-import { findWork, sectionTree } from "../../src/lib/catalog.ts";
+import { findWork, sectionTree } from "../../src/lib/build/catalog.ts";
 import {
   alignSections,
   findSectionByKey,
   sectionKey,
-} from "../../src/lib/compare.ts";
+} from "../../src/lib/text/compare.ts";
 import { testData } from "../helpers.ts";
 
 Deno.test("sectionKey strips edition-year suffixes", () => {

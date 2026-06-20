@@ -1,12 +1,12 @@
-import { type Catalog, loadCatalog } from "../src/lib/catalog.ts";
+import { type Catalog, loadCatalog } from "../src/lib/build/catalog.ts";
 import {
   type Artefacts,
   type CorpusScan,
   scanCorpus,
   type ServeArtefacts,
 } from "../src/lib/artefacts.ts";
-import { buildArtefacts, writeArtefacts } from "../src/lib/builder.ts";
-import { loadServeArtefacts } from "../src/lib/store.ts";
+import { buildArtefacts, writeArtefacts } from "../src/lib/build/builder.ts";
+import { loadServeArtefacts } from "../src/lib/serve/store.ts";
 
 export const fixtureCorpus = decodeURIComponent(
   new URL("fixtures/corpus", import.meta.url).pathname,

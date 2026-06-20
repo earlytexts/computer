@@ -33,7 +33,7 @@ import {
   findAuthorEntry,
   findEditionEntry,
   findWorkEntry,
-} from "./store.ts";
+} from "./serve/store.ts";
 import {
   catalogResponse,
   compareResponse,
@@ -45,14 +45,19 @@ import {
   searchResponse,
   sectionFullTextResponse,
   sectionResponse,
-} from "./api.ts";
-import { clientKey, type RateLimiter } from "./ratelimit.ts";
+} from "./serve/api.ts";
+import {
+  clientKey,
+  createRateLimiter,
+  type RateLimiterOptions,
+} from "./serve/ratelimit.ts";
 import { createMcpHandler } from "./mcp.ts";
 import type { Version } from "../types.ts";
 
 export type Api = {
   artefacts: ServeArtefacts;
-  limiter?: RateLimiter;
+  /** Per-client token bucket; omit to disable rate limiting. */
+  rateLimit?: RateLimiterOptions;
 };
 
 /** ?version for text routes: edited (default), original, or both. */
@@ -240,6 +245,9 @@ export const createHandler = (api: Api) => {
   // The MCP server shares the block store; it serves the corpus tools over
   // Streamable HTTP at /mcp (POST/GET/DELETE), alongside the REST routes.
   const mcp = createMcpHandler(api.artefacts, store);
+  const limiter = api.rateLimit === undefined
+    ? undefined
+    : createRateLimiter(api.rateLimit);
   return async (
     req: Request,
     info?: Deno.ServeHandlerInfo,
@@ -247,8 +255,8 @@ export const createHandler = (api: Api) => {
     const remoteAddr = info === undefined || info.remoteAddr.transport !== "tcp"
       ? undefined
       : info.remoteAddr.hostname;
-    if (api.limiter !== undefined) {
-      if (!api.limiter.allow(clientKey(req, remoteAddr))) {
+    if (limiter !== undefined) {
+      if (!limiter.allow(clientKey(req, remoteAddr))) {
         return new Response(
           JSON.stringify({ error: "rate limit exceeded" }),
           {

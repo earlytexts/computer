@@ -4,7 +4,7 @@ import {
   findWork,
   flattenSections,
   sectionTree,
-} from "../../src/lib/catalog.ts";
+} from "../../src/lib/build/catalog.ts";
 import { testData } from "../helpers.ts";
 
 Deno.test("catalog loads authors with their works", async () => {

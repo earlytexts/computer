@@ -34,9 +34,9 @@ import {
   POSITION_MASK,
   type Postings,
   type ServeArtefacts,
-} from "./artefacts.ts";
+} from "../artefacts.ts";
 import type { HighlightRange } from "./text.ts";
-import type { MatchLevel, Version } from "../types.ts";
+import type { MatchLevel, Version } from "../../types.ts";
 import { formKey, normalizeSpelling, tokenize } from "./tokenize.ts";
 
 export type { MatchLevel };

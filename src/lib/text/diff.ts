@@ -20,7 +20,7 @@ import type {
   WrapperType,
 } from "@earlytexts/markit";
 import { blockText, markBlock } from "./text.ts";
-import { lastSegment } from "./catalog.ts";
+import { lastSegment } from "../build/catalog.ts";
 
 /** A wrapper inline element enclosing a token, minus its content. */
 type ContextFrame =

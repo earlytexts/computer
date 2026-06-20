@@ -6,7 +6,7 @@
  * the typed responses (or undefined for not-found) the interface promises.
  */
 
-import type { ServeArtefacts } from "./artefacts.ts";
+import type { ServeArtefacts } from "../artefacts.ts";
 import {
   type BlockStore,
   findAuthorEntry,
@@ -25,7 +25,7 @@ import {
   sectionFullTextResponse,
   sectionResponse,
 } from "./api.ts";
-import type { Computer } from "../client.ts";
+import type { Computer } from "../../client.ts";
 
 const lower = (slug: string): string => slug.toLowerCase();
 const lowerPath = (path: string[]): string[] => path.map(lower);

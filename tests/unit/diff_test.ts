@@ -7,7 +7,7 @@ import {
   diffTokens,
   type Token,
   tokenize,
-} from "../../src/lib/diff.ts";
+} from "../../src/lib/text/diff.ts";
 
 /** The text of every element of the given type, anywhere in a value. */
 const ofType = (value: unknown, type: string): string[] => {

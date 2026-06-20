@@ -21,14 +21,14 @@ import {
   sectionTree,
   type Work,
 } from "./catalog.ts";
-import type { AuthorMeta, EditionMeta, WorkMeta } from "../types.ts";
-import { blockText, hasEditorial } from "./text.ts";
+import type { AuthorMeta, EditionMeta, WorkMeta } from "../../types.ts";
+import { blockText, hasEditorial } from "../text/text.ts";
 import {
   buildSurfaceLemma,
   formKey,
   normalizeSpelling,
   tokenize,
-} from "./tokenize.ts";
+} from "../text/tokenize.ts";
 import {
   type Artefacts,
   type BuiltEdition,
@@ -42,7 +42,7 @@ import {
   type SkeletonSection,
   type UnitTable,
   type Vocab,
-} from "./artefacts.ts";
+} from "../artefacts.ts";
 
 /* ------------------------------- build ------------------------------- */
 

@@ -5,7 +5,6 @@
 
 import { assert, assertEquals, assertExists } from "@std/assert";
 import { createHandler } from "../src/lib/server.ts";
-import { createRateLimiter } from "../src/lib/ratelimit.ts";
 import { testData } from "./helpers.ts";
 import type {
   CatalogResponse,
@@ -346,7 +345,7 @@ Deno.test("requests beyond the rate limit get a 429", async () => {
   const { artefacts } = await testData();
   const handler = createHandler({
     artefacts,
-    limiter: createRateLimiter({ ratePerSecond: 1, burst: 2 }),
+    rateLimit: { ratePerSecond: 1, burst: 2 },
   });
   const get = () => handler(new Request("http://localhost/catalog"));
   await (await get()).body?.cancel();

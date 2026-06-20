@@ -24,7 +24,7 @@ import {
   type UnitTable,
   type Vocab,
   type WorkEntry,
-} from "./artefacts.ts";
+} from "../artefacts.ts";
 
 /* ------------------------------- load ------------------------------- */
 

@@ -13,7 +13,7 @@
  *   deno task dev:variants
  */
 
-import { foldBase } from "../src/lib/tokenize.ts";
+import { foldBase } from "../src/lib/text/tokenize.ts";
 import { loadArtefacts } from "./lib/artefacts.ts";
 import { loadOverrides, lookup, saveOverrides } from "./lib/overrides.ts";
 import { runCuration } from "./lib/curate.ts";

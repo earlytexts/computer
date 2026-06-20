@@ -14,14 +14,14 @@ import {
   type ServeArtefacts,
   type SkeletonSection,
   type WorkEntry,
-} from "./artefacts.ts";
+} from "../artefacts.ts";
 import {
   type AlignedSection,
   alignSections,
   findSectionByKey,
   pathKey,
-} from "./compare.ts";
-import { diffBlocks, diffToBlocks } from "./diff.ts";
+} from "../text/compare.ts";
+import { diffBlocks, diffToBlocks } from "../text/diff.ts";
 import { type BlockStore, findEditionEntry, readUnitBlock } from "./store.ts";
 import {
   type MatchLevel,
@@ -30,10 +30,10 @@ import {
   parseQuery,
   search,
   type SearchOptions,
-} from "./search.ts";
-import { compareLines, lineParts, type Sort } from "./concordance.ts";
-import { tokenize } from "./tokenize.ts";
-import { blockText, highlightBlock, resolveBlock } from "./text.ts";
+} from "../text/search.ts";
+import { compareLines, lineParts, type Sort } from "../text/concordance.ts";
+import { tokenize } from "../text/tokenize.ts";
+import { blockText, highlightBlock, resolveBlock } from "../text/text.ts";
 import type {
   AlignedRow,
   CatalogResponse,
@@ -53,7 +53,7 @@ import type {
   SectionResponse,
   SectionSummary,
   Version,
-} from "../types.ts";
+} from "../../types.ts";
 
 /* --------------------------- skeleton helpers ------------------------- */
 

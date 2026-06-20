@@ -1,12 +1,12 @@
 import { assert, assertEquals } from "@std/assert";
-import { readUnitBlock } from "../../src/lib/store.ts";
+import { readUnitBlock } from "../../src/lib/serve/store.ts";
 import {
   matchRanges,
   search,
   type SearchHit,
   type SearchOptions,
-} from "../../src/lib/search.ts";
-import { blockText, highlightBlock } from "../../src/lib/text.ts";
+} from "../../src/lib/text/search.ts";
+import { blockText, highlightBlock } from "../../src/lib/text/text.ts";
 import { testData, unitText } from "../helpers.ts";
 
 const EXACT: SearchOptions = { match: "exact", caseSensitive: false };

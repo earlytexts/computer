@@ -18,9 +18,9 @@ import {
   scanCorpus,
   type ServeArtefacts,
 } from "./artefacts.ts";
-import { buildArtefacts, writeArtefacts } from "./builder.ts";
-import { loadServeArtefacts } from "./store.ts";
-import { loadCatalog } from "./catalog.ts";
+import { buildArtefacts, writeArtefacts } from "./build/builder.ts";
+import { loadServeArtefacts } from "./serve/store.ts";
+import { loadCatalog } from "./build/catalog.ts";
 
 /**
  * Compile the corpus and write every derived artefact to `artefactsDir`,

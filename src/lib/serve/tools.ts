@@ -8,8 +8,8 @@
  * interface, so it runs over HTTP (a client) or in-process (localComputer).
  */
 
-import type { Computer } from "../client.ts";
-import type { MatchLevel } from "../types.ts";
+import type { Computer } from "../../client.ts";
+import type { MatchLevel } from "../../types.ts";
 import {
   renderAuthors,
   renderCompare,

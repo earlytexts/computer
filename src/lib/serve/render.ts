@@ -25,7 +25,7 @@ import type {
   SectionResponse,
   SectionSummary,
   WorkMeta,
-} from "../types.ts";
+} from "../../types.ts";
 
 /* ------------------------------ blocks ------------------------------- */
 

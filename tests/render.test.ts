@@ -6,7 +6,7 @@ import {
   renderSearch,
   renderSection,
   renderWorks,
-} from "../src/lib/render.ts";
+} from "../src/lib/serve/render.ts";
 import {
   catalog,
   highlighted,
