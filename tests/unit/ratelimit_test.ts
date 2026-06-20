@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "@std/assert";
-import { clientKey, createRateLimiter } from "../../src/ratelimit.ts";
+import { clientKey, createRateLimiter } from "../../src/lib/ratelimit.ts";
 
 Deno.test("a burst is allowed, then requests are rejected", () => {
   const limiter = createRateLimiter({ ratePerSecond: 1, burst: 3 });

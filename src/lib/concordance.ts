@@ -56,9 +56,13 @@ export const lineParts = (
   const rightWords: string[] = [];
   for (let i = end + 1; i <= rightTo; i++) rightWords.push(spans[i].surface);
   return {
-    left: start > 0 ? text.slice(spans[leftFrom].start, spans[start - 1].end) : "",
+    left: start > 0
+      ? text.slice(spans[leftFrom].start, spans[start - 1].end)
+      : "",
     keyword: text.slice(spans[start].start, spans[end].end),
-    right: end < last ? text.slice(spans[end + 1].start, spans[rightTo].end) : "",
+    right: end < last
+      ? text.slice(spans[end + 1].start, spans[rightTo].end)
+      : "",
     leftTruncated: leftFrom > 0,
     rightTruncated: rightTo < last,
     leftWords,

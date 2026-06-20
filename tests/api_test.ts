@@ -4,8 +4,8 @@
  */
 
 import { assert, assertEquals, assertExists } from "@std/assert";
-import { createHandler } from "../src/server.ts";
-import { createRateLimiter } from "../src/ratelimit.ts";
+import { createHandler } from "../src/lib/server.ts";
+import { createRateLimiter } from "../src/lib/ratelimit.ts";
 import { testData } from "./helpers.ts";
 import type {
   CatalogResponse,

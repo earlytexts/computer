@@ -33,7 +33,7 @@ import {
   findEditionEntry,
   findWorkEntry,
   type ServeArtefacts,
-} from "./lib/artefacts.ts";
+} from "./artefacts.ts";
 import {
   catalogResponse,
   compareResponse,
@@ -47,7 +47,8 @@ import {
   sectionResponse,
 } from "./api.ts";
 import { clientKey, type RateLimiter } from "./ratelimit.ts";
-import type { Version } from "./types.ts";
+import { createMcpHandler } from "./mcp.ts";
+import type { Version } from "../types.ts";
 
 export type Api = {
   artefacts: ServeArtefacts;
@@ -236,6 +237,9 @@ const route = async (
 export const createHandler = (api: Api) => {
   // One block store (and its LRU) for the life of the handler.
   const store = createBlockStore(api.artefacts);
+  // The MCP server shares the block store; it serves the corpus tools over
+  // Streamable HTTP at /mcp (POST/GET/DELETE), alongside the REST routes.
+  const mcp = createMcpHandler(api.artefacts, store);
   return async (
     req: Request,
     info?: Deno.ServeHandlerInfo,
@@ -253,6 +257,13 @@ export const createHandler = (api: Api) => {
           },
         );
       }
+    }
+    // MCP owns its own methods (POST/GET/DELETE), so it must come before the
+    // GET-only guard the REST routes rely on.
+    if (new URL(req.url).pathname === "/mcp") {
+      const response = await mcp(req);
+      response.headers.set("access-control-allow-origin", "*");
+      return response;
     }
     if (req.method !== "GET" && req.method !== "HEAD") {
       return json({ error: "method not allowed" }, 405);
