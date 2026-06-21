@@ -9,21 +9,23 @@
  */
 
 import type { Computer } from "./types.ts";
-import { scopeError } from "./scope.ts";
 import {
-  boolParam,
   enumParam,
-  GROUP_BYS,
-  intParam,
-  KEY_MODES,
-  LEVELS,
-  MATCH_LEVELS,
-  ParamError,
   rejectUnknownArgs,
   SEARCH_VERSIONS,
-  SORTS,
   TEXT_VERSIONS,
 } from "./params.ts";
+import {
+  collocationsParams,
+  concordanceParams,
+  frequencyParams,
+  keywordsParams,
+  type RawSource,
+  searchParams,
+  similarParams,
+  topicMixParams,
+  topicsParams,
+} from "./requests.ts";
 import {
   renderAuthors,
   renderCollocations,
@@ -82,31 +84,9 @@ const strArray = (input: Record<string, unknown>, key: string): string[] => {
   return value;
 };
 
-const strArrayOpt = (
-  input: Record<string, unknown>,
-  key: string,
-): string[] | undefined => {
-  const value = input[key];
-  return Array.isArray(value) && value.every((item) => typeof item === "string")
-    ? value as string[]
-    : undefined;
-};
-
-/** Read and validate the shared edition-scope args; throws on an incoherent set. */
-const scopeArgs = (
-  input: Record<string, unknown>,
-): { work?: string; edition?: string; editions?: "canonical" | "all" } => {
-  const work = strOpt(input, "work");
-  const edition = strOpt(input, "edition");
-  const editions = strOpt(input, "editions");
-  const err = scopeError({ work, edition, editions });
-  if (err !== undefined) throw new ParamError(err);
-  return {
-    work,
-    edition,
-    editions: editions as "canonical" | "all" | undefined,
-  };
-};
+/** A `RawSource` over an MCP argument object, for the shared builders (requests.ts). */
+const source = (input: Record<string, unknown>): RawSource => (key) =>
+  input[key];
 
 const slugProperty = (description: string) => ({
   type: "string" as const,
@@ -588,118 +568,49 @@ export const createTools = (computer: Computer): ToolSet => {
         : renderWorks(author);
     },
     search: async (input) => {
-      const sc = scopeArgs(input);
-      return renderSearch(
-        await computer.search({
-          q: str(input, "q"),
-          match: enumParam("match", input.match, MATCH_LEVELS),
-          caseSensitive: boolParam("caseSensitive", input.caseSensitive),
-          version: enumParam("version", input.version, SEARCH_VERSIONS),
-          author: strOpt(input, "author"),
-          work: sc.work,
-          edition: sc.edition,
-          editions: sc.editions,
-          page: intParam("page", input.page),
-          perPage: intParam("perPage", input.perPage),
-        }),
-      );
+      str(input, "q"); // required; reported with a friendly message
+      return renderSearch(await computer.search(searchParams(source(input))));
     },
     frequency: async (input) => {
-      const sc = scopeArgs(input);
+      str(input, "q");
       return renderFrequency(
-        await computer.frequency({
-          q: str(input, "q"),
-          groupBy: enumParam("groupBy", input.groupBy, GROUP_BYS),
-          match: enumParam("match", input.match, MATCH_LEVELS),
-          caseSensitive: boolParam("caseSensitive", input.caseSensitive),
-          version: enumParam("version", input.version, SEARCH_VERSIONS),
-          author: strOpt(input, "author"),
-          work: sc.work,
-          edition: sc.edition,
-          editions: sc.editions,
-        }),
+        await computer.frequency(frequencyParams(source(input))),
       );
     },
     concordance: async (input) => {
-      const sc = scopeArgs(input);
+      str(input, "q");
       return renderConcordance(
-        await computer.concordance({
-          q: str(input, "q"),
-          window: intParam("window", input.window),
-          sort: enumParam("sort", input.sort, SORTS),
-          match: enumParam("match", input.match, MATCH_LEVELS),
-          caseSensitive: boolParam("caseSensitive", input.caseSensitive),
-          version: enumParam("version", input.version, SEARCH_VERSIONS),
-          author: strOpt(input, "author"),
-          work: sc.work,
-          edition: sc.edition,
-          editions: sc.editions,
-          page: intParam("page", input.page),
-          perPage: intParam("perPage", input.perPage),
-        }),
+        await computer.concordance(concordanceParams(source(input))),
       );
     },
     keywords: async (input) => {
-      const sc = scopeArgs(input);
+      str(input, "author"); // the target; keywords are distinctive of it
       return renderKeywords(
-        await computer.keywords({
-          author: str(input, "author"),
-          work: sc.work,
-          edition: sc.edition,
-          editions: sc.editions,
-          version: enumParam("version", input.version, SEARCH_VERSIONS),
-          by: enumParam("by", input.by, KEY_MODES),
-          min: intParam("min", input.min),
-          limit: intParam("limit", input.limit),
-        }),
+        await computer.keywords(keywordsParams(source(input))),
       );
     },
     collocations: async (input) => {
-      const sc = scopeArgs(input);
+      str(input, "q");
       return renderCollocations(
-        await computer.collocations({
-          q: str(input, "q"),
-          by: enumParam("by", input.by, KEY_MODES),
-          match: enumParam("match", input.match, MATCH_LEVELS),
-          window: intParam("window", input.window),
-          min: intParam("min", input.min),
-          limit: intParam("limit", input.limit),
-          author: strOpt(input, "author"),
-          work: sc.work,
-          edition: sc.edition,
-          editions: sc.editions,
-        }),
+        await computer.collocations(collocationsParams(source(input))),
       );
     },
-    similar: async (input) =>
-      renderSimilar(
-        await computer.similar({
-          author: str(input, "author"),
-          work: str(input, "work"),
-          edition: strOpt(input, "edition"),
-          path: strArrayOpt(input, "path"),
-          level: enumParam("level", input.level, LEVELS),
-          limit: intParam("limit", input.limit),
-        }),
-      ),
+    similar: async (input) => {
+      str(input, "author");
+      str(input, "work");
+      return renderSimilar(
+        await computer.similar(similarParams(source(input))),
+      );
+    },
     topics: async (input) =>
-      renderTopics(
-        await computer.topics({
-          terms: intParam("terms", input.terms),
-          works: intParam("works", input.works),
-        }),
-      ),
-    topic_mix: async (input) =>
-      renderTopicMix(
-        await computer.topicMix({
-          author: str(input, "author"),
-          work: str(input, "work"),
-          edition: strOpt(input, "edition"),
-          path: strArrayOpt(input, "path"),
-          level: enumParam("level", input.level, LEVELS),
-          limit: intParam("limit", input.limit),
-        }),
-      ),
+      renderTopics(await computer.topics(topicsParams(source(input)))),
+    topic_mix: async (input) => {
+      str(input, "author");
+      str(input, "work");
+      return renderTopicMix(
+        await computer.topicMix(topicMixParams(source(input))),
+      );
+    },
     get_edition: async (input) => {
       const [author, work, edition] = [
         str(input, "author"),

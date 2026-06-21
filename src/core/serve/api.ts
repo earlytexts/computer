@@ -154,6 +154,55 @@ const alignedRow = (row: AlignedSection): AlignedRow => ({
   children: row.children.map(alignedRow),
 });
 
+/**
+ * The work's other editions that contain a section matching `keys`, each with
+ * its own path to it — for linking to, or comparing against, the same section in
+ * another printing. `exclude` is the edition(s) already in hand.
+ */
+const matchingEditions = (
+  work: WorkEntry,
+  exclude: EditionEntry[],
+  keys: string[],
+): EditionSection[] =>
+  work.editions
+    .filter((other) => !exclude.includes(other))
+    .flatMap((other) => {
+      const match = findSectionByKey(other.sections, keys);
+      return match === undefined
+        ? []
+        : [{ slug: other.meta.slug, path: match.path }];
+    });
+
+/**
+ * A section's place for navigation: its ancestors (root-down) and the sections
+ * immediately before and after it in the edition's reading order. Shared by the
+ * section and section-full-text responses.
+ */
+const sectionNav = (
+  edition: EditionEntry,
+  section: SkeletonSection,
+): { ancestors: SectionRef[]; prev?: SectionRef; next?: SectionRef } => {
+  const flat = flattenSkeleton(edition.sections);
+  const index = flat.findIndex((s) =>
+    s.path.join("/") === section.path.join("/")
+  );
+  const ancestors = section.path.slice(0, -1)
+    .map((_slug, i) =>
+      findSkeleton(edition.sections, section.path.slice(0, i + 1))
+    )
+    .filter((s): s is SkeletonSection => s !== undefined)
+    .map(sectionRef);
+  return {
+    ancestors,
+    prev: flat[index - 1] === undefined
+      ? undefined
+      : sectionRef(flat[index - 1]),
+    next: flat[index + 1] === undefined
+      ? undefined
+      : sectionRef(flat[index + 1]),
+  };
+};
+
 /* ------------------------------ builders ----------------------------- */
 
 export const catalogResponse = (catalog: CatalogArtefact): CatalogResponse => ({
@@ -209,28 +258,7 @@ export const sectionResponse = async (
   const section = findSkeleton(edition.sections, path);
   if (section === undefined) return undefined;
 
-  const flat = flattenSkeleton(edition.sections);
-  const index = flat.findIndex((s) =>
-    s.path.join("/") === section.path.join("/")
-  );
-  const ancestors = section.path.slice(0, -1)
-    .map((_slug, i) =>
-      findSkeleton(edition.sections, section.path.slice(0, i + 1))
-    )
-    .filter((s): s is SkeletonSection => s !== undefined);
-
-  const keys = pathKey(section.path);
-  const compareEditions = work.editions
-    .filter((other) => other !== edition)
-    .flatMap((other) => {
-      const match = findSectionByKey(other.sections, keys);
-      return match === undefined
-        ? []
-        : [{ slug: other.meta.slug, path: match.path }];
-    });
-
-  const prev = flat[index - 1];
-  const next = flat[index + 1];
+  const { ancestors, prev, next } = sectionNav(edition, section);
   return {
     author: author.meta,
     work: work.meta,
@@ -245,10 +273,10 @@ export const sectionResponse = async (
         .map((block) => resolveBlock(block, version)),
       children: section.children.map(sectionSummary),
     },
-    ancestors: ancestors.map(sectionRef),
-    prev: prev === undefined ? undefined : sectionRef(prev),
-    next: next === undefined ? undefined : sectionRef(next),
-    compareEditions,
+    ancestors,
+    prev,
+    next,
+    compareEditions: matchingEditions(work, [edition], pathKey(section.path)),
   };
 };
 
@@ -263,40 +291,17 @@ export const sectionFullTextResponse = async (
   const skeleton = findSkeleton(edition.sections, path);
   if (skeleton === undefined) return undefined;
 
-  const flat = flattenSkeleton(edition.sections);
-  const index = flat.findIndex((s) =>
-    s.path.join("/") === skeleton.path.join("/")
-  );
-  const ancestors = skeleton.path.slice(0, -1)
-    .map((_slug, i) =>
-      findSkeleton(edition.sections, skeleton.path.slice(0, i + 1))
-    )
-    .filter((s): s is SkeletonSection => s !== undefined);
-
-  const keys = pathKey(skeleton.path);
-  const compareEditions: EditionSection[] = work.editions
-    .filter((other) => other !== edition)
-    .flatMap((other) => {
-      const match = findSectionByKey(other.sections, keys);
-      return match === undefined
-        ? []
-        : [{ slug: other.meta.slug, path: match.path }];
-    });
-
+  const { ancestors, prev, next } = sectionNav(edition, skeleton);
   return {
     author: author.meta,
     work: work.meta,
     edition: edition.meta,
     version,
     section: await sectionContent(store, skeleton, version),
-    ancestors: ancestors.map(sectionRef),
-    prev: flat[index - 1] === undefined
-      ? undefined
-      : sectionRef(flat[index - 1]),
-    next: flat[index + 1] === undefined
-      ? undefined
-      : sectionRef(flat[index + 1]),
-    compareEditions,
+    ancestors,
+    prev,
+    next,
+    compareEditions: matchingEditions(work, [edition], pathKey(skeleton.path)),
   };
 };
 
@@ -348,14 +353,7 @@ export const compareSectionResponse = async (
 
   // Other editions of the work that also contain this section, for switching
   // either side of the comparison.
-  const compareEditions = work.editions
-    .filter((other) => other !== a && other !== b)
-    .flatMap((other) => {
-      const match = findSectionByKey(other.sections, keys);
-      return match === undefined
-        ? []
-        : [{ slug: other.meta.slug, path: match.path }];
-    });
+  const compareEditions = matchingEditions(work, [a, b], keys);
 
   // Step through edition A's reading order to the nearest neighbour that also
   // exists in edition B, so the next/prev comparison can never 404.
@@ -397,6 +395,51 @@ export const compareSectionResponse = async (
 const parseMatch = (match?: MatchLevel): MatchLevel =>
   match === "exact" ? "exact" : match === "spelling" ? "spelling" : "form";
 
+/** The live-text version: the original when asked, else the edited reading text. */
+const parseVersion = (
+  version?: "edited" | "original",
+): "edited" | "original" => version === "original" ? "original" : "edited";
+
+/**
+ * Resolve a count parameter to a whole number: the request value (already
+ * validated as a positive integer at the boundary) or `def`, floored at 1 and —
+ * when given — capped at `max`. This is where the documented maxima are enforced,
+ * so an over-cap value is clamped rather than rejected.
+ */
+const clamp = (raw: number | undefined, def: number, max?: number): number => {
+  const n = Math.max(1, Math.floor(raw ?? def));
+  return max === undefined ? n : Math.min(max, n);
+};
+
+/**
+ * Whether an edition falls in the chosen universe: its canonical printing by
+ * default (`filter` undefined), every printing (`filter === "all"`), or the one
+ * named year. The shared universe rule behind the search/keywords/collocations
+ * scope (the `edition`/`editions` params, resolved to a `filter` by scope.ts).
+ */
+const inUniverse = (
+  filter: string | undefined,
+  canonical: boolean,
+  edition: string,
+): boolean =>
+  filter === undefined ? canonical : filter === "all" || edition === filter;
+
+/**
+ * Project an edition-indexed label array onto the unit-indexed scope array the
+ * pure text routines (keyness, collocations) consume: each unit takes its
+ * edition's label (0 for out of scope, or a route's TARGET/REFERENCE/IN_SCOPE).
+ */
+const labelUnits = (
+  editionOf: ArrayLike<number>,
+  editionLabel: ArrayLike<number>,
+): Int8Array => {
+  const scope = new Int8Array(editionOf.length);
+  for (let unit = 0; unit < scope.length; unit++) {
+    scope[unit] = editionLabel[editionOf[unit]];
+  }
+  return scope;
+};
+
 const MAX_PER_PAGE = 100;
 
 export const frequencyResponse = (
@@ -414,9 +457,7 @@ export const frequencyResponse = (
     match: parseMatch(params.match),
     caseSensitive: params.caseSensitive ?? false,
   };
-  const version: Version = params.version === "original"
-    ? "original"
-    : "edited";
+  const version: Version = parseVersion(params.version);
   const hits = q === "" ? [] : search(
     artefacts,
     q,
@@ -480,11 +521,7 @@ export const frequencyResponse = (
     const ref = manifest.editions[i];
     if (params.author !== undefined && ref.author !== params.author) continue;
     if (params.work !== undefined && ref.work !== params.work) continue;
-    if (filter === undefined) {
-      if (!ref.canonical) continue;
-    } else if (filter !== "all" && ref.edition !== filter) {
-      continue;
-    }
+    if (!inUniverse(filter, ref.canonical, ref.edition)) continue;
     const key = groupKey(ref.author, ref.work, ref.edition);
     const group = groups.get(key);
     if (group !== undefined) group.tokens += editionTokenCounts[i];
@@ -537,14 +574,9 @@ export const keywordsResponse = (
   params: KeywordsParams,
 ): KeywordsResponse => {
   const mode = parseMode(params.by);
-  const version: "edited" | "original" = params.version === "original"
-    ? "original"
-    : "edited";
-  const minCount = Math.max(1, Math.floor(params.min ?? DEFAULT_MIN_COUNT));
-  const limit = Math.min(
-    MAX_KEYWORDS,
-    Math.max(1, Math.floor(params.limit ?? DEFAULT_KEYWORDS)),
-  );
+  const version = parseVersion(params.version);
+  const minCount = clamp(params.min, DEFAULT_MIN_COUNT);
+  const limit = clamp(params.limit, DEFAULT_KEYWORDS, MAX_KEYWORDS);
   const editionScope = editionFilter(params);
   const empty: KeywordsResponse = {
     by: mode,
@@ -563,21 +595,14 @@ export const keywordsResponse = (
 
   const { manifest, units } = artefacts;
   // Classify each edition once (target / reference / out), then label its units.
-  const inUniverse = (canonical: boolean, edition: string): boolean =>
-    editionScope === undefined
-      ? canonical
-      : editionScope === "all" || edition === editionScope;
   const editionClass = manifest.editions.map((ref) => {
-    if (!inUniverse(ref.canonical, ref.edition)) return 0;
+    if (!inUniverse(editionScope, ref.canonical, ref.edition)) return 0;
     const isTarget =
       (params.author === undefined || ref.author === params.author) &&
       (params.work === undefined || ref.work === params.work);
     return isTarget ? TARGET : REFERENCE;
   });
-  const scope = new Int8Array(units.edition.length);
-  for (let unit = 0; unit < scope.length; unit++) {
-    scope[unit] = editionClass[units.edition[unit]];
-  }
+  const scope = labelUnits(units.edition, editionClass);
 
   const result = keyness(artefacts, scope, { mode, version, minCount, limit });
   return {
@@ -627,18 +652,9 @@ export const collocationsResponse = async (
   const q = params.q.trim();
   const mode = parseMode(params.by);
   const match = parseMatch(params.match);
-  const window = Math.min(
-    MAX_WINDOW,
-    Math.max(1, Math.floor(params.window ?? DEFAULT_WINDOW)),
-  );
-  const minCount = Math.max(
-    1,
-    Math.floor(params.min ?? DEFAULT_COLLOCATION_MIN),
-  );
-  const limit = Math.min(
-    MAX_COLLOCATIONS,
-    Math.max(1, Math.floor(params.limit ?? DEFAULT_COLLOCATIONS)),
-  );
+  const window = clamp(params.window, DEFAULT_WINDOW, MAX_WINDOW);
+  const minCount = clamp(params.min, DEFAULT_COLLOCATION_MIN);
+  const limit = clamp(params.limit, DEFAULT_COLLOCATIONS, MAX_COLLOCATIONS);
   const editionScope = editionFilter(params);
   const empty: CollocationsResponse = {
     q,
@@ -670,19 +686,14 @@ export const collocationsResponse = async (
   // Classify each edition once (in scope / out), then label its units. The
   // universe mirrors search/keywords: canonical editions by default, or the
   // named edition slug ("all" for every printing).
-  const inUniverse = (canonical: boolean, edition: string): boolean =>
-    editionScope === undefined
-      ? canonical
-      : editionScope === "all" || edition === editionScope;
-  const editionInScope = manifest.editions.map((ref) =>
-    inUniverse(ref.canonical, ref.edition) &&
-    (params.author === undefined || ref.author === params.author) &&
-    (params.work === undefined || ref.work === params.work)
+  const editionLabel = manifest.editions.map((ref) =>
+    inUniverse(editionScope, ref.canonical, ref.edition) &&
+      (params.author === undefined || ref.author === params.author) &&
+      (params.work === undefined || ref.work === params.work)
+      ? IN_SCOPE
+      : 0
   );
-  const scope = new Int8Array(units.edition.length);
-  for (let unit = 0; unit < scope.length; unit++) {
-    if (editionInScope[units.edition[unit]]) scope[unit] = IN_SCOPE;
-  }
+  const scope = labelUnits(units.edition, editionLabel);
 
   // The in-scope units that contain the node word — the only ones whose token
   // streams must be read (windows never reach beyond a unit).
@@ -751,6 +762,49 @@ const parseLevel = (
     : "edition";
 
 /**
+ * Resolve a similarity/topic target's edition: the named printing, or the work's
+ * canonical edition when omitted (the work level always takes the canonical
+ * printing). Returns the edition's manifest index and its year slug, or undefined
+ * when the author/work/edition is absent. Shared by `similar` and `topicMix`.
+ */
+const resolveTargetEdition = (
+  manifest: ServeArtefacts["manifest"],
+  author: string,
+  work: string,
+  level: SimilarLevel,
+  edition?: string,
+): { index: number; slug: string } | undefined => {
+  const want = level === "work" ? undefined : edition;
+  const index = manifest.editions.findIndex((ref) =>
+    ref.author === author && ref.work === work &&
+    (want === undefined ? ref.canonical : ref.edition === want)
+  );
+  return index === -1
+    ? undefined
+    : { index, slug: manifest.editions[index].edition };
+};
+
+/**
+ * The document rows making up a target: the one matching section at the section
+ * level, or every section of the target edition at the edition/work level (the
+ * caller aggregates them). Works over either the DTM's or the topic model's docs.
+ */
+const targetDocs = (
+  docs: ArrayLike<{ edition: number; sectionPath: string }>,
+  edition: number,
+  level: SimilarLevel,
+  sectionKey: string,
+): number[] => {
+  const rows: number[] = [];
+  for (let d = 0; d < docs.length; d++) {
+    if (docs[d].edition !== edition) continue;
+    if (level === "section" && docs[d].sectionPath !== sectionKey) continue;
+    rows.push(d);
+  }
+  return rows;
+};
+
+/**
  * Similarity: the corpus items most lexically like a target, by cosine over the
  * TF-IDF document vectors (the DTM artefact, read lazily here). The target is an
  * author/work, narrowed to an edition (canonical by default) and — at the section
@@ -768,10 +822,7 @@ export const similarResponse = async (
 ): Promise<SimilarResponse> => {
   const requestPath = params.path ?? [];
   const level = parseLevel(params.level, requestPath.length > 0);
-  const limit = Math.min(
-    MAX_SIMILAR,
-    Math.max(1, Math.floor(params.limit ?? DEFAULT_SIMILAR)),
-  );
+  const limit = clamp(params.limit, DEFAULT_SIMILAR, MAX_SIMILAR);
   // The section path matters only at the section level; lowercase it to match
   // the stored slugs (as the text routes do).
   const sectionPath = level === "section"
@@ -791,30 +842,22 @@ export const similarResponse = async (
   if (params.author === undefined || params.work === undefined) return notFound;
 
   const { manifest, units } = artefacts;
-  // Resolve the target edition: the named one, or the work's canonical edition
-  // when omitted. The work level ignores any named edition and takes the
-  // canonical printing, so the target is represented as the result universe is.
-  const wantEdition = level === "work" ? undefined : params.edition;
-  const targetEdition = manifest.editions.findIndex((ref) =>
-    ref.author === params.author && ref.work === params.work &&
-    (wantEdition === undefined ? ref.canonical : ref.edition === wantEdition)
+  // Resolve the target edition (the named one, or the canonical default), then
+  // its document rows; the work level takes the canonical printing as the result
+  // universe does.
+  const target = resolveTargetEdition(
+    manifest,
+    params.author,
+    params.work,
+    level,
+    params.edition,
   );
-  if (targetEdition === -1) return notFound;
-  const resolvedEdition = manifest.editions[targetEdition].edition;
+  if (target === undefined) return notFound;
 
   const dtm = await dtmStore.matrix();
-  const targetKey = sectionPath.join("/");
-
-  // The target's document rows: the matching section at the section level, or
-  // every section of the target edition at the edition/work level.
-  const targetDocs: number[] = [];
-  for (let d = 0; d < dtm.docs.length; d++) {
-    if (dtm.docs[d].edition !== targetEdition) continue;
-    if (level === "section" && dtm.docs[d].sectionPath !== targetKey) continue;
-    targetDocs.push(d);
-  }
+  const docs = targetDocs(dtm.docs, target.index, level, sectionPath.join("/"));
   // Found only if the target carries indexed text (a non-empty vector).
-  const found = targetDocs.some((d) => dtm.rowPtr[d] < dtm.rowPtr[d + 1]);
+  const found = docs.some((d) => dtm.rowPtr[d] < dtm.rowPtr[d + 1]);
   if (!found) return notFound;
 
   // Section titles, for labelling section-level results.
@@ -865,7 +908,7 @@ export const similarResponse = async (
     groupDocs[g].push(d);
   }
 
-  const ranked = similar(dtm, targetDocs, groupDocs, { limit });
+  const ranked = similar(dtm, docs, groupDocs, { limit });
   const results = ranked.map((row) => ({
     ...labels[row.group],
     score: row.score,
@@ -874,7 +917,7 @@ export const similarResponse = async (
     level,
     author: params.author,
     work: params.work,
-    edition: level === "work" ? null : resolvedEdition,
+    edition: level === "work" ? null : target.slug,
     sectionPath,
     found: true,
     total: results.length,
@@ -921,13 +964,11 @@ export const topicsResponse = async (
 ): Promise<TopicsResponse> => {
   const model = await topicsStore.model();
   const { manifest } = artefacts;
-  const nTerms = Math.min(
-    MAX_TOPIC_TERMS,
-    Math.max(1, Math.floor(params.terms ?? DEFAULT_TOPIC_TERMS)),
-  );
-  const nWorks = Math.min(
+  const nTerms = clamp(params.terms, DEFAULT_TOPIC_TERMS, MAX_TOPIC_TERMS);
+  const nWorks = clamp(
+    params.works,
+    DEFAULT_PROMINENT_WORKS,
     MAX_PROMINENT_WORKS,
-    Math.max(1, Math.floor(params.works ?? DEFAULT_PROMINENT_WORKS)),
   );
 
   // Group the canonical-edition documents by work, then aggregate each work's
@@ -1013,34 +1054,29 @@ export const topicMixResponse = async (
   if (params.author === undefined || params.work === undefined) return notFound;
 
   const { manifest } = artefacts;
-  const wantEdition = level === "work" ? undefined : params.edition;
-  const targetEdition = manifest.editions.findIndex((ref) =>
-    ref.author === params.author && ref.work === params.work &&
-    (wantEdition === undefined ? ref.canonical : ref.edition === wantEdition)
+  const target = resolveTargetEdition(
+    manifest,
+    params.author,
+    params.work,
+    level,
+    params.edition,
   );
-  if (targetEdition === -1) return notFound;
-  const resolvedEdition = manifest.editions[targetEdition].edition;
+  if (target === undefined) return notFound;
 
   const model = await topicsStore.model();
-  const targetKey = sectionPath.join("/");
-  const targetDocs: number[] = [];
-  for (let d = 0; d < model.docs.length; d++) {
-    if (model.docs[d].edition !== targetEdition) continue;
-    if (level === "section" && model.docs[d].sectionPath !== targetKey) {
-      continue;
-    }
-    targetDocs.push(d);
-  }
+  const docs = targetDocs(
+    model.docs,
+    target.index,
+    level,
+    sectionPath.join("/"),
+  );
 
-  const mix = aggregateMix(model, targetDocs);
+  const mix = aggregateMix(model, docs);
   let sum = 0;
   for (let t = 0; t < model.k; t++) sum += mix[t];
   if (sum === 0) return notFound; // no indexed text → no mix
 
-  const limit = Math.min(
-    model.k,
-    Math.max(1, Math.floor(params.limit ?? DEFAULT_MIX_TOPICS)),
-  );
+  const limit = clamp(params.limit, DEFAULT_MIX_TOPICS, model.k);
   const topics: TopicMixItem[] = Array.from(
     { length: model.k },
     (_, t) => ({ t, weight: round4(mix[t]) }),
@@ -1059,7 +1095,7 @@ export const topicMixResponse = async (
     level,
     author: params.author,
     work: params.work,
-    edition: level === "work" ? null : resolvedEdition,
+    edition: level === "work" ? null : target.slug,
     sectionPath,
     found: true,
     total: topics.length,
@@ -1077,14 +1113,9 @@ export const searchResponse = async (
     match: parseMatch(params.match),
     caseSensitive: params.caseSensitive ?? false,
   };
-  const version: Version = params.version === "original"
-    ? "original"
-    : "edited";
-  const page = Math.max(1, Math.floor(params.page ?? 1));
-  const perPage = Math.min(
-    MAX_PER_PAGE,
-    Math.max(1, Math.floor(params.perPage ?? 20)),
-  );
+  const version: Version = parseVersion(params.version);
+  const page = clamp(params.page, 1);
+  const perPage = clamp(params.perPage, 20, MAX_PER_PAGE);
   const hits = q === "" ? [] : search(
     artefacts,
     q,
@@ -1154,23 +1185,15 @@ export const concordanceResponse = async (
     match: parseMatch(params.match),
     caseSensitive: params.caseSensitive ?? false,
   };
-  const version: Version = params.version === "original"
-    ? "original"
-    : "edited";
+  const version: Version = parseVersion(params.version);
   const sort: Sort = params.sort === "left"
     ? "left"
     : params.sort === "right"
     ? "right"
     : "position";
-  const window = Math.min(
-    MAX_WINDOW,
-    Math.max(1, Math.floor(params.window ?? DEFAULT_CONCORDANCE_WINDOW)),
-  );
-  const page = Math.max(1, Math.floor(params.page ?? 1));
-  const perPage = Math.min(
-    MAX_PER_PAGE,
-    Math.max(1, Math.floor(params.perPage ?? 20)),
-  );
+  const window = clamp(params.window, DEFAULT_CONCORDANCE_WINDOW, MAX_WINDOW);
+  const page = clamp(params.page, 1);
+  const perPage = clamp(params.perPage, 20, MAX_PER_PAGE);
   const phraseLen = Math.max(1, parseQuery(q).length);
   const hits = q === "" ? [] : search(
     artefacts,

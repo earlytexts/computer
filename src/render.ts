@@ -30,6 +30,7 @@ import type {
   SearchResponse,
   SectionContent,
   SectionFullTextResponse,
+  SectionRef,
   SectionResponse,
   SectionSummary,
   SimilarResponse,
@@ -204,6 +205,26 @@ export const renderEdition = (response: EditionResponse): string =>
   (response.blocks.length === 0 ? "" : `${renderBlocks(response.blocks)}\n\n`) +
   `Sections (path — title):\n${renderToc(response.sections, 0)}`;
 
+/** The previous/next navigation line, or undefined when a section has neither. */
+const navLine = (
+  prev?: SectionRef,
+  next?: SectionRef,
+): string | undefined => {
+  const parts = [
+    prev === undefined ? undefined : `previous: ${prev.path.join("/")}`,
+    next === undefined ? undefined : `next: ${next.path.join("/")}`,
+  ].filter((part) => part !== undefined);
+  return parts.length > 0 ? parts.join(" | ") : undefined;
+};
+
+/** The "also in these editions" line, or undefined when there are none. */
+const alsoInEditions = (editions: { slug: string }[]): string | undefined =>
+  editions.length === 0
+    ? undefined
+    : `Matching section also in editions: ${
+      editions.map((e) => e.slug).join(", ")
+    }`;
+
 export const renderSection = (response: SectionResponse): string => {
   const { section } = response;
   const parts = [
@@ -216,22 +237,12 @@ export const renderSection = (response: SectionResponse): string => {
   if (section.children.length > 0) {
     parts.push(`Subsections:\n${renderToc(section.children, 0)}`.trimEnd());
   }
-  const nav = [
-    response.prev === undefined
-      ? undefined
-      : `previous: ${response.prev.path.join("/")}`,
-    response.next === undefined
-      ? undefined
-      : `next: ${response.next.path.join("/")}`,
-  ].filter((part) => part !== undefined);
-  if (nav.length > 0) parts.push(nav.join(" | "));
-  if (response.compareEditions.length > 0) {
-    parts.push(
-      `Matching section also in editions: ${
-        response.compareEditions.map((e) => e.slug).join(", ")
-      }`,
-    );
-  }
+  parts.push(
+    ...[
+      navLine(response.prev, response.next),
+      alsoInEditions(response.compareEditions),
+    ].filter((part) => part !== undefined),
+  );
   return parts.join("\n\n");
 };
 
@@ -262,22 +273,12 @@ export const renderSectionFullText = (
     response.section.breadcrumb,
     renderSectionContent(response.section),
   ];
-  const nav = [
-    response.prev === undefined
-      ? undefined
-      : `previous: ${response.prev.path.join("/")}`,
-    response.next === undefined
-      ? undefined
-      : `next: ${response.next.path.join("/")}`,
-  ].filter((part) => part !== undefined);
-  if (nav.length > 0) parts.push(nav.join(" | "));
-  if (response.compareEditions.length > 0) {
-    parts.push(
-      `Matching section also in editions: ${
-        response.compareEditions.map((e) => e.slug).join(", ")
-      }`,
-    );
-  }
+  parts.push(
+    ...[
+      navLine(response.prev, response.next),
+      alsoInEditions(response.compareEditions),
+    ].filter((part) => part !== undefined),
+  );
   return parts.join("\n\n");
 };
 
@@ -353,9 +354,27 @@ export const renderConcordance = (response: ConcordanceResponse): string => {
 
 /* ------------------------------ keywords ----------------------------- */
 
+/** The author/work a statistics route was scoped to, or "the corpus". */
+const scopeLabel = (
+  response: { author: string | null; work: string | null },
+): string =>
+  [response.author, response.work].filter((p) => p !== null).join("/") ||
+  "the corpus";
+
+/** The author/work/edition/section a vector route was aimed at, or "the target". */
+const targetLabel = (
+  response: {
+    author: string | null;
+    work: string | null;
+    edition: string | null;
+    sectionPath: string[];
+  },
+): string =>
+  [response.author, response.work, response.edition, ...response.sectionPath]
+    .filter((p) => p !== null && p !== undefined).join("/") || "the target";
+
 export const renderKeywords = (response: KeywordsResponse): string => {
-  const scope = [response.author, response.work].filter((p) => p !== null)
-    .join("/") || "the corpus";
+  const scope = scopeLabel(response);
   if (response.total === 0) {
     return `No distinctive vocabulary found for ${scope} ` +
       `(by ${response.by}). It may have too little text, or no reference to ` +
@@ -375,8 +394,7 @@ export const renderKeywords = (response: KeywordsResponse): string => {
 /* ---------------------------- collocations --------------------------- */
 
 export const renderCollocations = (response: CollocationsResponse): string => {
-  const scope = [response.author, response.work].filter((p) => p !== null)
-    .join("/") || "the corpus";
+  const scope = scopeLabel(response);
   if (response.nodeCount === 0) {
     return `No occurrences of "${response.q}" found in ${scope}, so there ` +
       `are no collocations to report.`;
@@ -399,12 +417,7 @@ export const renderCollocations = (response: CollocationsResponse): string => {
 /* ------------------------------ similar ------------------------------ */
 
 export const renderSimilar = (response: SimilarResponse): string => {
-  const target = [
-    response.author,
-    response.work,
-    response.edition,
-    ...response.sectionPath,
-  ].filter((p) => p !== null && p !== undefined).join("/") || "the target";
+  const target = targetLabel(response);
   if (!response.found) {
     return `No ${response.level} found for ${target}, or it has no indexed ` +
       `text, so there is nothing to compare.`;
@@ -457,13 +470,7 @@ export const renderTopics = (response: TopicsResponse): string => {
 };
 
 export const renderTopicMix = (response: TopicMixResponse): string => {
-  const target = [
-    response.author,
-    response.work,
-    response.edition,
-    ...response.sectionPath,
-  ].filter((part) => part !== null && part !== undefined).join("/") ||
-    "the target";
+  const target = targetLabel(response);
   if (!response.found) {
     return `No ${response.level} found for ${target}, or it has no indexed ` +
       `text, so there is no topic mix.`;

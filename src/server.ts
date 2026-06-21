@@ -50,22 +50,25 @@ import {
   type RateLimiterOptions,
 } from "./ratelimit.ts";
 import { createMcpHandler } from "./mcp.ts";
-import { type EditionScopeParams, scopeError } from "./scope.ts";
 import {
-  boolParam,
   enumParam,
   FORMATS,
-  GROUP_BYS,
-  intParam,
-  KEY_MODES,
-  LEVELS,
-  MATCH_LEVELS,
   ParamError,
   rejectUnknownParams,
   SEARCH_VERSIONS,
-  SORTS,
   TEXT_VERSIONS,
 } from "./params.ts";
+import {
+  collocationsParams,
+  concordanceParams,
+  frequencyParams,
+  keywordsParams,
+  type RawSource,
+  searchParams,
+  similarParams,
+  topicMixParams,
+  topicsParams,
+} from "./requests.ts";
 import {
   renderAuthors,
   renderCollocations,
@@ -160,18 +163,9 @@ const foundIn = <T>(
     ? (wantsText(p) ? text("not found", 404) : notFound())
     : respond(p, value, render);
 
-/** The shared edition-scope params (work, edition, editions) from the query. */
-const scopeOf = (p: URLSearchParams): EditionScopeParams => ({
-  work: p.get("work") ?? undefined,
-  edition: p.get("edition") ?? undefined,
-  editions: p.get("editions") ?? undefined,
-});
-
-/** Validate the edition-scope params together; throws a `ParamError` on a clash. */
-const checkScope = (scope: EditionScopeParams): void => {
-  const err = scopeError(scope);
-  if (err !== undefined) throw new ParamError(err);
-};
+/** A `RawSource` over a URL query, for the shared request builders (requests.ts). */
+const source = (p: URLSearchParams): RawSource => (key) =>
+  p.get(key) ?? undefined;
 
 /* The exact query parameters each route accepts; anything else is a 400. The
  * three edition-scope knobs (work, edition, editions) recur across the universe
@@ -271,126 +265,49 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
   }
   if (segments[0] === "search" && segments.length === 1) {
     rejectUnknownParams(p, SEARCH_PARAMS);
-    const scope = scopeOf(p);
-    checkScope(scope);
     return respond(
       p,
-      await computer.search({
-        q: p.get("q") ?? "",
-        match: enumParam("match", p.get("match"), MATCH_LEVELS),
-        caseSensitive: boolParam("caseSensitive", p.get("caseSensitive")),
-        version: editedOrOriginal(p),
-        author: p.get("author") ?? undefined,
-        work: scope.work,
-        edition: scope.edition,
-        editions: scope.editions as "canonical" | "all" | undefined,
-        page: intParam("page", p.get("page")),
-        perPage: intParam("perPage", p.get("perPage")),
-      }),
+      await computer.search(searchParams(source(p))),
       renderSearch,
     );
   }
   if (segments[0] === "frequency" && segments.length === 1) {
     rejectUnknownParams(p, FREQUENCY_PARAMS);
-    const scope = scopeOf(p);
-    checkScope(scope);
     return respond(
       p,
-      await computer.frequency({
-        q: p.get("q") ?? "",
-        groupBy: enumParam("groupBy", p.get("groupBy"), GROUP_BYS),
-        match: enumParam("match", p.get("match"), MATCH_LEVELS),
-        caseSensitive: boolParam("caseSensitive", p.get("caseSensitive")),
-        version: editedOrOriginal(p),
-        author: p.get("author") ?? undefined,
-        work: scope.work,
-        edition: scope.edition,
-        editions: scope.editions as "canonical" | "all" | undefined,
-      }),
+      await computer.frequency(frequencyParams(source(p))),
       renderFrequency,
     );
   }
   if (segments[0] === "concordance" && segments.length === 1) {
     rejectUnknownParams(p, CONCORDANCE_PARAMS);
-    const scope = scopeOf(p);
-    checkScope(scope);
     return respond(
       p,
-      await computer.concordance({
-        q: p.get("q") ?? "",
-        window: intParam("window", p.get("window")),
-        sort: enumParam("sort", p.get("sort"), SORTS),
-        match: enumParam("match", p.get("match"), MATCH_LEVELS),
-        caseSensitive: boolParam("caseSensitive", p.get("caseSensitive")),
-        version: editedOrOriginal(p),
-        author: p.get("author") ?? undefined,
-        work: scope.work,
-        edition: scope.edition,
-        editions: scope.editions as "canonical" | "all" | undefined,
-        page: intParam("page", p.get("page")),
-        perPage: intParam("perPage", p.get("perPage")),
-      }),
+      await computer.concordance(concordanceParams(source(p))),
       renderConcordance,
     );
   }
-
   if (segments[0] === "keywords" && segments.length === 1) {
     rejectUnknownParams(p, KEYWORDS_PARAMS);
-    const scope = scopeOf(p);
-    checkScope(scope);
     return respond(
       p,
-      await computer.keywords({
-        author: p.get("author") ?? undefined,
-        work: scope.work,
-        edition: scope.edition,
-        editions: scope.editions as "canonical" | "all" | undefined,
-        by: enumParam("by", p.get("by"), KEY_MODES),
-        version: editedOrOriginal(p),
-        min: intParam("min", p.get("min")),
-        limit: intParam("limit", p.get("limit")),
-      }),
+      await computer.keywords(keywordsParams(source(p))),
       renderKeywords,
     );
   }
-
   if (segments[0] === "collocations" && segments.length === 1) {
     rejectUnknownParams(p, COLLOCATIONS_PARAMS);
-    const scope = scopeOf(p);
-    checkScope(scope);
     return respond(
       p,
-      await computer.collocations({
-        q: p.get("q") ?? "",
-        by: enumParam("by", p.get("by"), KEY_MODES),
-        match: enumParam("match", p.get("match"), MATCH_LEVELS),
-        window: intParam("window", p.get("window")),
-        min: intParam("min", p.get("min")),
-        limit: intParam("limit", p.get("limit")),
-        author: p.get("author") ?? undefined,
-        work: scope.work,
-        edition: scope.edition,
-        editions: scope.editions as "canonical" | "all" | undefined,
-      }),
+      await computer.collocations(collocationsParams(source(p))),
       renderCollocations,
     );
   }
-
   if (segments[0] === "similar" && segments.length === 1) {
     rejectUnknownParams(p, SIMILAR_PARAMS);
-    const path = p.get("path");
     return respond(
       p,
-      await computer.similar({
-        author: p.get("author") ?? undefined,
-        work: p.get("work") ?? undefined,
-        edition: p.get("edition") ?? undefined,
-        path: path === null
-          ? undefined
-          : path.split("/").filter((s) => s !== ""),
-        level: enumParam("level", p.get("level"), LEVELS),
-        limit: intParam("limit", p.get("limit")),
-      }),
+      await computer.similar(similarParams(source(p))),
       renderSimilar,
     );
   }
@@ -400,28 +317,15 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
       rejectUnknownParams(p, TOPICS_PARAMS);
       return respond(
         p,
-        await computer.topics({
-          terms: intParam("terms", p.get("terms")),
-          works: intParam("works", p.get("works")),
-        }),
+        await computer.topics(topicsParams(source(p))),
         renderTopics,
       );
     }
     if (segments[1] === "mix" && segments.length === 2) {
       rejectUnknownParams(p, TOPIC_MIX_PARAMS);
-      const path = p.get("path");
       return respond(
         p,
-        await computer.topicMix({
-          author: p.get("author") ?? undefined,
-          work: p.get("work") ?? undefined,
-          edition: p.get("edition") ?? undefined,
-          path: path === null
-            ? undefined
-            : path.split("/").filter((s) => s !== ""),
-          level: enumParam("level", p.get("level"), LEVELS),
-          limit: intParam("limit", p.get("limit")),
-        }),
+        await computer.topicMix(topicMixParams(source(p))),
         renderTopicMix,
       );
     }

@@ -22,6 +22,25 @@ const catalogCache = new Map<string, { at: number; value: CatalogResponse }>();
 
 const segment = (s: string): string => encodeURIComponent(s);
 
+/**
+ * A query string (with leading "?", or "" when empty) from named values, the
+ * inverse of the server's request parsing. A value that is absent — undefined,
+ * or `false` (a flag is only ever sent when true) — is dropped; a `true` becomes
+ * "1" (the truth word the server reads), and numbers stringify. An empty string
+ * is kept (an empty `q` is a real query), so only undefined drops a string.
+ */
+const qs = (
+  params: Record<string, string | number | boolean | undefined>,
+): string => {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === false) continue;
+    query.set(key, value === true ? "1" : String(value));
+  }
+  const s = query.toString();
+  return s === "" ? "" : `?${s}`;
+};
+
 /** Append ?version unless it is the default (edited). */
 const withVersion = (path: string, version?: Version): string =>
   version === undefined || version === "edited"
@@ -113,109 +132,103 @@ export const computerClient = (
         }`,
         version,
       )),
-    search: (params) => {
-      const query = new URLSearchParams({ q: params.q });
-      if (params.match !== undefined) query.set("match", params.match);
-      if (params.caseSensitive) query.set("caseSensitive", "1");
-      if (params.version !== undefined) query.set("version", params.version);
-      if (params.author !== undefined) query.set("author", params.author);
-      if (params.work !== undefined) query.set("work", params.work);
-      if (params.edition !== undefined) query.set("edition", params.edition);
-      if (params.editions !== undefined) query.set("editions", params.editions);
-      if (params.page !== undefined) query.set("page", String(params.page));
-      if (params.perPage !== undefined) {
-        query.set("perPage", String(params.perPage));
-      }
-      return must(`/search?${query}`);
-    },
-    frequency: (params) => {
-      const query = new URLSearchParams({ q: params.q });
-      if (params.groupBy !== undefined) query.set("groupBy", params.groupBy);
-      if (params.match !== undefined) query.set("match", params.match);
-      if (params.caseSensitive) query.set("caseSensitive", "1");
-      if (params.version !== undefined) query.set("version", params.version);
-      if (params.author !== undefined) query.set("author", params.author);
-      if (params.work !== undefined) query.set("work", params.work);
-      if (params.edition !== undefined) query.set("edition", params.edition);
-      if (params.editions !== undefined) query.set("editions", params.editions);
-      return must(`/frequency?${query}`);
-    },
-    concordance: (params) => {
-      const query = new URLSearchParams({ q: params.q });
-      if (params.window !== undefined) {
-        query.set("window", String(params.window));
-      }
-      if (params.sort !== undefined) query.set("sort", params.sort);
-      if (params.match !== undefined) query.set("match", params.match);
-      if (params.caseSensitive) query.set("caseSensitive", "1");
-      if (params.version !== undefined) query.set("version", params.version);
-      if (params.author !== undefined) query.set("author", params.author);
-      if (params.work !== undefined) query.set("work", params.work);
-      if (params.edition !== undefined) query.set("edition", params.edition);
-      if (params.editions !== undefined) query.set("editions", params.editions);
-      if (params.page !== undefined) query.set("page", String(params.page));
-      if (params.perPage !== undefined) {
-        query.set("perPage", String(params.perPage));
-      }
-      return must(`/concordance?${query}`);
-    },
-    keywords: (params) => {
-      const query = new URLSearchParams();
-      if (params.author !== undefined) query.set("author", params.author);
-      if (params.work !== undefined) query.set("work", params.work);
-      if (params.edition !== undefined) query.set("edition", params.edition);
-      if (params.editions !== undefined) query.set("editions", params.editions);
-      if (params.by !== undefined) query.set("by", params.by);
-      if (params.version !== undefined) query.set("version", params.version);
-      if (params.min !== undefined) query.set("min", String(params.min));
-      if (params.limit !== undefined) query.set("limit", String(params.limit));
-      return must(`/keywords?${query}`);
-    },
-    collocations: (params) => {
-      const query = new URLSearchParams({ q: params.q });
-      if (params.by !== undefined) query.set("by", params.by);
-      if (params.match !== undefined) query.set("match", params.match);
-      if (params.window !== undefined) {
-        query.set("window", String(params.window));
-      }
-      if (params.min !== undefined) query.set("min", String(params.min));
-      if (params.limit !== undefined) query.set("limit", String(params.limit));
-      if (params.author !== undefined) query.set("author", params.author);
-      if (params.work !== undefined) query.set("work", params.work);
-      if (params.edition !== undefined) query.set("edition", params.edition);
-      if (params.editions !== undefined) query.set("editions", params.editions);
-      return must(`/collocations?${query}`);
-    },
-    similar: (params) => {
-      const query = new URLSearchParams();
-      if (params.author !== undefined) query.set("author", params.author);
-      if (params.work !== undefined) query.set("work", params.work);
-      if (params.edition !== undefined) query.set("edition", params.edition);
-      if (params.path !== undefined) {
-        query.set("path", params.path.map(segment).join("/"));
-      }
-      if (params.level !== undefined) query.set("level", params.level);
-      if (params.limit !== undefined) query.set("limit", String(params.limit));
-      return must(`/similar?${query}`);
-    },
-    topics: (params) => {
-      const query = new URLSearchParams();
-      if (params.terms !== undefined) query.set("terms", String(params.terms));
-      if (params.works !== undefined) query.set("works", String(params.works));
-      const suffix = query.toString();
-      return must(suffix === "" ? "/topics" : `/topics?${suffix}`);
-    },
-    topicMix: (params) => {
-      const query = new URLSearchParams();
-      if (params.author !== undefined) query.set("author", params.author);
-      if (params.work !== undefined) query.set("work", params.work);
-      if (params.edition !== undefined) query.set("edition", params.edition);
-      if (params.path !== undefined) {
-        query.set("path", params.path.map(segment).join("/"));
-      }
-      if (params.level !== undefined) query.set("level", params.level);
-      if (params.limit !== undefined) query.set("limit", String(params.limit));
-      return must(`/topics/mix?${query}`);
-    },
+    search: (params) =>
+      must(`/search${
+        qs({
+          q: params.q,
+          match: params.match,
+          caseSensitive: params.caseSensitive,
+          version: params.version,
+          author: params.author,
+          work: params.work,
+          edition: params.edition,
+          editions: params.editions,
+          page: params.page,
+          perPage: params.perPage,
+        })
+      }`),
+    frequency: (params) =>
+      must(`/frequency${
+        qs({
+          q: params.q,
+          groupBy: params.groupBy,
+          match: params.match,
+          caseSensitive: params.caseSensitive,
+          version: params.version,
+          author: params.author,
+          work: params.work,
+          edition: params.edition,
+          editions: params.editions,
+        })
+      }`),
+    concordance: (params) =>
+      must(`/concordance${
+        qs({
+          q: params.q,
+          window: params.window,
+          sort: params.sort,
+          match: params.match,
+          caseSensitive: params.caseSensitive,
+          version: params.version,
+          author: params.author,
+          work: params.work,
+          edition: params.edition,
+          editions: params.editions,
+          page: params.page,
+          perPage: params.perPage,
+        })
+      }`),
+    keywords: (params) =>
+      must(`/keywords${
+        qs({
+          author: params.author,
+          work: params.work,
+          edition: params.edition,
+          editions: params.editions,
+          by: params.by,
+          version: params.version,
+          min: params.min,
+          limit: params.limit,
+        })
+      }`),
+    collocations: (params) =>
+      must(`/collocations${
+        qs({
+          q: params.q,
+          by: params.by,
+          match: params.match,
+          window: params.window,
+          min: params.min,
+          limit: params.limit,
+          author: params.author,
+          work: params.work,
+          edition: params.edition,
+          editions: params.editions,
+        })
+      }`),
+    similar: (params) =>
+      must(`/similar${
+        qs({
+          author: params.author,
+          work: params.work,
+          edition: params.edition,
+          path: params.path?.map(segment).join("/"),
+          level: params.level,
+          limit: params.limit,
+        })
+      }`),
+    topics: (params) =>
+      must(`/topics${qs({ terms: params.terms, works: params.works })}`),
+    topicMix: (params) =>
+      must(`/topics/mix${
+        qs({
+          author: params.author,
+          work: params.work,
+          edition: params.edition,
+          path: params.path?.map(segment).join("/"),
+          level: params.level,
+          limit: params.limit,
+        })
+      }`),
   };
 };
