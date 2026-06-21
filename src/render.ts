@@ -48,35 +48,26 @@ import type {
  * inserted+}. Replacing the elements with plain markers means renderText keeps
  * the deleted side instead of dropping it.
  */
+/** The markers each hidden element becomes: an opening and closing delimiter. */
+const MARKERS: Partial<Record<InlineElement["type"], [string, string]>> = {
+  highlight: ["«", "»"],
+  deletion: ["[-", "-]"],
+  insertion: ["{+", "+}"],
+};
+
 const markInline = (elements: InlineElement[]): InlineElement[] =>
   elements.flatMap((element): InlineElement[] => {
-    if (element.type === "highlight") {
-      return [
-        { type: "plainText", content: "«" },
+    if (!("content" in element && Array.isArray(element.content))) {
+      return [element];
+    }
+    const marker = MARKERS[element.type];
+    return marker === undefined
+      ? [{ ...element, content: markInline(element.content) } as InlineElement]
+      : [
+        { type: "plainText", content: marker[0] },
         ...markInline(element.content),
-        { type: "plainText", content: "»" },
+        { type: "plainText", content: marker[1] },
       ];
-    }
-    if (element.type === "deletion") {
-      return [
-        { type: "plainText", content: "[-" },
-        ...markInline(element.content),
-        { type: "plainText", content: "-]" },
-      ];
-    }
-    if (element.type === "insertion") {
-      return [
-        { type: "plainText", content: "{+" },
-        ...markInline(element.content),
-        { type: "plainText", content: "+}" },
-      ];
-    }
-    if ("content" in element && Array.isArray(element.content)) {
-      return [
-        { ...element, content: markInline(element.content) } as InlineElement,
-      ];
-    }
-    return [element];
   });
 
 const markParagraph = (paragraph: Paragraph): Paragraph => ({

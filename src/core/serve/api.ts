@@ -392,13 +392,12 @@ export const compareSectionResponse = async (
 /* ------------------------------- search ------------------------------ */
 
 /** Resolve the request's `match` level; defaults to tolerant. */
-const parseMatch = (match?: MatchLevel): MatchLevel =>
-  match === "exact" ? "exact" : match === "spelling" ? "spelling" : "form";
+const parseMatch = (match?: MatchLevel): MatchLevel => match ?? "form";
 
 /** The live-text version: the original when asked, else the edited reading text. */
 const parseVersion = (
   version?: "edited" | "original",
-): "edited" | "original" => version === "original" ? "original" : "edited";
+): "edited" | "original" => version ?? "edited";
 
 /**
  * Resolve a count parameter to a whole number: the request value (already
@@ -448,11 +447,7 @@ export const frequencyResponse = (
 ): FrequencyResponse => {
   const q = params.q.trim();
   const filter = editionFilter(params);
-  const groupBy: "author" | "work" | "edition" = params.groupBy === "author"
-    ? "author"
-    : params.groupBy === "edition"
-    ? "edition"
-    : "work";
+  const groupBy = params.groupBy ?? "work";
   const options: SearchOptions = {
     match: parseMatch(params.match),
     caseSensitive: params.caseSensitive ?? false,
@@ -555,8 +550,7 @@ const MAX_KEYWORDS = 500;
 const DEFAULT_KEYWORDS = 50;
 const DEFAULT_MIN_COUNT = 5;
 
-const parseMode = (by?: KeyMode): KeyMode =>
-  by === "exact" ? "exact" : by === "form" ? "form" : "lemma";
+const parseMode = (by?: KeyMode): KeyMode => by ?? "lemma";
 
 const per1000 = (count: number, tokens: number): number =>
   tokens > 0 ? Math.round((count / tokens) * 10000) / 10 : 0;
@@ -754,12 +748,7 @@ const DEFAULT_SIMILAR = 20;
 const parseLevel = (
   level: SimilarLevel | undefined,
   hasPath: boolean,
-): SimilarLevel =>
-  level === "section" || level === "edition" || level === "work"
-    ? level
-    : hasPath
-    ? "section"
-    : "edition";
+): SimilarLevel => level ?? (hasPath ? "section" : "edition");
 
 /**
  * Resolve a similarity/topic target's edition: the named printing, or the work's
@@ -1186,11 +1175,7 @@ export const concordanceResponse = async (
     caseSensitive: params.caseSensitive ?? false,
   };
   const version: Version = parseVersion(params.version);
-  const sort: Sort = params.sort === "left"
-    ? "left"
-    : params.sort === "right"
-    ? "right"
-    : "position";
+  const sort: Sort = params.sort ?? "position";
   const window = clamp(params.window, DEFAULT_CONCORDANCE_WINDOW, MAX_WINDOW);
   const page = clamp(params.page, 1);
   const perPage = clamp(params.perPage, 20, MAX_PER_PAGE);

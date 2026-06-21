@@ -553,6 +553,21 @@ export const createTools = (computer: Computer): ToolSet => {
   const notFound = (what: string): string =>
     `Not found: ${what}. Check the slugs with list_authors, get_author_works, or get_edition.`;
 
+  // Common to the edition-addressing read tools: author, work, optional edition
+  // (with its "canonical" default label for not-found messages), and the version.
+  const readArgs = (input: Record<string, unknown>) => {
+    const author = str(input, "author");
+    const work = str(input, "work");
+    const edition = strOpt(input, "edition");
+    return {
+      author,
+      work,
+      edition,
+      which: edition ?? "canonical",
+      version: enumParam("version", input.version, TEXT_VERSIONS),
+    };
+  };
+
   const handlers: Record<
     string,
     (input: Record<string, unknown>) => Promise<string>
@@ -612,39 +627,22 @@ export const createTools = (computer: Computer): ToolSet => {
       );
     },
     get_edition: async (input) => {
-      const [author, work, edition] = [
-        str(input, "author"),
-        str(input, "work"),
-        strOpt(input, "edition"),
-      ];
-      const version = enumParam("version", input.version, TEXT_VERSIONS);
+      const { author, work, edition, which, version } = readArgs(input);
       const response = await computer.edition(author, work, edition, version);
-      const which = edition ?? "canonical";
       return response === undefined
         ? notFound(`edition ${author}/${work}/${which}`)
         : renderEdition(response);
     },
     get_full_text: async (input) => {
-      const [author, work, edition] = [
-        str(input, "author"),
-        str(input, "work"),
-        strOpt(input, "edition"),
-      ];
-      const version = enumParam("version", input.version, TEXT_VERSIONS);
+      const { author, work, edition, which, version } = readArgs(input);
       const response = await computer.fullText(author, work, edition, version);
-      const which = edition ?? "canonical";
       return response === undefined
         ? notFound(`edition ${author}/${work}/${which}`)
         : renderFullText(response);
     },
     get_section: async (input) => {
-      const [author, work, edition] = [
-        str(input, "author"),
-        str(input, "work"),
-        strOpt(input, "edition"),
-      ];
+      const { author, work, edition, which, version } = readArgs(input);
       const path = strArray(input, "path");
-      const version = enumParam("version", input.version, TEXT_VERSIONS);
       const response = await computer.section(
         author,
         work,
@@ -652,19 +650,13 @@ export const createTools = (computer: Computer): ToolSet => {
         path,
         version,
       );
-      const which = edition ?? "canonical";
       return response === undefined
         ? notFound(`section ${author}/${work}/${which} § ${path.join("/")}`)
         : renderSection(response);
     },
     get_section_full: async (input) => {
-      const [author, work, edition] = [
-        str(input, "author"),
-        str(input, "work"),
-        strOpt(input, "edition"),
-      ];
+      const { author, work, edition, which, version } = readArgs(input);
       const path = strArray(input, "path");
-      const version = enumParam("version", input.version, TEXT_VERSIONS);
       const response = await computer.sectionFullText(
         author,
         work,
@@ -672,7 +664,6 @@ export const createTools = (computer: Computer): ToolSet => {
         path,
         version,
       );
-      const which = edition ?? "canonical";
       return response === undefined
         ? notFound(`section ${author}/${work}/${which} § ${path.join("/")}`)
         : renderSectionFullText(response);

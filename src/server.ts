@@ -167,6 +167,22 @@ const foundIn = <T>(
 const source = (p: URLSearchParams): RawSource => (key) =>
   p.get(key) ?? undefined;
 
+/**
+ * A query-string route: reject unknown params, build the typed params, call the
+ * `Computer` method, and serialize. The shared shape of search, frequency,
+ * concordance, keywords, collocations, similar, topics, and topics/mix.
+ */
+const queryRoute = async <P, R>(
+  p: URLSearchParams,
+  allowed: readonly string[],
+  build: (get: RawSource) => P,
+  run: (params: P) => Promise<R>,
+  render: (value: R) => string,
+): Promise<Response> => {
+  rejectUnknownParams(p, allowed);
+  return respond(p, await run(build(source(p))), render);
+};
+
 /* The exact query parameters each route accepts; anything else is a 400. The
  * three edition-scope knobs (work, edition, editions) recur across the universe
  * routes (see scope.ts), and every route additionally accepts ?format. */
@@ -264,68 +280,76 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
     );
   }
   if (segments[0] === "search" && segments.length === 1) {
-    rejectUnknownParams(p, SEARCH_PARAMS);
-    return respond(
+    return queryRoute(
       p,
-      await computer.search(searchParams(source(p))),
+      SEARCH_PARAMS,
+      searchParams,
+      computer.search,
       renderSearch,
     );
   }
   if (segments[0] === "frequency" && segments.length === 1) {
-    rejectUnknownParams(p, FREQUENCY_PARAMS);
-    return respond(
+    return queryRoute(
       p,
-      await computer.frequency(frequencyParams(source(p))),
+      FREQUENCY_PARAMS,
+      frequencyParams,
+      computer.frequency,
       renderFrequency,
     );
   }
   if (segments[0] === "concordance" && segments.length === 1) {
-    rejectUnknownParams(p, CONCORDANCE_PARAMS);
-    return respond(
+    return queryRoute(
       p,
-      await computer.concordance(concordanceParams(source(p))),
+      CONCORDANCE_PARAMS,
+      concordanceParams,
+      computer.concordance,
       renderConcordance,
     );
   }
   if (segments[0] === "keywords" && segments.length === 1) {
-    rejectUnknownParams(p, KEYWORDS_PARAMS);
-    return respond(
+    return queryRoute(
       p,
-      await computer.keywords(keywordsParams(source(p))),
+      KEYWORDS_PARAMS,
+      keywordsParams,
+      computer.keywords,
       renderKeywords,
     );
   }
   if (segments[0] === "collocations" && segments.length === 1) {
-    rejectUnknownParams(p, COLLOCATIONS_PARAMS);
-    return respond(
+    return queryRoute(
       p,
-      await computer.collocations(collocationsParams(source(p))),
+      COLLOCATIONS_PARAMS,
+      collocationsParams,
+      computer.collocations,
       renderCollocations,
     );
   }
   if (segments[0] === "similar" && segments.length === 1) {
-    rejectUnknownParams(p, SIMILAR_PARAMS);
-    return respond(
+    return queryRoute(
       p,
-      await computer.similar(similarParams(source(p))),
+      SIMILAR_PARAMS,
+      similarParams,
+      computer.similar,
       renderSimilar,
     );
   }
 
   if (segments[0] === "topics") {
     if (segments.length === 1) {
-      rejectUnknownParams(p, TOPICS_PARAMS);
-      return respond(
+      return queryRoute(
         p,
-        await computer.topics(topicsParams(source(p))),
+        TOPICS_PARAMS,
+        topicsParams,
+        computer.topics,
         renderTopics,
       );
     }
     if (segments[1] === "mix" && segments.length === 2) {
-      rejectUnknownParams(p, TOPIC_MIX_PARAMS);
-      return respond(
+      return queryRoute(
         p,
-        await computer.topicMix(topicMixParams(source(p))),
+        TOPIC_MIX_PARAMS,
+        topicMixParams,
+        computer.topicMix,
         renderTopicMix,
       );
     }
