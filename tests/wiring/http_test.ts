@@ -55,6 +55,60 @@ Deno.test("responses are JSON, CORS-open, and cached", async () => {
   await response.body?.cancel();
 });
 
+Deno.test("?format=text returns the rendered plain text the MCP tools serve", async () => {
+  // A search hit, rendered: highlighted phrase and a plain-text content type.
+  const response = await request(
+    "/search?q=liberty of the press&format=text",
+  );
+  assertEquals(response.status, 200);
+  assertEquals(
+    response.headers.get("content-type"),
+    "text/plain; charset=utf-8",
+  );
+  assertEquals(response.headers.get("access-control-allow-origin"), "*");
+  const body = await response.text();
+  assertStringIncludes(body, "«liberty of the press»");
+
+  // A reading route renders too (the canonical edition's header).
+  const edition = await request("/authors/test/tw?format=text");
+  assertStringIncludes(await edition.text(), 'edition "1760"');
+
+  // The catalog's text rendering lists the authors (as list_authors does).
+  const catalog = await request("/catalog?format=text");
+  assertStringIncludes(await catalog.text(), "test —");
+});
+
+Deno.test("?format=text on a missing resource is a plain-text 404", async () => {
+  const response = await request("/authors/test/tw/99?format=text");
+  assertEquals(response.status, 404);
+  assertEquals(
+    response.headers.get("content-type"),
+    "text/plain; charset=utf-8",
+  );
+  assertEquals(await response.text(), "not found");
+});
+
+Deno.test("?format defaults to json and rejects any other value", async () => {
+  // The default is unchanged JSON.
+  const json = await request("/catalog");
+  assertEquals(
+    json.headers.get("content-type"),
+    "application/json; charset=utf-8",
+  );
+  await json.body?.cancel();
+  // format=json is explicit JSON.
+  const explicit = await request("/search?q=virtue&format=json");
+  assertEquals(
+    explicit.headers.get("content-type"),
+    "application/json; charset=utf-8",
+  );
+  await explicit.body?.cancel();
+  // Anything off the list is a 400 naming the param, like every other enum.
+  const bad = await request("/search?q=virtue&format=yaml");
+  assertEquals(bad.status, 400);
+  assertStringIncludes((await bad.json()).error, "format");
+});
+
 Deno.test("search query parameters are parsed and wired through", async () => {
   // match + edition scope reach the computer
   const exact = await getJson<SearchResponse>(

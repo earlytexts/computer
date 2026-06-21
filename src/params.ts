@@ -49,6 +49,8 @@ export const LEVELS = [
 ] as const satisfies readonly SimilarLevel[];
 export const GROUP_BYS = ["author", "work", "edition"] as const;
 export const SORTS = ["position", "left", "right"] as const;
+/** The response serialization every route accepts via ?format (default json). */
+export const FORMATS = ["json", "text"] as const;
 /** search/frequency/concordance/keywords read live text but not the raw markup. */
 export const SEARCH_VERSIONS = [
   "edited",

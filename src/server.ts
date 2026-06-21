@@ -37,6 +37,11 @@
  * (match=form), tightened by match=spelling|exact and/or caseSensitive=1 (see
  * types.ts). Text routes take ?version=edited|original|both (default edited);
  * search and compare take ?version=edited|original (default edited).
+ *
+ * Every route additionally takes ?format=json|text (default json). `text`
+ * returns the compact plain-text rendering of the same result that the MCP tools
+ * serve — render.ts is the one rendering core, so the REST API and the tools
+ * never diverge.
  */
 
 import {
@@ -49,6 +54,7 @@ import { type EditionScopeParams, scopeError } from "./scope.ts";
 import {
   boolParam,
   enumParam,
+  FORMATS,
   GROUP_BYS,
   intParam,
   KEY_MODES,
@@ -60,6 +66,23 @@ import {
   SORTS,
   TEXT_VERSIONS,
 } from "./params.ts";
+import {
+  renderAuthors,
+  renderCollocations,
+  renderCompare,
+  renderCompareSection,
+  renderConcordance,
+  renderEdition,
+  renderFrequency,
+  renderFullText,
+  renderKeywords,
+  renderSearch,
+  renderSection,
+  renderSectionFullText,
+  renderSimilar,
+  renderTopicMix,
+  renderTopics,
+} from "./render.ts";
 import type { Computer, Version } from "./types.ts";
 
 export type Api = {
@@ -93,12 +116,49 @@ const HEADERS = {
   "cache-control": "public, max-age=300",
 };
 
+const TEXT_HEADERS = {
+  "content-type": "text/plain; charset=utf-8",
+  "access-control-allow-origin": "*",
+  "cache-control": "public, max-age=300",
+};
+
 const json = (value: unknown, status = 200): Response =>
   new Response(JSON.stringify(value), { status, headers: HEADERS });
+
+const text = (value: string, status = 200): Response =>
+  new Response(value, { status, headers: TEXT_HEADERS });
 
 const notFound = (): Response => json({ error: "not found" }, 404);
 
 const badRequest = (message: string): Response => json({ error: message }, 400);
+
+/**
+ * Whether the caller asked for plain text (?format=text) rather than the default
+ * JSON. Throws a ParamError (→ 400) on any other value, like the other params.
+ */
+const wantsText = (p: URLSearchParams): boolean =>
+  enumParam("format", p.get("format"), FORMATS) === "text";
+
+/**
+ * Serialize a result either as JSON (the default) or, for ?format=text, as the
+ * plain text the MCP tools also serve — render.ts is the one rendering core, so
+ * the API and the tools never drift. `render` is the matching renderer.
+ */
+const respond = <T>(
+  p: URLSearchParams,
+  value: T,
+  render: (value: T) => string,
+): Response => wantsText(p) ? text(render(value)) : json(value);
+
+/** As `respond`, but a `Computer` read that resolved nothing is a 404. */
+const foundIn = <T>(
+  p: URLSearchParams,
+  value: T | undefined,
+  render: (value: T) => string,
+): Response =>
+  value === undefined
+    ? (wantsText(p) ? text("not found", 404) : notFound())
+    : respond(p, value, render);
 
 /** The shared edition-scope params (work, edition, editions) from the query. */
 const scopeOf = (p: URLSearchParams): EditionScopeParams => ({
@@ -115,8 +175,10 @@ const checkScope = (scope: EditionScopeParams): void => {
 
 /* The exact query parameters each route accepts; anything else is a 400. The
  * three edition-scope knobs (work, edition, editions) recur across the universe
- * routes (see scope.ts). */
+ * routes (see scope.ts), and every route additionally accepts ?format. */
 const SCOPE = ["work", "edition", "editions"] as const;
+/** ?format is universal: it chooses the serialization, not the data. */
+const FORMAT = ["format"] as const;
 const SEARCH_PARAMS = [
   "q",
   "match",
@@ -126,6 +188,7 @@ const SEARCH_PARAMS = [
   "page",
   "perPage",
   ...SCOPE,
+  ...FORMAT,
 ] as const;
 const FREQUENCY_PARAMS = [
   "q",
@@ -135,6 +198,7 @@ const FREQUENCY_PARAMS = [
   "version",
   "author",
   ...SCOPE,
+  ...FORMAT,
 ] as const;
 const CONCORDANCE_PARAMS = [
   "q",
@@ -147,6 +211,7 @@ const CONCORDANCE_PARAMS = [
   "page",
   "perPage",
   ...SCOPE,
+  ...FORMAT,
 ] as const;
 const KEYWORDS_PARAMS = [
   "author",
@@ -155,6 +220,7 @@ const KEYWORDS_PARAMS = [
   "min",
   "limit",
   ...SCOPE,
+  ...FORMAT,
 ] as const;
 const COLLOCATIONS_PARAMS = [
   "q",
@@ -165,6 +231,7 @@ const COLLOCATIONS_PARAMS = [
   "limit",
   "author",
   ...SCOPE,
+  ...FORMAT,
 ] as const;
 const SIMILAR_PARAMS = [
   "author",
@@ -173,15 +240,12 @@ const SIMILAR_PARAMS = [
   "path",
   "level",
   "limit",
+  ...FORMAT,
 ] as const;
-const TOPICS_PARAMS = ["terms", "works"] as const;
+const TOPICS_PARAMS = ["terms", "works", ...FORMAT] as const;
 const TOPIC_MIX_PARAMS = SIMILAR_PARAMS;
-/** The reading and compare routes take only ?version. */
-const VERSION_ONLY = ["version"] as const;
-
-/** Serialize a `Computer` read result: 404 when it resolved nothing. */
-const found = (value: unknown): Response =>
-  value === undefined ? notFound() : json(value);
+/** The reading and compare routes take only ?version (and the universal ?format). */
+const VERSION_ONLY = ["version", ...FORMAT] as const;
 
 const route = async (computer: Computer, url: URL): Promise<Response> => {
   const segments = url.pathname.split("/").map(decodeURIComponent)
@@ -197,13 +261,20 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
     });
   }
   if (segments[0] === "catalog" && segments.length === 1) {
-    return json(await computer.catalog());
+    // The plain-text rendering lists the authors (as the MCP's list_authors
+    // does); the JSON keeps the full nested catalog.
+    return respond(
+      p,
+      await computer.catalog(),
+      (catalog) => renderAuthors(catalog.authors),
+    );
   }
   if (segments[0] === "search" && segments.length === 1) {
     rejectUnknownParams(p, SEARCH_PARAMS);
     const scope = scopeOf(p);
     checkScope(scope);
-    return json(
+    return respond(
+      p,
       await computer.search({
         q: p.get("q") ?? "",
         match: enumParam("match", p.get("match"), MATCH_LEVELS),
@@ -216,13 +287,15 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
         page: intParam("page", p.get("page")),
         perPage: intParam("perPage", p.get("perPage")),
       }),
+      renderSearch,
     );
   }
   if (segments[0] === "frequency" && segments.length === 1) {
     rejectUnknownParams(p, FREQUENCY_PARAMS);
     const scope = scopeOf(p);
     checkScope(scope);
-    return json(
+    return respond(
+      p,
       await computer.frequency({
         q: p.get("q") ?? "",
         groupBy: enumParam("groupBy", p.get("groupBy"), GROUP_BYS),
@@ -234,13 +307,15 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
         edition: scope.edition,
         editions: scope.editions as "canonical" | "all" | undefined,
       }),
+      renderFrequency,
     );
   }
   if (segments[0] === "concordance" && segments.length === 1) {
     rejectUnknownParams(p, CONCORDANCE_PARAMS);
     const scope = scopeOf(p);
     checkScope(scope);
-    return json(
+    return respond(
+      p,
       await computer.concordance({
         q: p.get("q") ?? "",
         window: intParam("window", p.get("window")),
@@ -255,6 +330,7 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
         page: intParam("page", p.get("page")),
         perPage: intParam("perPage", p.get("perPage")),
       }),
+      renderConcordance,
     );
   }
 
@@ -262,7 +338,8 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
     rejectUnknownParams(p, KEYWORDS_PARAMS);
     const scope = scopeOf(p);
     checkScope(scope);
-    return json(
+    return respond(
+      p,
       await computer.keywords({
         author: p.get("author") ?? undefined,
         work: scope.work,
@@ -273,6 +350,7 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
         min: intParam("min", p.get("min")),
         limit: intParam("limit", p.get("limit")),
       }),
+      renderKeywords,
     );
   }
 
@@ -280,7 +358,8 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
     rejectUnknownParams(p, COLLOCATIONS_PARAMS);
     const scope = scopeOf(p);
     checkScope(scope);
-    return json(
+    return respond(
+      p,
       await computer.collocations({
         q: p.get("q") ?? "",
         by: enumParam("by", p.get("by"), KEY_MODES),
@@ -293,13 +372,15 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
         edition: scope.edition,
         editions: scope.editions as "canonical" | "all" | undefined,
       }),
+      renderCollocations,
     );
   }
 
   if (segments[0] === "similar" && segments.length === 1) {
     rejectUnknownParams(p, SIMILAR_PARAMS);
     const path = p.get("path");
-    return json(
+    return respond(
+      p,
       await computer.similar({
         author: p.get("author") ?? undefined,
         work: p.get("work") ?? undefined,
@@ -310,23 +391,27 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
         level: enumParam("level", p.get("level"), LEVELS),
         limit: intParam("limit", p.get("limit")),
       }),
+      renderSimilar,
     );
   }
 
   if (segments[0] === "topics") {
     if (segments.length === 1) {
       rejectUnknownParams(p, TOPICS_PARAMS);
-      return json(
+      return respond(
+        p,
         await computer.topics({
           terms: intParam("terms", p.get("terms")),
           works: intParam("works", p.get("works")),
         }),
+        renderTopics,
       );
     }
     if (segments[1] === "mix" && segments.length === 2) {
       rejectUnknownParams(p, TOPIC_MIX_PARAMS);
       const path = p.get("path");
-      return json(
+      return respond(
+        p,
         await computer.topicMix({
           author: p.get("author") ?? undefined,
           work: p.get("work") ?? undefined,
@@ -337,6 +422,7 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
           level: enumParam("level", p.get("level"), LEVELS),
           limit: intParam("limit", p.get("limit")),
         }),
+        renderTopicMix,
       );
     }
     return notFound();
@@ -356,9 +442,14 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
     if (rest.length < 3) return notFound();
     const [, a, b, ...path] = rest;
     if (path.length === 0) {
-      return found(await computer.compare(author, work, a, b));
+      return foundIn(
+        p,
+        await computer.compare(author, work, a, b),
+        renderCompare,
+      );
     }
-    return found(
+    return foundIn(
+      p,
       await computer.compareSection(
         author,
         work,
@@ -367,6 +458,7 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
         path,
         editedOrOriginal(p),
       ),
+      renderCompareSection,
     );
   }
 
@@ -379,19 +471,24 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
   }
 
   if (rest.length === 0) {
-    return found(
+    return foundIn(
+      p,
       await computer.edition(author, work, edition, textVersion(p)),
+      renderEdition,
     );
   }
   if (rest.length === 1 && rest[0] === "full") {
-    return found(
+    return foundIn(
+      p,
       await computer.fullText(author, work, edition, textVersion(p)),
+      renderFullText,
     );
   }
   // A trailing /full on a section path returns its full text (recursively);
   // the bare-/full work case above has already been handled.
   if (rest[rest.length - 1] === "full") {
-    return found(
+    return foundIn(
+      p,
       await computer.sectionFullText(
         author,
         work,
@@ -399,10 +496,13 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
         rest.slice(0, -1),
         textVersion(p),
       ),
+      renderSectionFullText,
     );
   }
-  return found(
+  return foundIn(
+    p,
     await computer.section(author, work, edition, rest, textVersion(p)),
+    renderSection,
   );
 };
 

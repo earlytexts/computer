@@ -16,9 +16,11 @@ You can ignore every one of those boxes and still use everything here.
 ## How to call it
 
 Every route is a web address you fetch with an ordinary GET request; the answer
-comes back as JSON. The same functions are also available as **MCP tools** (for
-language-model clients) at `/mcp`. Responses are open to any website (CORS) and
-cached for five minutes. A typical call looks like:
+comes back as JSON by default. Add `?format=text` (or `&format=text`) to any
+route to get the same result as compact plain text instead — the same rendering
+the **MCP tools** (for language-model clients, at `/mcp`) return, so a quick
+`curl` reads exactly as the model sees it. Responses are open to any website
+(CORS) and cached for five minutes. A typical call looks like:
 
 ```
 /search?q=natural+religion&author=hume
@@ -49,9 +51,10 @@ A few terms recur across every route:
   `canonical` (one printing per work — the default, and the usual choice) or
   `all` (every printing). Separately, `edition` (a year slug) pins to **one
   specific printing**, and is only meaningful together with a `work` — a bare
-  year would name different, unrelated printings across different works, so it is
-  refused without one. `author` and `work` narrow the scope further. (A year is
-  only a stable name _within_ a work, which is why a specific edition needs one.)
+  year would name different, unrelated printings across different works, so it
+  is refused without one. `author` and `work` narrow the scope further. (A year
+  is only a stable name _within_ a work, which is why a specific edition needs
+  one.)
 - **Version.** Editorial work makes each edition _two_ texts: `edited`, the
   clean reading text (corrections applied), and `original`, the text as actually
   printed (corrections undone). The default is always `edited`. Reading routes

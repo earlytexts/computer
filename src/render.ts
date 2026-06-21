@@ -1,6 +1,8 @@
 /**
- * Render the computer's API responses as compact plain text for the model's
- * tool results. Block content goes through Markit's renderText (the corpus's
+ * Render the computer's API responses as compact plain text. This is the one
+ * rendering core, shared by both surfaces that serve text: the REST API's
+ * ?format=text (server.ts) and the MCP tools' results (tools.ts) — so the two
+ * never drift. Block content goes through Markit's renderText (the corpus's
  * canonical plain-text rendering); everything here is presentation only — no
  * text processing logic lives in the companion.
  */
