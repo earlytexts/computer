@@ -198,7 +198,7 @@ export const createTools = (computer: Computer): ToolSet => {
           author: authorProperty,
           work: workProperty,
           edition: slugProperty(
-            'Limit to one edition (a year slug like "1751"). Omit to count across all editions.',
+            'Limit to one edition (a year slug like "1751"), or "all" for every printing. Omit to count canonical editions only (the default).',
           ),
         },
         required: ["q"],

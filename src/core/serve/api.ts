@@ -527,8 +527,8 @@ const per1000 = (count: number, tokens: number): number =>
  * The target is the author/work named in `params`; the reference is the rest of
  * the edition universe (canonical editions by default, or the `edition` scope) —
  * so every unit is partitioned into target, reference, or out of scope, and
- * `keyness` scores the difference. With no author or work there is no target, so
- * the result is empty (as an empty query is for the search family).
+ * `keyness` scores the difference. With no author there is no target, so the
+ * result is empty (as an empty query is for the search family).
  */
 export const keywordsResponse = (
   artefacts: ServeArtefacts,
@@ -555,8 +555,8 @@ export const keywordsResponse = (
     total: 0,
     results: [],
   };
-  // No target scope, no keywords (a target needs at least an author or a work).
-  if (params.author === undefined && params.work === undefined) return empty;
+  // No target, no keywords (a target is an author, optionally narrowed to a work).
+  if (params.author === undefined) return empty;
 
   const { manifest, units } = artefacts;
   // Classify each edition once (target / reference / out), then label its units.

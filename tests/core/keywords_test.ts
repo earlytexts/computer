@@ -80,13 +80,17 @@ Deno.test("by=surface keeps spellings apart that lemma unites", async () => {
   }
 });
 
-Deno.test("no target (no author or work) yields no keywords", async () => {
+Deno.test("no target (no author) yields no keywords", async () => {
   const computer = await testComputer();
-  const response = await computer.keywords({});
-  assertEquals(response.total, 0);
-  assertEquals(response.results.length, 0);
-  assertEquals(response.targetTokens, 0);
-  assertEquals(response.referenceTokens, 0);
+  // The target is an author, optionally narrowed to a work: no author, no
+  // target — and a bare work (no author) is not a target either.
+  for (const params of [{}, { work: "tw" }]) {
+    const response = await computer.keywords(params);
+    assertEquals(response.total, 0);
+    assertEquals(response.results.length, 0);
+    assertEquals(response.targetTokens, 0);
+    assertEquals(response.referenceTokens, 0);
+  }
 });
 
 Deno.test("relative rates are per 1000 tokens, to one decimal", async () => {

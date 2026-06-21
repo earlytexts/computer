@@ -8,12 +8,12 @@
  * Routes (all GET):
  *   /                                                          health/info
  *   /catalog                                                   all authors, works, and editions
- *   /authors/:author/works/:work                               canonical edition: title blocks + section tree
- *   /authors/:author/works/:work/full                          canonical edition with text
- *   /authors/:author/works/:work/sections/*                    one canonical-edition section + navigation
- *   /authors/:author/works/:work/editions/:edition[/full|/sections/*]  a specific edition
- *   /authors/:author/works/:work/compare/:a/:b                 aligned section lists
- *   /authors/:author/works/:work/compare/:a/:b/sections/*      diff of a section (Markit)
+ *   /authors/:author/:work                                     canonical edition: title blocks + section tree
+ *   /authors/:author/:work/full                                canonical edition with text
+ *   /authors/:author/:work/*                                   one canonical-edition section + navigation
+ *   /authors/:author/:work/:edition[/full|/*]                  a specific edition (its index, full text, or a section)
+ *   /authors/:author/:work/compare/:a/:b                       aligned section lists
+ *   /authors/:author/:work/compare/:a/:b/*                     diff of a section (Markit)
  *   /search?q=&match=&caseSensitive=&version=&author=&work=&edition=&page=&perPage=  full-text search
  *   /frequency?q=&by=author|work|edition&match=&caseSensitive=&version=&author=&work=&edition=  term/phrase frequency
  *   /concordance?q=&context=&sort=position|left|right&match=&caseSensitive=&version=&author=&work=&edition=&page=&perPage=  keyword-in-context lines
@@ -23,9 +23,11 @@
  *   /topics?terms=&works=                                       the corpus topic model: each topic's top terms and prominent works
  *   /topics/mix?author=&work=&edition=&path=&level=section|edition|work&limit=  a target's topic mix ("what this work is about")
  *
- * A request without `/editions/:edition` addresses the work's canonical
- * edition. Search with no `edition` is scoped to canonical editions;
- * `edition=all` searches every edition.
+ * After the work, a year-shaped segment (four digits, optional letter, e.g.
+ * `1772` or `1742a`) names a specific edition; without one the path addresses
+ * the work's canonical edition. Everything else is a section path. Search with
+ * no `edition` is scoped to canonical editions; `edition=all` searches every
+ * edition.
  *
  * Search matches the whole query as one phrase; it is tolerant by default
  * (match=form), tightened by match=spelling|exact and/or caseSensitive=1 (see
@@ -72,6 +74,14 @@ const editedOrOriginal = (url: URL): "edited" | "original" =>
 /** A boolean query flag: "1" or "true" (case-insensitive) is on. */
 const flag = (value: string | null): boolean =>
   value === "1" || value?.toLowerCase() === "true";
+
+/**
+ * A year-shaped path segment names an edition (four digits, optional printing
+ * letter: `1772`, `1742a`). No section slug ever takes this shape — section
+ * slugs are the last dotted segment of a section id (`Hume.THN.1.2` → `2`), so
+ * a bare year cannot occur — which is what lets one segment carry either.
+ */
+const EDITION_RE = /^\d{4}[a-z]?$/;
 
 const HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -232,86 +242,65 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
     return notFound();
   }
 
-  if (
-    segments[0] !== "authors" || segments[2] !== "works" || segments.length < 4
-  ) return notFound();
+  if (segments[0] !== "authors" || segments.length < 3) return notFound();
   const author = segments[1];
-  const work = segments[3];
+  const work = segments[2];
+  let rest = segments.slice(3);
 
-  if (segments[4] !== "compare") {
-    // An explicit `/editions/:slug/...` names the edition; otherwise the path
-    // addresses the work's canonical edition (resolved by the computer).
-    let edition: string | undefined;
-    let rest: string[];
-    if (segments[4] === "editions") {
-      if (segments[5] === undefined) return notFound();
-      edition = segments[5];
-      rest = segments.slice(6);
-    } else {
-      edition = undefined;
-      rest = segments.slice(4);
-    }
-    if (rest.length === 0) {
-      return found(
-        await computer.edition(author, work, edition, textVersion(url)),
-      );
-    }
-    if (rest.length === 1 && rest[0] === "full") {
-      return found(
-        await computer.fullText(author, work, edition, textVersion(url)),
-      );
-    }
-    if (rest[0] === "sections" && rest.length > 1) {
-      const sectionPath = rest.slice(1);
-      // A trailing /full on a section path returns its full text (recursively).
-      if (
-        sectionPath.length > 1 &&
-        sectionPath[sectionPath.length - 1] === "full"
-      ) {
-        return found(
-          await computer.sectionFullText(
-            author,
-            work,
-            edition,
-            sectionPath.slice(0, -1),
-            textVersion(url),
-          ),
-        );
-      }
-      return found(
-        await computer.section(
-          author,
-          work,
-          edition,
-          sectionPath,
-          textVersion(url),
-        ),
-      );
-    }
-    return notFound();
-  }
-
-  if (segments[4] === "compare" && segments.length >= 7) {
-    const [a, b, ...rest] = segments.slice(5);
-    if (rest.length === 0) {
+  // Comparing two editions of the work: /compare/:a/:b[/:section...]. Any
+  // segments past the two edition slugs are the section path being diffed.
+  if (rest[0] === "compare") {
+    if (rest.length < 3) return notFound();
+    const [, a, b, ...path] = rest;
+    if (path.length === 0) {
       return found(await computer.compare(author, work, a, b));
     }
-    if (rest[0] === "sections" && rest.length > 1) {
-      return found(
-        await computer.compareSection(
-          author,
-          work,
-          a,
-          b,
-          rest.slice(1),
-          editedOrOriginal(url),
-        ),
-      );
-    }
-    return notFound();
+    return found(
+      await computer.compareSection(
+        author,
+        work,
+        a,
+        b,
+        path,
+        editedOrOriginal(url),
+      ),
+    );
   }
 
-  return notFound();
+  // A leading year-shaped segment names the edition; otherwise the path
+  // addresses the work's canonical edition (resolved by the computer).
+  let edition: string | undefined;
+  if (rest[0] !== undefined && EDITION_RE.test(rest[0])) {
+    edition = rest[0];
+    rest = rest.slice(1);
+  }
+
+  if (rest.length === 0) {
+    return found(
+      await computer.edition(author, work, edition, textVersion(url)),
+    );
+  }
+  if (rest.length === 1 && rest[0] === "full") {
+    return found(
+      await computer.fullText(author, work, edition, textVersion(url)),
+    );
+  }
+  // A trailing /full on a section path returns its full text (recursively);
+  // the bare-/full work case above has already been handled.
+  if (rest[rest.length - 1] === "full") {
+    return found(
+      await computer.sectionFullText(
+        author,
+        work,
+        edition,
+        rest.slice(0, -1),
+        textVersion(url),
+      ),
+    );
+  }
+  return found(
+    await computer.section(author, work, edition, rest, textVersion(url)),
+  );
 };
 
 export const createHandler = (api: Api) => {

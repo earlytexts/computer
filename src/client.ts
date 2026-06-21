@@ -70,12 +70,14 @@ export const computerClient = (
     return value;
   };
 
-  const works = (author: string) => `/authors/${segment(author)}/works`;
-  // The work's canonical edition (no `/editions/:slug`) when edition is omitted.
+  const workBase = (author: string, work: string) =>
+    `/authors/${segment(author)}/${segment(work)}`;
+  // A year-shaped segment names the edition; omitting it addresses the work's
+  // canonical edition (resolved by the computer).
   const editionBase = (author: string, work: string, edition?: string) =>
     edition === undefined
-      ? `${works(author)}/${segment(work)}`
-      : `${works(author)}/${segment(work)}/editions/${segment(edition)}`;
+      ? workBase(author, work)
+      : `${workBase(author, work)}/${segment(edition)}`;
   return {
     catalog: async () => {
       const cached = catalogCache.get(baseUrl);
@@ -92,27 +94,23 @@ export const computerClient = (
       get(withVersion(`${editionBase(author, work, edition)}/full`, version)),
     section: (author, work, edition, path, version) =>
       get(withVersion(
-        `${editionBase(author, work, edition)}/sections/${
-          path.map(segment).join("/")
-        }`,
+        `${editionBase(author, work, edition)}/${path.map(segment).join("/")}`,
         version,
       )),
     sectionFullText: (author, work, edition, path, version) =>
       get(withVersion(
-        `${editionBase(author, work, edition)}/sections/${
+        `${editionBase(author, work, edition)}/${
           path.map(segment).join("/")
         }/full`,
         version,
       )),
     compare: (author, work, a, b) =>
-      get(
-        `${works(author)}/${segment(work)}/compare/${segment(a)}/${segment(b)}`,
-      ),
+      get(`${workBase(author, work)}/compare/${segment(a)}/${segment(b)}`),
     compareSection: (author, work, a, b, path, version) =>
       get(withVersion(
-        `${works(author)}/${segment(work)}/compare/${segment(a)}/${
-          segment(b)
-        }/sections/${path.map(segment).join("/")}`,
+        `${workBase(author, work)}/compare/${segment(a)}/${segment(b)}/${
+          path.map(segment).join("/")
+        }`,
         version,
       )),
     search: (params) => {

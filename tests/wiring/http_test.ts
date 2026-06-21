@@ -164,15 +164,15 @@ Deno.test("unknown resources return JSON 404s", async () => {
   for (
     const path of [
       "/nope",
-      "/works/tw", // old route shape (no authors prefix)
-      "/authors/nope/works/tw",
-      "/authors/test/works/nope",
-      "/authors/other/works/tw", // wrong author
-      "/authors/test/works/tw/editions/main", // "main" is not exposed
-      "/authors/test/works/tw/editions/1234",
-      "/authors/test/works/tw/sections/99",
-      "/authors/test/works/tw/compare/1750/1750", // an edition with itself
-      "/authors/test/works/tw/compare/1750/1760/sections/99",
+      "/authors/test/works/tw", // old route shape (connector words gone)
+      "/authors", // no work
+      "/authors/nope/tw",
+      "/authors/test/nope",
+      "/authors/other/tw", // wrong author
+      "/authors/test/tw/1234", // not a real edition (year-shaped though)
+      "/authors/test/tw/99", // not a real section
+      "/authors/test/tw/compare/1750/1750", // an edition with itself
+      "/authors/test/tw/compare/1750/1760/99", // no such section to diff
     ]
   ) {
     const response = await request(path);
