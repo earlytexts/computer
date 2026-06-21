@@ -6,7 +6,7 @@
  * query like match=exact is used only to prove the parameter is wired through.
  */
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { type Api, createHandler } from "../../src/server.ts";
 import { testComputer } from "../helpers.ts";
 import type {
@@ -58,7 +58,7 @@ Deno.test("responses are JSON, CORS-open, and cached", async () => {
 Deno.test("search query parameters are parsed and wired through", async () => {
   // match + edition scope reach the computer
   const exact = await getJson<SearchResponse>(
-    "/search?q=encrease&match=exact&edition=all",
+    "/search?q=encrease&match=exact&editions=all",
   );
   assertEquals(exact.match, "exact");
   assertEquals(exact.total, 1);
@@ -72,18 +72,103 @@ Deno.test("search query parameters are parsed and wired through", async () => {
   );
   // page + perPage are parsed
   const paged = await getJson<SearchResponse>(
-    "/search?q=paragraph&edition=all&perPage=1&page=2",
+    "/search?q=paragraph&editions=all&perPage=1&page=2",
   );
   assertEquals(paged.page, 2);
   assertEquals(paged.results.length, 1);
   assert(paged.pages > 1);
 });
 
+Deno.test("incoherent edition scope is a 400 on the universe routes", async () => {
+  // A bare year with no work, and the two scope params combined, are rejected.
+  for (
+    const path of [
+      "/search?q=virtue&edition=1751",
+      "/frequency?q=virtue&edition=1751",
+      "/concordance?q=virtue&edition=1751",
+      "/keywords?author=test&edition=1751&editions=all",
+      "/collocations?q=liberty&author=test&work=tw&edition=1760&editions=all",
+    ]
+  ) {
+    const response = await request(path);
+    assertEquals(response.status, 400, path);
+    const body = await response.json() as { error: string };
+    assert(body.error.length > 0, path);
+  }
+  // The coherent forms still resolve.
+  assertEquals(
+    (await request("/search?q=virtue&work=tw&author=test&edition=1760")).status,
+    200,
+  );
+  assertEquals((await request("/search?q=virtue&editions=all")).status, 200);
+});
+
+Deno.test("malformed parameter values are a 400, not a silent default", async () => {
+  // Each case names a param whose value the route used to coerce to a default.
+  const cases: [string, string][] = [
+    ["/search?q=virtue&match=fuzzy", "match"], // enum off the list
+    ["/search?q=virtue&version=modern", "version"], // bad version
+    ["/search?q=virtue&caseSensitive=yes", "caseSensitive"], // non-truth word
+    ["/search?q=virtue&page=abc", "page"], // non-numeric
+    ["/search?q=virtue&page=0", "page"], // below the floor
+    ["/search?q=virtue&perPage=-5", "perPage"], // negative
+    ["/search?q=virtue&perPage=1.5", "perPage"], // fractional
+    ["/frequency?q=virtue&groupBy=year", "groupBy"], // bad enum
+    ["/concordance?q=virtue&sort=middle", "sort"], // bad enum
+    ["/keywords?author=test&by=stem", "by"], // bad enum
+    ["/similar?author=test&work=tw&level=chapter", "level"], // bad enum
+    ["/authors/test/tw?version=garbage", "version"], // bad version on a text route
+  ];
+  for (const [path, param] of cases) {
+    const response = await request(path);
+    assertEquals(response.status, 400, path);
+    const body = await response.json() as { error: string };
+    assertStringIncludes(body.error, param);
+  }
+});
+
+Deno.test("an over-max count is clamped, not rejected", async () => {
+  // perPage above the cap is a well-defined behaviour the interface keeps.
+  const response = await request("/search?q=virtue&perPage=99999");
+  assertEquals(response.status, 200);
+  await response.body?.cancel();
+});
+
+Deno.test("an unknown query parameter is a 400 (a typo is not silently ignored)", async () => {
+  for (
+    const path of [
+      "/search?q=virtue&cassSensitive=1", // misspelled caseSensitive
+      "/keywords?author=test&limet=5", // misspelled limit
+      "/authors/test/tw?versoin=original", // misspelled version on a text route
+    ]
+  ) {
+    const response = await request(path);
+    assertEquals(response.status, 400, path);
+    const body = await response.json() as { error: string };
+    assertStringIncludes(body.error, "unknown query parameter");
+  }
+  // A known parameter on the same routes still resolves.
+  assertEquals((await request("/search?q=virtue&caseSensitive=1")).status, 200);
+});
+
+Deno.test("keywords and collocations echo the resolved editions universe", async () => {
+  const canonical = await getJson<KeywordsResponse>(
+    "/keywords?author=test&work=tw&min=1",
+  );
+  assertEquals(canonical.editions, "canonical");
+  assertEquals(canonical.edition, null);
+  const all = await getJson<CollocationsResponse>(
+    "/collocations?q=liberty&editions=all&min=1",
+  );
+  assertEquals(all.editions, "all");
+  assertEquals(all.edition, null);
+});
+
 Deno.test("keywords query parameters are parsed and wired through", async () => {
   const response = await getJson<KeywordsResponse>(
-    "/keywords?author=test&work=tw&by=surface&min=1&limit=5",
+    "/keywords?author=test&work=tw&by=exact&min=1&limit=5",
   );
-  assertEquals(response.by, "surface");
+  assertEquals(response.by, "exact");
   assertEquals(response.author, "test");
   assertEquals(response.work, "tw");
   assert(response.results.length <= 5);
@@ -92,10 +177,10 @@ Deno.test("keywords query parameters are parsed and wired through", async () => 
 
 Deno.test("collocations query parameters are parsed and wired through", async () => {
   const response = await getJson<CollocationsResponse>(
-    "/collocations?q=liberty&author=test&work=tw&by=surface&window=3&min=1&limit=5",
+    "/collocations?q=liberty&author=test&work=tw&by=exact&window=3&min=1&limit=5",
   );
   assertEquals(response.q, "liberty");
-  assertEquals(response.by, "surface");
+  assertEquals(response.by, "exact");
   assertEquals(response.match, "form");
   assertEquals(response.window, 3);
   assertEquals(response.author, "test");

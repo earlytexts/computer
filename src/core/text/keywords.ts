@@ -25,7 +25,7 @@
  *
  * Terms are grouped at one of three levels (the `mode`): the citation-form LEMMA
  * (default — "causes"/"caused" → "cause"), the inflection FORM bucket, or the
- * SURFACE spelling as written. Counting is over the same index search uses, so
+ * EXACT spelling as written. Counting is over the same index search uses, so
  * the `version` handling (edited primary, original via the overlay) matches.
  */
 
@@ -33,7 +33,7 @@ import type { Postings, ServeArtefacts } from "../artefacts.ts";
 import type { Version } from "../../types.ts";
 
 /** Which type level terms are grouped and reported at. */
-export type KeyMode = "lemma" | "form" | "surface";
+export type KeyMode = "lemma" | "form" | "exact";
 
 export type KeynessOptions = {
   /** Term grouping level (default "lemma"). */
@@ -75,9 +75,9 @@ export const REFERENCE = 2;
 
 /**
  * Map each surface id to the group it counts under, with the labels for those
- * groups. For `surface` the grouping is the identity over the vocabulary; for
- * `form` it is the precomputed form bucket; for `lemma` it is the citation-form
- * string, interned here into dense group ids.
+ * groups. For `exact` the grouping is the identity over the vocabulary (one
+ * group per spelling as written); for `form` it is the precomputed form bucket;
+ * for `lemma` it is the citation-form string, interned here into dense group ids.
  */
 export const grouping = (
   artefacts: ServeArtefacts,
@@ -85,7 +85,7 @@ export const grouping = (
 ): { groupOf: Int32Array; labels: string[] } => {
   const { vocab } = artefacts;
   const surfaces = vocab.surfaces.length;
-  if (mode === "surface") {
+  if (mode === "exact") {
     const groupOf = new Int32Array(surfaces);
     for (let id = 0; id < surfaces; id++) groupOf[id] = id;
     return { groupOf, labels: vocab.surfaces };

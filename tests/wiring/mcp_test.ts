@@ -52,7 +52,7 @@ Deno.test("lists every tool with a name, description, and object schema", async 
   const { client, close } = await connect();
   try {
     const { tools } = await client.listTools();
-    assertEquals(tools.length, 14);
+    assertEquals(tools.length, 16);
     assertEquals(
       tools.map((t: { name: string }) => t.name).sort(),
       [
@@ -63,7 +63,9 @@ Deno.test("lists every tool with a name, description, and object schema", async 
         "frequency",
         "get_author_works",
         "get_edition",
+        "get_full_text",
         "get_section",
+        "get_section_full",
         "keywords",
         "list_authors",
         "search",
@@ -78,6 +80,56 @@ Deno.test("lists every tool with a name, description, and object schema", async 
     }
     const search = tools.find((t: { name: string }) => t.name === "search")!;
     assertEquals(search.inputSchema.required, ["q"]);
+  } finally {
+    await close();
+  }
+});
+
+Deno.test("tool schemas mirror the Computer interface's params", async () => {
+  const { client, close } = await connect();
+  try {
+    const { tools } = await client.listTools();
+    const props = (name: string): Record<string, { enum?: string[] }> => {
+      const tool = tools.find((t: { name: string }) => t.name === name)!;
+      return (tool.inputSchema.properties ?? {}) as Record<
+        string,
+        { enum?: string[] }
+      >;
+    };
+
+    // version is exposed wherever the corresponding Computer method accepts it,
+    // with edited|original on the search/compare family and the extra "both" on
+    // the reading routes — and is absent where the param type has none.
+    for (const name of ["search", "frequency", "concordance", "keywords"]) {
+      assertEquals(props(name).version?.enum, ["edited", "original"], name);
+    }
+    assertEquals(props("compare_section").version?.enum, [
+      "edited",
+      "original",
+    ]);
+    for (const name of ["get_edition", "get_section"]) {
+      assertEquals(
+        props(name).version?.enum,
+        ["edited", "original", "both"],
+        name,
+      );
+    }
+    for (
+      const name of [
+        "collocations",
+        "similar",
+        "topics",
+        "topic_mix",
+        "compare_editions",
+      ]
+    ) {
+      assertEquals(props(name).version, undefined, name);
+    }
+
+    // perPage rides alongside page on the paged search routes.
+    for (const name of ["search", "concordance"]) {
+      assert(props(name).perPage !== undefined, name);
+    }
   } finally {
     await close();
   }
@@ -144,6 +196,32 @@ Deno.test("get_section renders a section and reports not-found paths", async () 
   }
 });
 
+Deno.test("get_full_text and get_section_full load whole subtrees", async () => {
+  const { client, close } = await connect();
+  try {
+    const full = await call(client, "get_full_text", {
+      author: "test",
+      work: "tw",
+    });
+    assertStringIncludes(full.text, 'edition "1760"');
+    assertStringIncludes(full.text, "§ 1"); // a section body, not just a TOC line
+    const subtree = await call(client, "get_section_full", {
+      author: "test",
+      work: "tw",
+      path: ["1"],
+    });
+    assertStringIncludes(subtree.text, "§ 1");
+    const missing = await call(client, "get_section_full", {
+      author: "test",
+      work: "tw",
+      path: ["99"],
+    });
+    assertStringIncludes(missing.text, "Not found: section test/tw/canonical");
+  } finally {
+    await close();
+  }
+});
+
 Deno.test("search renders highlighted hits, and match maps through", async () => {
   const { client, close } = await connect();
   try {
@@ -154,7 +232,7 @@ Deno.test("search renders highlighted hits, and match maps through", async () =>
     assertStringIncludes(tolerant.text, "tolerant"); // the default match level
     const exact = await call(client, "search", {
       q: "encrease",
-      edition: "all",
+      editions: "all",
       match: "exact",
     });
     assertStringIncludes(exact.text, "exact spelling");
@@ -169,7 +247,7 @@ Deno.test("frequency renders grouped counts", async () => {
   try {
     const { text } = await call(client, "frequency", {
       q: "liberty",
-      by: "work",
+      groupBy: "work",
     });
     assertStringIncludes(text, "grouped by work");
     assertStringIncludes(text, "per 1000");
@@ -183,7 +261,7 @@ Deno.test("concordance renders keyword-in-context lines", async () => {
   try {
     const { text } = await call(client, "concordance", {
       q: "liberty",
-      edition: "all",
+      editions: "all",
     });
     assertStringIncludes(text, "«liberty»");
     assertStringIncludes(text, "in context");
@@ -299,9 +377,46 @@ Deno.test("bad arguments and unknown tools come back as tool errors", async () =
       'missing required string array argument "path"',
     );
 
+    // A specific edition with no work is the incoherent scope case.
+    const badScope = await call(client, "search", {
+      q: "virtue",
+      edition: "1751",
+    });
+    assert(badScope.isError);
+    assertStringIncludes(badScope.text, "edition");
+
     const unknown = await call(client, "nonsense");
     assert(unknown.isError);
     assertStringIncludes(unknown.text, 'unknown tool "nonsense"');
+  } finally {
+    await close();
+  }
+});
+
+Deno.test("malformed argument values are tool errors, not silent defaults", async () => {
+  const { client, close } = await connect();
+  try {
+    const badEnum = await call(client, "search", {
+      q: "virtue",
+      match: "fuzzy",
+    });
+    assert(badEnum.isError);
+    assertStringIncludes(badEnum.text, "match");
+
+    const badInt = await call(client, "search", { q: "virtue", page: 1.5 });
+    assert(badInt.isError);
+    assertStringIncludes(badInt.text, "page");
+
+    const belowFloor = await call(client, "search", {
+      q: "virtue",
+      perPage: 0,
+    });
+    assert(belowFloor.isError);
+    assertStringIncludes(belowFloor.text, "perPage");
+
+    const unknownArg = await call(client, "search", { q: "virtue", limt: 5 });
+    assert(unknownArg.isError);
+    assertStringIncludes(unknownArg.text, 'unknown argument "limt"');
   } finally {
     await close();
   }

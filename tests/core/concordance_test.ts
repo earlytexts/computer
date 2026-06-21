@@ -10,10 +10,10 @@ Deno.test("concordance returns one keyword-in-context line per occurrence", asyn
   const computer = await testComputer();
   const conc = await computer.concordance({
     q: "liberty",
-    context: 3,
-    edition: "all",
+    window: 3,
+    editions: "all",
   });
-  assertEquals(conc.context, 3);
+  assertEquals(conc.window, 3);
   assertEquals(conc.sort, "position"); // default order
   assert(conc.total > 0);
   assertEquals(conc.lines.length, conc.total);
@@ -28,12 +28,12 @@ Deno.test("the sort order is honoured", async () => {
   const computer = await testComputer();
   const byPosition = await computer.concordance({
     q: "liberty",
-    edition: "all",
+    editions: "all",
   });
   const byLeft = await computer.concordance({
     q: "liberty",
     sort: "left",
-    edition: "all",
+    editions: "all",
   });
   assertEquals(byLeft.sort, "left");
   assertEquals(byLeft.total, byPosition.total);

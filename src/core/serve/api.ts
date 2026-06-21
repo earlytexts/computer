@@ -52,6 +52,7 @@ import {
   type TokenStore,
   type TopicsStore,
 } from "./store.ts";
+import { editionFilter, resolveEditions } from "../../scope.ts";
 import type {
   AlignedRow,
   CatalogResponse,
@@ -403,9 +404,10 @@ export const frequencyResponse = (
   params: FrequencyParams,
 ): FrequencyResponse => {
   const q = params.q.trim();
-  const by: "author" | "work" | "edition" = params.by === "author"
+  const filter = editionFilter(params);
+  const groupBy: "author" | "work" | "edition" = params.groupBy === "author"
     ? "author"
-    : params.by === "edition"
+    : params.groupBy === "edition"
     ? "edition"
     : "work";
   const options: SearchOptions = {
@@ -418,7 +420,7 @@ export const frequencyResponse = (
   const hits = q === "" ? [] : search(
     artefacts,
     q,
-    { author: params.author, work: params.work, edition: params.edition },
+    { author: params.author, work: params.work, edition: filter },
     options,
     version,
   );
@@ -444,9 +446,9 @@ export const frequencyResponse = (
   const groups = new Map<string, GroupData>();
 
   const groupKey = (author: string, work: string, edition: string): string =>
-    by === "author"
+    groupBy === "author"
       ? author
-      : by === "edition"
+      : groupBy === "edition"
       ? `${author}/${work}/${edition}`
       : `${author}/${work}`;
 
@@ -455,9 +457,9 @@ export const frequencyResponse = (
     const ref = manifest.editions[units.edition[hit.unitIndex]];
     const key = groupKey(ref.author, ref.work, ref.edition);
     if (!groups.has(key)) {
-      const label = by === "author"
+      const label = groupBy === "author"
         ? ref.authorName
-        : by === "edition"
+        : groupBy === "edition"
         ? `${ref.workBreadcrumb} (${ref.edition})`
         : ref.workBreadcrumb;
       groups.set(key, {
@@ -466,7 +468,7 @@ export const frequencyResponse = (
         label,
         author: ref.author,
         work: ref.work,
-        edition: by === "edition" ? ref.edition : null,
+        edition: groupBy === "edition" ? ref.edition : null,
       });
     }
     groups.get(key)!.count += Math.round(hit.positions.length / phraseLength);
@@ -478,9 +480,9 @@ export const frequencyResponse = (
     const ref = manifest.editions[i];
     if (params.author !== undefined && ref.author !== params.author) continue;
     if (params.work !== undefined && ref.work !== params.work) continue;
-    if (params.edition === undefined) {
+    if (filter === undefined) {
       if (!ref.canonical) continue;
-    } else if (params.edition !== "all" && ref.edition !== params.edition) {
+    } else if (filter !== "all" && ref.edition !== filter) {
       continue;
     }
     const key = groupKey(ref.author, ref.work, ref.edition);
@@ -504,7 +506,7 @@ export const frequencyResponse = (
 
   return {
     q,
-    by,
+    groupBy,
     total: results.reduce((s, r) => s + r.count, 0),
     results,
   };
@@ -517,7 +519,7 @@ const DEFAULT_KEYWORDS = 50;
 const DEFAULT_MIN_COUNT = 5;
 
 const parseMode = (by?: KeyMode): KeyMode =>
-  by === "surface" ? "surface" : by === "form" ? "form" : "lemma";
+  by === "exact" ? "exact" : by === "form" ? "form" : "lemma";
 
 const per1000 = (count: number, tokens: number): number =>
   tokens > 0 ? Math.round((count / tokens) * 10000) / 10 : 0;
@@ -543,13 +545,14 @@ export const keywordsResponse = (
     MAX_KEYWORDS,
     Math.max(1, Math.floor(params.limit ?? DEFAULT_KEYWORDS)),
   );
-  const editionScope = params.edition;
+  const editionScope = editionFilter(params);
   const empty: KeywordsResponse = {
     by: mode,
     version,
     author: params.author ?? null,
     work: params.work ?? null,
-    edition: editionScope ?? null,
+    editions: resolveEditions(params),
+    edition: params.edition ?? null,
     targetTokens: 0,
     referenceTokens: 0,
     total: 0,
@@ -582,7 +585,8 @@ export const keywordsResponse = (
     version,
     author: params.author ?? null,
     work: params.work ?? null,
-    edition: editionScope ?? null,
+    editions: resolveEditions(params),
+    edition: params.edition ?? null,
     targetTokens: result.targetTokens,
     referenceTokens: result.referenceTokens,
     total: result.rows.length,
@@ -635,7 +639,7 @@ export const collocationsResponse = async (
     MAX_COLLOCATIONS,
     Math.max(1, Math.floor(params.limit ?? DEFAULT_COLLOCATIONS)),
   );
-  const editionScope = params.edition;
+  const editionScope = editionFilter(params);
   const empty: CollocationsResponse = {
     q,
     by: mode,
@@ -643,7 +647,8 @@ export const collocationsResponse = async (
     window,
     author: params.author ?? null,
     work: params.work ?? null,
-    edition: editionScope ?? null,
+    editions: resolveEditions(params),
+    edition: params.edition ?? null,
     scopeTokens: 0,
     nodeCount: 0,
     windowTokens: 0,
@@ -712,7 +717,8 @@ export const collocationsResponse = async (
     window,
     author: params.author ?? null,
     work: params.work ?? null,
-    edition: editionScope ?? null,
+    editions: resolveEditions(params),
+    edition: params.edition ?? null,
     scopeTokens: result.scopeTokens,
     nodeCount: result.nodeCount,
     windowTokens: result.windowTokens,
@@ -1085,7 +1091,7 @@ export const searchResponse = async (
     {
       author: params.author,
       work: params.work,
-      edition: params.edition,
+      edition: editionFilter(params),
     },
     options,
     version,
@@ -1126,8 +1132,9 @@ export const searchResponse = async (
 
 /* ---------------------------- concordance ---------------------------- */
 
-const DEFAULT_CONTEXT = 6;
-const MAX_CONTEXT = 25;
+// The concordance context window defaults wider than the collocation window
+// (more context aids reading; MAX_WINDOW, the ±25 cap, is shared with it).
+const DEFAULT_CONCORDANCE_WINDOW = 6;
 
 /**
  * Keyword-in-context lines for a phrase: one line per occurrence (not per
@@ -1155,9 +1162,9 @@ export const concordanceResponse = async (
     : params.sort === "right"
     ? "right"
     : "position";
-  const context = Math.min(
-    MAX_CONTEXT,
-    Math.max(1, Math.floor(params.context ?? DEFAULT_CONTEXT)),
+  const window = Math.min(
+    MAX_WINDOW,
+    Math.max(1, Math.floor(params.window ?? DEFAULT_CONCORDANCE_WINDOW)),
   );
   const page = Math.max(1, Math.floor(params.page ?? 1));
   const perPage = Math.min(
@@ -1168,7 +1175,11 @@ export const concordanceResponse = async (
   const hits = q === "" ? [] : search(
     artefacts,
     q,
-    { author: params.author, work: params.work, edition: params.edition },
+    {
+      author: params.author,
+      work: params.work,
+      edition: editionFilter(params),
+    },
     options,
     version,
   );
@@ -1190,7 +1201,7 @@ export const concordanceResponse = async (
     const ref = manifest.editions[units.edition[hit.unitIndex]];
     const sectionPath = units.sectionPath[hit.unitIndex];
     for (const start of occurrences(hit.positions, phraseLen)) {
-      const parts = lineParts(text, spans, start, phraseLen, context);
+      const parts = lineParts(text, spans, start, phraseLen, window);
       built.push({
         author: ref.author,
         authorName: ref.authorName,
@@ -1221,7 +1232,7 @@ export const concordanceResponse = async (
   );
   return {
     q,
-    context,
+    window,
     sort,
     match: options.match,
     caseSensitive: options.caseSensitive,

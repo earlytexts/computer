@@ -63,18 +63,18 @@ Deno.test("the min threshold filters out rare terms", async () => {
   for (const r of high.results) assert(r.target >= 2);
 });
 
-Deno.test("by=surface keeps spellings apart that lemma unites", async () => {
+Deno.test("by=exact keeps spellings apart that lemma unites", async () => {
   const computer = await testComputer();
-  const bySurface = await computer.keywords({
+  const byExact = await computer.keywords({
     author: "test",
     work: "tw",
-    by: "surface",
+    by: "exact",
     min: 1,
   });
-  assertEquals(bySurface.by, "surface");
-  // Surfaces are the spellings as written, so every term is lower-case and
+  assertEquals(byExact.by, "exact");
+  // Exact terms are the spellings as written, so every term is lower-case and
   // single-token (no citation-form rewriting).
-  for (const r of bySurface.results) {
+  for (const r of byExact.results) {
     assertEquals(r.term, r.term.toLowerCase());
     assert(!r.term.includes(" "));
   }

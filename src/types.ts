@@ -281,7 +281,7 @@ export type FrequencyEntry = {
 
 export type FrequencyResponse = {
   q: string;
-  by: "author" | "work" | "edition";
+  groupBy: "author" | "work" | "edition";
   total: number; // sum of count across all groups
   results: FrequencyEntry[]; // sorted by count descending
 };
@@ -314,8 +314,8 @@ export type ConcordanceLine = {
 
 export type ConcordanceResponse = {
   q: string;
-  /** Context words kept on each side of the keyword. */
-  context: number;
+  /** Half-width of the context window: words kept on each side of the keyword. */
+  window: number;
   /** Line order: `position` (corpus order) or by the words nearest the keyword
    * on the `left` / `right`. */
   sort: "position" | "left" | "right";
@@ -332,7 +332,7 @@ export type ConcordanceResponse = {
 /* ------------------------------ keywords ----------------------------- */
 
 /** The level terms are grouped and reported at, coarsest first. */
-export type KeyMode = "lemma" | "form" | "surface";
+export type KeyMode = "lemma" | "form" | "exact";
 
 /** One term over-represented in the target subcorpus. */
 export type KeywordEntry = {
@@ -361,10 +361,12 @@ export type KeywordsResponse = {
   by: KeyMode;
   /** Which text was counted (`edited` default, or `original`). */
   version: "edited" | "original";
-  /** Target scope: the author/work/edition the keywords are distinctive of. */
+  /** Target scope: the author/work the keywords are distinctive of. */
   author: string | null;
   work: string | null;
-  /** Edition universe: a year slug, "all", or null for canonical editions. */
+  /** The edition universe both sides were drawn from. */
+  editions: "canonical" | "all";
+  /** A specific printing (year slug) the universe was pinned to, or null. */
   edition: string | null;
   /** Total tokens in the target subcorpus (the rate denominator). */
   targetTokens: number;
@@ -414,7 +416,9 @@ export type CollocationsResponse = {
   /** Scope: the author/work the collocations were measured within (or null). */
   author: string | null;
   work: string | null;
-  /** Edition scope: a year slug, "all", or null for canonical editions. */
+  /** The edition universe the scope was drawn from. */
+  editions: "canonical" | "all";
+  /** A specific printing (year slug) the scope was pinned to, or null. */
   edition: string | null;
   /** Total tokens in the scope (N). */
   scopeTokens: number;
@@ -567,7 +571,20 @@ export type ErrorResponse = { error: string };
  * implementation of `Computer` (the in-process core and the HTTP client) and by
  * the response builders, so the contract is described in exactly one place.
  */
-export type SearchParams = {
+/**
+ * The two edition-scope options shared by the universe-filter routes (see
+ * scope.ts): `editions` chooses the universe (one canonical printing per work,
+ * the default, or every printing), `edition` names one specific printing and is
+ * only valid together with `work`. They are mutually exclusive.
+ */
+export type EditionScope = {
+  /** One specific printing (a year slug); requires `work`. */
+  edition?: string;
+  /** The edition universe: "canonical" (default) or "all" printings. */
+  editions?: "canonical" | "all";
+};
+
+export type SearchParams = EditionScope & {
   q: string;
   /** Type level to match at (default: "form", the tolerant level). */
   match?: MatchLevel;
@@ -577,27 +594,25 @@ export type SearchParams = {
   version?: "edited" | "original";
   author?: string;
   work?: string;
-  edition?: string;
   page?: number;
   perPage?: number;
 };
 
-export type FrequencyParams = {
+export type FrequencyParams = EditionScope & {
   q: string;
   /** Group occurrences by author, work, or edition (default: work). */
-  by?: "author" | "work" | "edition";
+  groupBy?: "author" | "work" | "edition";
   match?: MatchLevel;
   caseSensitive?: boolean;
   version?: "edited" | "original";
   author?: string;
   work?: string;
-  edition?: string;
 };
 
-export type ConcordanceParams = {
+export type ConcordanceParams = EditionScope & {
   q: string;
-  /** Context words on each side of the keyword (default 6, max 25). */
-  context?: number;
+  /** Half-width of the context window, in words each side (default 6, max 25). */
+  window?: number;
   /** Line order: corpus order (default) or by the nearest words on each side. */
   sort?: "position" | "left" | "right";
   match?: MatchLevel;
@@ -605,22 +620,21 @@ export type ConcordanceParams = {
   version?: "edited" | "original";
   author?: string;
   work?: string;
-  edition?: string;
   page?: number;
   perPage?: number;
 };
 
-export type KeywordsParams = {
+export type KeywordsParams = EditionScope & {
   /** Target author: the keywords are distinctive of this author. */
   author?: string;
   /** Target work (within the author), narrowing the target further. */
   work?: string;
   /**
-   * Edition universe both sides are drawn from: a year slug, "all" for every
-   * printing, or omitted for canonical editions only (the default). The target
-   * is the author/work within this universe; the reference is the rest of it.
+   * The edition universe both the target and the reference are drawn from is set
+   * by `editions` ("canonical" default, or "all"); a specific `edition` printing
+   * (with `work`) pins it to that one. The target is the author/work within the
+   * universe; the reference is the rest of it.
    */
-  edition?: string;
   /** Term grouping level (default "lemma"). */
   by?: KeyMode;
   /** Which text to count: edited reading text (default) or the original. */
@@ -686,7 +700,7 @@ export type TopicMixParams = {
   limit?: number;
 };
 
-export type CollocationsParams = {
+export type CollocationsParams = EditionScope & {
   /** The node word whose collocates you want. */
   q: string;
   /** Collocate grouping level (default "lemma"). */
@@ -704,10 +718,10 @@ export type CollocationsParams = {
   /** Scope to one work (within the author). */
   work?: string;
   /**
-   * Edition universe the scope is drawn from: a year slug, "all" for every
-   * printing, or omitted for canonical editions only (the default).
+   * The edition universe the scope is drawn from is set by `editions`
+   * ("canonical" default, or "all"); a specific `edition` printing (with `work`)
+   * pins it to that one.
    */
-  edition?: string;
 };
 
 /**
@@ -719,6 +733,15 @@ export type CollocationsParams = {
  *
  * Read methods return `undefined` for a missing author/work/edition/section (the
  * caller renders its own not-found); the search family always returns a result.
+ *
+ * Two conventions run across the params, so the asymmetries are intentional, not
+ * accidental:
+ *   - Paging. Passage routes (search, concordance) page with `page`/`perPage`;
+ *     ranked-list routes (keywords, collocations, similar, topics/mix) cap with
+ *     `limit` and do not page; frequency returns every group.
+ *   - Version. `version` is accepted wherever the text is read live (the reading
+ *     routes and search/frequency/concordance/keywords). Routes backed by a
+ *     prebuilt, edited-only index (collocations, similar, topics) omit it.
  */
 export type Computer = {
   catalog: () => Promise<CatalogResponse>;

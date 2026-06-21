@@ -8,13 +8,22 @@
  * interface, so it runs over HTTP (a client) or in-process (localComputer).
  */
 
-import type {
-  Computer,
-  KeyMode,
-  MatchLevel,
-  SimilarLevel,
-  TopicLevel,
-} from "./types.ts";
+import type { Computer } from "./types.ts";
+import { scopeError } from "./scope.ts";
+import {
+  boolParam,
+  enumParam,
+  GROUP_BYS,
+  intParam,
+  KEY_MODES,
+  LEVELS,
+  MATCH_LEVELS,
+  ParamError,
+  rejectUnknownArgs,
+  SEARCH_VERSIONS,
+  SORTS,
+  TEXT_VERSIONS,
+} from "./params.ts";
 import {
   renderAuthors,
   renderCollocations,
@@ -23,9 +32,11 @@ import {
   renderConcordance,
   renderEdition,
   renderFrequency,
+  renderFullText,
   renderKeywords,
   renderSearch,
   renderSection,
+  renderSectionFullText,
   renderSimilar,
   renderTopicMix,
   renderTopics,
@@ -60,22 +71,6 @@ const strOpt = (
   return typeof value === "string" && value !== "" ? value : undefined;
 };
 
-const numOpt = (
-  input: Record<string, unknown>,
-  key: string,
-): number | undefined => {
-  const value = input[key];
-  return typeof value === "number" ? value : undefined;
-};
-
-const boolOpt = (
-  input: Record<string, unknown>,
-  key: string,
-): boolean | undefined => {
-  const value = input[key];
-  return typeof value === "boolean" ? value : undefined;
-};
-
 const strArray = (input: Record<string, unknown>, key: string): string[] => {
   const value = input[key];
   if (
@@ -97,6 +92,22 @@ const strArrayOpt = (
     : undefined;
 };
 
+/** Read and validate the shared edition-scope args; throws on an incoherent set. */
+const scopeArgs = (
+  input: Record<string, unknown>,
+): { work?: string; edition?: string; editions?: "canonical" | "all" } => {
+  const work = strOpt(input, "work");
+  const edition = strOpt(input, "edition");
+  const editions = strOpt(input, "editions");
+  const err = scopeError({ work, edition, editions });
+  if (err !== undefined) throw new ParamError(err);
+  return {
+    work,
+    edition,
+    editions: editions as "canonical" | "all" | undefined,
+  };
+};
+
 const slugProperty = (description: string) => ({
   type: "string" as const,
   description,
@@ -106,6 +117,20 @@ const authorProperty = slugProperty('Author slug, e.g. "hume".');
 const workProperty = slugProperty('Work slug within the author, e.g. "epm".');
 const editionProperty = slugProperty(
   'Edition slug: a year like "1751" or "1742a". Omit to use the work\'s canonical edition (the default).',
+);
+// The two edition-scope knobs for the universe-filter tools (search, frequency,
+// concordance, keywords, collocations): see scope.ts.
+const editionsProperty = {
+  type: "string" as const,
+  enum: ["canonical", "all"],
+  description:
+    'The edition universe to range over: "canonical" (one canonical printing ' +
+    'per work, the default) or "all" (every printing).',
+};
+const scopeEditionProperty = slugProperty(
+  'Limit to one specific printing (a year slug like "1751"). Only valid ' +
+    "together with work — a bare year would span many works' unrelated " +
+    'printings — so to range over printings use editions="all" instead.',
 );
 const pathProperty = {
   type: "array" as const,
@@ -122,6 +147,25 @@ const matchProperty = {
     'keep distinct inflections. "form": also unite plurals and inflections. ' +
     'Defaults to "form" (the most tolerant). Use "exact" for spelling ' +
     "questions or precise quotation.",
+};
+const versionProperty = {
+  type: "string" as const,
+  enum: ["edited", "original"],
+  description:
+    'Which text to use: "edited" (the corrected reading text, the default) ' +
+    'or "original" (the text as actually printed, corrections undone).',
+};
+const textVersionProperty = {
+  type: "string" as const,
+  enum: ["edited", "original", "both"],
+  description:
+    'Which text to read: "edited" (the corrected reading text, the default), ' +
+    '"original" (the text as printed), or "both" (the raw editorial markup ' +
+    "showing what was changed).",
+};
+const perPageProperty = {
+  type: "number" as const,
+  description: "Results per page, 1–100; defaults to 20.",
 };
 
 export const createTools = (computer: Computer): ToolSet => {
@@ -150,7 +194,7 @@ export const createTools = (computer: Computer): ToolSet => {
     {
       name: "search",
       description:
-        'Full-text search over the corpus. The whole query is matched as one phrase (its words must appear consecutively, in order) — no quoting needed. Returns matching blocks with the phrase marked «…», each cited with author/work/edition, section path, and block id. Matching is tolerant by default ("form" level): it ignores case and unites old and modern spellings, plurals, and inflections ("connection between cause and effect" finds "connexion betwixt causes and effects"). Use the match parameter to tighten this, and/or caseSensitive to require initial capitalisation to agree. By default only canonical editions are searched (one hit per work); optionally scope to an author or work, to a single edition (a year slug), or pass edition "all" to search every printing.',
+        'Full-text search over the corpus. The whole query is matched as one phrase (its words must appear consecutively, in order) — no quoting needed. Returns matching blocks with the phrase marked «…», each cited with author/work/edition, section path, and block id. Matching is tolerant by default ("form" level): it ignores case and unites old and modern spellings, plurals, and inflections ("connection between cause and effect" finds "connexion betwixt causes and effects"). Use the match parameter to tighten this, and/or caseSensitive to require initial capitalisation to agree. By default only canonical editions are searched (one hit per work); optionally scope to an author or work, set editions="all" to search every printing, or — for a single work — pin to one printing with edition (a year slug).',
       inputSchema: {
         type: "object",
         properties: {
@@ -161,15 +205,16 @@ export const createTools = (computer: Computer): ToolSet => {
             description:
               "Require each word's initial capitalisation to agree with the text. Defaults to false (case is ignored).",
           },
+          version: versionProperty,
           author: authorProperty,
           work: workProperty,
-          edition: slugProperty(
-            'Limit to one edition (a year slug like "1751"), or "all" to search every printing. Omit to search only canonical editions (the default).',
-          ),
+          editions: editionsProperty,
+          edition: scopeEditionProperty,
           page: {
             type: "number",
             description: "Result page, starting at 1; defaults to 1.",
           },
+          perPage: perPageProperty,
         },
         required: ["q"],
         additionalProperties: false,
@@ -178,12 +223,12 @@ export const createTools = (computer: Computer): ToolSet => {
     {
       name: "frequency",
       description:
-        'Count how often a phrase occurs across the corpus and report it grouped by author, work, or edition. Like search, the whole query is matched as one phrase and matching is tolerant by default (use match and/or caseSensitive to tighten it). Each group reports the occurrence count, its total token count, and a relative rate (occurrences per 1000 tokens) so groups of different sizes can be compared. Call this to answer "how common is X" or "who uses X most" questions; use search to see the actual passages. Optionally scope to an author, work, or single edition.',
+        'Count how often a phrase occurs across the corpus and report it grouped by author, work, or edition. Like search, the whole query is matched as one phrase and matching is tolerant by default (use match and/or caseSensitive to tighten it). Each group reports the occurrence count, its total token count, and a relative rate (occurrences per 1000 tokens) so groups of different sizes can be compared. Call this to answer "how common is X" or "who uses X most" questions; use search to see the actual passages. By default only canonical editions are counted; optionally scope to an author or work, set editions="all" to count every printing, or — for a single work — pin to one printing with edition (a year slug).',
       inputSchema: {
         type: "object",
         properties: {
           q: { type: "string", description: "The phrase to count." },
-          by: {
+          groupBy: {
             type: "string",
             enum: ["author", "work", "edition"],
             description:
@@ -195,11 +240,11 @@ export const createTools = (computer: Computer): ToolSet => {
             description:
               "Require each word's initial capitalisation to agree with the text. Defaults to false (case is ignored).",
           },
+          version: versionProperty,
           author: authorProperty,
           work: workProperty,
-          edition: slugProperty(
-            'Limit to one edition (a year slug like "1751"), or "all" for every printing. Omit to count canonical editions only (the default).',
-          ),
+          editions: editionsProperty,
+          edition: scopeEditionProperty,
         },
         required: ["q"],
         additionalProperties: false,
@@ -208,15 +253,15 @@ export const createTools = (computer: Computer): ToolSet => {
     {
       name: "concordance",
       description:
-        "Show every occurrence of a phrase keyword-in-context: one line per occurrence (not per block), with a window of context words on each side and the keyword marked «…». Like search, the whole query is matched as one phrase and matching is tolerant by default (use match and/or caseSensitive to tighten it). Call this to study how a word or phrase is actually used across the corpus — the words it keeps company with — rather than reading whole blocks. Lines can be ordered by corpus position (default) or by the words nearest the keyword on the left or right. Optionally scope to an author, work, or single edition.",
+        'Show every occurrence of a phrase keyword-in-context: one line per occurrence (not per block), with a window of context words on each side and the keyword marked «…». Like search, the whole query is matched as one phrase and matching is tolerant by default (use match and/or caseSensitive to tighten it). Call this to study how a word or phrase is actually used across the corpus — the words it keeps company with — rather than reading whole blocks. Lines can be ordered by corpus position (default) or by the words nearest the keyword on the left or right. By default only canonical editions are used; optionally scope to an author or work, set editions="all" for every printing, or — for a single work — pin to one printing with edition (a year slug).',
       inputSchema: {
         type: "object",
         properties: {
           q: { type: "string", description: "The phrase to show in context." },
-          context: {
+          window: {
             type: "number",
             description:
-              "Context words to keep on each side of the keyword (default 6, max 25).",
+              "Context window half-width: words to keep on each side of the keyword (default 6, max 25).",
           },
           sort: {
             type: "string",
@@ -230,15 +275,16 @@ export const createTools = (computer: Computer): ToolSet => {
             description:
               "Require each word's initial capitalisation to agree with the text. Defaults to false (case is ignored).",
           },
+          version: versionProperty,
           author: authorProperty,
           work: workProperty,
-          edition: slugProperty(
-            'Limit to one edition (a year slug like "1751"), or "all" for every printing. Omit to use canonical editions only (the default).',
-          ),
+          editions: editionsProperty,
+          edition: scopeEditionProperty,
           page: {
             type: "number",
             description: "Result page, starting at 1; defaults to 1.",
           },
+          perPage: perPageProperty,
         },
         required: ["q"],
         additionalProperties: false,
@@ -247,7 +293,7 @@ export const createTools = (computer: Computer): ToolSet => {
     {
       name: "keywords",
       description:
-        'Find the words a part of the corpus uses more than the rest of it — its distinctive vocabulary (keyness). Unlike search and frequency, this takes no phrase: name a target author (and optionally a work) and it returns the terms statistically over-represented there compared with the rest of the corpus, ranked by log-likelihood (G², the strength of evidence) with a log-ratio (the effect size). Use it to characterise an author or work — to answer "what is distinctively Humean", "what marks out this treatise". Terms are grouped by lemma by default (causes/caused → cause); use "form" to also keep spelling variants together, or "surface" for the exact spellings as written. No phrase needed — the statistics surface the words for you.',
+        'Find the words a part of the corpus uses more than the rest of it — its distinctive vocabulary (keyness). Unlike search and frequency, this takes no phrase: name a target author (and optionally a work) and it returns the terms statistically over-represented there compared with the rest of the corpus, ranked by log-likelihood (G², the strength of evidence) with a log-ratio (the effect size). Use it to characterise an author or work — to answer "what is distinctively Humean", "what marks out this treatise". Terms are grouped by lemma by default (causes/caused → cause); use "form" to also keep spelling variants together, or "exact" for the spellings exactly as written. No phrase needed — the statistics surface the words for you.',
       inputSchema: {
         type: "object",
         properties: {
@@ -261,14 +307,18 @@ export const createTools = (computer: Computer): ToolSet => {
             description:
               "Optional target work slug within the author, to find what is distinctive of one work rather than the whole author.",
           },
-          edition: slugProperty(
-            'Edition universe both sides are drawn from: a year slug, "all" for every printing, or omit for canonical editions only (the default).',
-          ),
+          editions: {
+            ...editionsProperty,
+            description:
+              'The edition universe both the target and the reference are drawn from: "canonical" (one printing per work, the default) or "all" (every printing).',
+          },
+          edition: scopeEditionProperty,
+          version: versionProperty,
           by: {
             type: "string",
-            enum: ["lemma", "form", "surface"],
+            enum: ["lemma", "form", "exact"],
             description:
-              'How to group terms. "lemma" (default): citation forms (causes/caused → cause). "form": unite spelling variants and inflections. "surface": the exact spellings as written.',
+              'How to group terms. "lemma" (default): citation forms (causes/caused → cause). "form": unite spelling variants and inflections. "exact": the spellings exactly as written.',
           },
           min: {
             type: "number",
@@ -287,7 +337,7 @@ export const createTools = (computer: Computer): ToolSet => {
     {
       name: "collocations",
       description:
-        'Find the words that cluster around a node word — its collocates, the company it keeps. Give a word and it returns the terms that occur within a few tokens of it more often than chance, the conceptual neighbourhood of the term (what surrounds "liberty", "cause", "passion"). Each collocate carries three association measures, which disagree by design: log-likelihood (G², the default ranking — confident, often grammatical collocates), PMI (the effect size — rarer, tightly-bound lexical neighbours like a fixed phrase), and a t-score (frequency-weighted confidence). Like search, the node word is matched tolerantly by default (use match to tighten it); collocates are grouped by lemma by default (use "form" or "surface"). By default the whole corpus (canonical editions) is measured; scope to an author, work, or single edition. This complements keywords: keywords finds distinctive single words, collocations finds distinctive pairings.',
+        'Find the words that cluster around a node word — its collocates, the company it keeps. Give a word and it returns the terms that occur within a few tokens of it more often than chance, the conceptual neighbourhood of the term (what surrounds "liberty", "cause", "passion"). Each collocate carries three association measures, which disagree by design: log-likelihood (G², the default ranking — confident, often grammatical collocates), PMI (the effect size — rarer, tightly-bound lexical neighbours like a fixed phrase), and a t-score (frequency-weighted confidence). Like search, the node word is matched tolerantly by default (use match to tighten it); collocates are grouped by lemma by default (use "form" or "exact"). By default the whole corpus (canonical editions) is measured; scope to an author or work, set editions="all" for every printing, or — for a single work — pin to one printing with edition (a year slug). This complements keywords: keywords finds distinctive single words, collocations finds distinctive pairings.',
       inputSchema: {
         type: "object",
         properties: {
@@ -297,9 +347,9 @@ export const createTools = (computer: Computer): ToolSet => {
           },
           by: {
             type: "string",
-            enum: ["lemma", "form", "surface"],
+            enum: ["lemma", "form", "exact"],
             description:
-              'How to group collocates. "lemma" (default): citation forms (causes/caused → cause). "form": unite spelling variants and inflections. "surface": the exact spellings as written.',
+              'How to group collocates. "lemma" (default): citation forms (causes/caused → cause). "form": unite spelling variants and inflections. "exact": the spellings exactly as written.',
           },
           match: matchProperty,
           window: {
@@ -318,9 +368,8 @@ export const createTools = (computer: Computer): ToolSet => {
           },
           author: authorProperty,
           work: workProperty,
-          edition: slugProperty(
-            'Limit to one edition (a year slug like "1751"), or "all" for every printing. Omit to use canonical editions only (the default).',
-          ),
+          editions: editionsProperty,
+          edition: scopeEditionProperty,
         },
         required: ["q"],
         additionalProperties: false,
@@ -429,6 +478,23 @@ export const createTools = (computer: Computer): ToolSet => {
           author: authorProperty,
           work: workProperty,
           edition: editionProperty,
+          version: textVersionProperty,
+        },
+        required: ["author", "work"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "get_full_text",
+      description:
+        "Get a whole edition's text in one response: its metadata, front matter, and every section's body loaded in reading order. With no edition, reads the work's canonical edition. This can be very long — prefer get_edition then get_section unless you genuinely need the entire work at once.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          author: authorProperty,
+          work: workProperty,
+          edition: editionProperty,
+          version: textVersionProperty,
         },
         required: ["author", "work"],
         additionalProperties: false,
@@ -445,6 +511,24 @@ export const createTools = (computer: Computer): ToolSet => {
           work: workProperty,
           edition: editionProperty,
           path: pathProperty,
+          version: textVersionProperty,
+        },
+        required: ["author", "work", "path"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "get_section_full",
+      description:
+        "Get one section's text together with all of its descendant sections' text, loaded in reading order (the whole subtree at once), plus previous/next sections and which other editions contain a matching section. With no edition, reads the work's canonical edition. Use get_section for a single section; this when you want the section and everything under it.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          author: authorProperty,
+          work: workProperty,
+          edition: editionProperty,
+          path: pathProperty,
+          version: textVersionProperty,
         },
         required: ["author", "work", "path"],
         additionalProperties: false,
@@ -478,6 +562,7 @@ export const createTools = (computer: Computer): ToolSet => {
           a: { ...editionProperty, description: "First edition slug." },
           b: { ...editionProperty, description: "Second edition slug." },
           path: pathProperty,
+          version: versionProperty,
         },
         required: ["author", "work", "a", "b", "path"],
         additionalProperties: false,
@@ -502,73 +587,90 @@ export const createTools = (computer: Computer): ToolSet => {
         ? notFound(`author "${slug}"`)
         : renderWorks(author);
     },
-    search: async (input) =>
-      renderSearch(
+    search: async (input) => {
+      const sc = scopeArgs(input);
+      return renderSearch(
         await computer.search({
           q: str(input, "q"),
-          match: strOpt(input, "match") as MatchLevel | undefined,
-          caseSensitive: boolOpt(input, "caseSensitive"),
+          match: enumParam("match", input.match, MATCH_LEVELS),
+          caseSensitive: boolParam("caseSensitive", input.caseSensitive),
+          version: enumParam("version", input.version, SEARCH_VERSIONS),
           author: strOpt(input, "author"),
-          work: strOpt(input, "work"),
-          edition: strOpt(input, "edition"),
-          page: numOpt(input, "page"),
+          work: sc.work,
+          edition: sc.edition,
+          editions: sc.editions,
+          page: intParam("page", input.page),
+          perPage: intParam("perPage", input.perPage),
         }),
-      ),
-    frequency: async (input) =>
-      renderFrequency(
+      );
+    },
+    frequency: async (input) => {
+      const sc = scopeArgs(input);
+      return renderFrequency(
         await computer.frequency({
           q: str(input, "q"),
-          by: strOpt(input, "by") as "author" | "work" | "edition" | undefined,
-          match: strOpt(input, "match") as MatchLevel | undefined,
-          caseSensitive: boolOpt(input, "caseSensitive"),
+          groupBy: enumParam("groupBy", input.groupBy, GROUP_BYS),
+          match: enumParam("match", input.match, MATCH_LEVELS),
+          caseSensitive: boolParam("caseSensitive", input.caseSensitive),
+          version: enumParam("version", input.version, SEARCH_VERSIONS),
           author: strOpt(input, "author"),
-          work: strOpt(input, "work"),
-          edition: strOpt(input, "edition"),
+          work: sc.work,
+          edition: sc.edition,
+          editions: sc.editions,
         }),
-      ),
-    concordance: async (input) =>
-      renderConcordance(
+      );
+    },
+    concordance: async (input) => {
+      const sc = scopeArgs(input);
+      return renderConcordance(
         await computer.concordance({
           q: str(input, "q"),
-          context: numOpt(input, "context"),
-          sort: strOpt(input, "sort") as
-            | "position"
-            | "left"
-            | "right"
-            | undefined,
-          match: strOpt(input, "match") as MatchLevel | undefined,
-          caseSensitive: boolOpt(input, "caseSensitive"),
+          window: intParam("window", input.window),
+          sort: enumParam("sort", input.sort, SORTS),
+          match: enumParam("match", input.match, MATCH_LEVELS),
+          caseSensitive: boolParam("caseSensitive", input.caseSensitive),
+          version: enumParam("version", input.version, SEARCH_VERSIONS),
           author: strOpt(input, "author"),
-          work: strOpt(input, "work"),
-          edition: strOpt(input, "edition"),
-          page: numOpt(input, "page"),
+          work: sc.work,
+          edition: sc.edition,
+          editions: sc.editions,
+          page: intParam("page", input.page),
+          perPage: intParam("perPage", input.perPage),
         }),
-      ),
-    keywords: async (input) =>
-      renderKeywords(
+      );
+    },
+    keywords: async (input) => {
+      const sc = scopeArgs(input);
+      return renderKeywords(
         await computer.keywords({
           author: str(input, "author"),
-          work: strOpt(input, "work"),
-          edition: strOpt(input, "edition"),
-          by: strOpt(input, "by") as KeyMode | undefined,
-          min: numOpt(input, "min"),
-          limit: numOpt(input, "limit"),
+          work: sc.work,
+          edition: sc.edition,
+          editions: sc.editions,
+          version: enumParam("version", input.version, SEARCH_VERSIONS),
+          by: enumParam("by", input.by, KEY_MODES),
+          min: intParam("min", input.min),
+          limit: intParam("limit", input.limit),
         }),
-      ),
-    collocations: async (input) =>
-      renderCollocations(
+      );
+    },
+    collocations: async (input) => {
+      const sc = scopeArgs(input);
+      return renderCollocations(
         await computer.collocations({
           q: str(input, "q"),
-          by: strOpt(input, "by") as KeyMode | undefined,
-          match: strOpt(input, "match") as MatchLevel | undefined,
-          window: numOpt(input, "window"),
-          min: numOpt(input, "min"),
-          limit: numOpt(input, "limit"),
+          by: enumParam("by", input.by, KEY_MODES),
+          match: enumParam("match", input.match, MATCH_LEVELS),
+          window: intParam("window", input.window),
+          min: intParam("min", input.min),
+          limit: intParam("limit", input.limit),
           author: strOpt(input, "author"),
-          work: strOpt(input, "work"),
-          edition: strOpt(input, "edition"),
+          work: sc.work,
+          edition: sc.edition,
+          editions: sc.editions,
         }),
-      ),
+      );
+    },
     similar: async (input) =>
       renderSimilar(
         await computer.similar({
@@ -576,15 +678,15 @@ export const createTools = (computer: Computer): ToolSet => {
           work: str(input, "work"),
           edition: strOpt(input, "edition"),
           path: strArrayOpt(input, "path"),
-          level: strOpt(input, "level") as SimilarLevel | undefined,
-          limit: numOpt(input, "limit"),
+          level: enumParam("level", input.level, LEVELS),
+          limit: intParam("limit", input.limit),
         }),
       ),
     topics: async (input) =>
       renderTopics(
         await computer.topics({
-          terms: numOpt(input, "terms"),
-          works: numOpt(input, "works"),
+          terms: intParam("terms", input.terms),
+          works: intParam("works", input.works),
         }),
       ),
     topic_mix: async (input) =>
@@ -594,8 +696,8 @@ export const createTools = (computer: Computer): ToolSet => {
           work: str(input, "work"),
           edition: strOpt(input, "edition"),
           path: strArrayOpt(input, "path"),
-          level: strOpt(input, "level") as TopicLevel | undefined,
-          limit: numOpt(input, "limit"),
+          level: enumParam("level", input.level, LEVELS),
+          limit: intParam("limit", input.limit),
         }),
       ),
     get_edition: async (input) => {
@@ -604,11 +706,25 @@ export const createTools = (computer: Computer): ToolSet => {
         str(input, "work"),
         strOpt(input, "edition"),
       ];
-      const response = await computer.edition(author, work, edition);
+      const version = enumParam("version", input.version, TEXT_VERSIONS);
+      const response = await computer.edition(author, work, edition, version);
       const which = edition ?? "canonical";
       return response === undefined
         ? notFound(`edition ${author}/${work}/${which}`)
         : renderEdition(response);
+    },
+    get_full_text: async (input) => {
+      const [author, work, edition] = [
+        str(input, "author"),
+        str(input, "work"),
+        strOpt(input, "edition"),
+      ];
+      const version = enumParam("version", input.version, TEXT_VERSIONS);
+      const response = await computer.fullText(author, work, edition, version);
+      const which = edition ?? "canonical";
+      return response === undefined
+        ? notFound(`edition ${author}/${work}/${which}`)
+        : renderFullText(response);
     },
     get_section: async (input) => {
       const [author, work, edition] = [
@@ -617,11 +733,38 @@ export const createTools = (computer: Computer): ToolSet => {
         strOpt(input, "edition"),
       ];
       const path = strArray(input, "path");
-      const response = await computer.section(author, work, edition, path);
+      const version = enumParam("version", input.version, TEXT_VERSIONS);
+      const response = await computer.section(
+        author,
+        work,
+        edition,
+        path,
+        version,
+      );
       const which = edition ?? "canonical";
       return response === undefined
         ? notFound(`section ${author}/${work}/${which} § ${path.join("/")}`)
         : renderSection(response);
+    },
+    get_section_full: async (input) => {
+      const [author, work, edition] = [
+        str(input, "author"),
+        str(input, "work"),
+        strOpt(input, "edition"),
+      ];
+      const path = strArray(input, "path");
+      const version = enumParam("version", input.version, TEXT_VERSIONS);
+      const response = await computer.sectionFullText(
+        author,
+        work,
+        edition,
+        path,
+        version,
+      );
+      const which = edition ?? "canonical";
+      return response === undefined
+        ? notFound(`section ${author}/${work}/${which} § ${path.join("/")}`)
+        : renderSectionFullText(response);
     },
     compare_editions: async (input) => {
       const [author, work, a, b] = [
@@ -643,7 +786,15 @@ export const createTools = (computer: Computer): ToolSet => {
         str(input, "b"),
       ];
       const path = strArray(input, "path");
-      const response = await computer.compareSection(author, work, a, b, path);
+      const version = enumParam("version", input.version, SEARCH_VERSIONS);
+      const response = await computer.compareSection(
+        author,
+        work,
+        a,
+        b,
+        path,
+        version,
+      );
       return response === undefined
         ? notFound(
           `section ${
@@ -654,6 +805,18 @@ export const createTools = (computer: Computer): ToolSet => {
     },
   };
 
+  // The argument names each tool declares, for rejecting any the caller invents.
+  // The schemas already set additionalProperties:false, but the handler does not
+  // validate against the schema at call time, so this enforces the same rule.
+  const allowedArgs = new Map(
+    definitions.map((tool) => [
+      tool.name,
+      Object.keys(
+        (tool.inputSchema.properties ?? {}) as Record<string, unknown>,
+      ),
+    ]),
+  );
+
   return {
     definitions,
     run: (name, input) => {
@@ -661,7 +824,13 @@ export const createTools = (computer: Computer): ToolSet => {
       if (handler === undefined) {
         return Promise.reject(new Error(`unknown tool "${name}"`));
       }
-      return handler((input ?? {}) as Record<string, unknown>);
+      const args = (input ?? {}) as Record<string, unknown>;
+      try {
+        rejectUnknownArgs(args, allowedArgs.get(name)!);
+      } catch (error) {
+        return Promise.reject(error);
+      }
+      return handler(args);
     },
   };
 };

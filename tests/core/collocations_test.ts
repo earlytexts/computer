@@ -109,7 +109,7 @@ Deno.test("no collocate's co-occurrence exceeds its total (table stays consisten
   const computer = await testComputer();
   const response = await computer.collocations({
     q: "of",
-    edition: "all",
+    editions: "all",
     min: 1,
   });
   for (const r of response.results) {
@@ -121,16 +121,16 @@ Deno.test("no collocate's co-occurrence exceeds its total (table stays consisten
   }
 });
 
-Deno.test("by=surface keeps spellings apart that lemma unites", async () => {
+Deno.test("by=exact keeps spellings apart that lemma unites", async () => {
   const computer = await testComputer();
   const response = await computer.collocations({
     q: "liberty",
     author: "test",
     work: "tw",
-    by: "surface",
+    by: "exact",
     min: 1,
   });
-  assertEquals(response.by, "surface");
+  assertEquals(response.by, "exact");
   for (const r of response.results) {
     assertEquals(r.term, r.term.toLowerCase());
     assert(!r.term.includes(" "));

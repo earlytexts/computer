@@ -23,8 +23,11 @@ import type {
   EditionMeta,
   EditionResponse,
   FrequencyResponse,
+  FullTextResponse,
   KeywordsResponse,
   SearchResponse,
+  SectionContent,
+  SectionFullTextResponse,
   SectionResponse,
   SectionSummary,
   SimilarResponse,
@@ -230,6 +233,52 @@ export const renderSection = (response: SectionResponse): string => {
   return parts.join("\n\n");
 };
 
+/** A section's text and every descendant's, depth-first under heading lines. */
+const renderSectionContent = (section: SectionContent): string => {
+  const heading = `§ ${section.path.join("/")} — ${section.title}` +
+    (section.imported ? "" : " [stub]");
+  const body = section.imported
+    ? renderBlocks(section.blocks)
+    : "[stub — this section's text is not in the corpus]";
+  return [
+    `${heading}\n${body}`.trimEnd(),
+    ...section.children.map(renderSectionContent),
+  ].join("\n\n");
+};
+
+export const renderFullText = (response: FullTextResponse): string =>
+  `${editionHeader(response)}\n` +
+  `Copytext: ${response.edition.copytext.join("; ") || "n/a"}\n\n` +
+  (response.blocks.length === 0 ? "" : `${renderBlocks(response.blocks)}\n\n`) +
+  response.sections.map(renderSectionContent).join("\n\n");
+
+export const renderSectionFullText = (
+  response: SectionFullTextResponse,
+): string => {
+  const parts = [
+    `${editionHeader(response)} § ${response.section.path.join("/")}`,
+    response.section.breadcrumb,
+    renderSectionContent(response.section),
+  ];
+  const nav = [
+    response.prev === undefined
+      ? undefined
+      : `previous: ${response.prev.path.join("/")}`,
+    response.next === undefined
+      ? undefined
+      : `next: ${response.next.path.join("/")}`,
+  ].filter((part) => part !== undefined);
+  if (nav.length > 0) parts.push(nav.join(" | "));
+  if (response.compareEditions.length > 0) {
+    parts.push(
+      `Matching section also in editions: ${
+        response.compareEditions.map((e) => e.slug).join(", ")
+      }`,
+    );
+  }
+  return parts.join("\n\n");
+};
+
 /* ------------------------------- search ------------------------------ */
 
 const matchLabel: Record<SearchResponse["match"], string> = {
@@ -276,7 +325,7 @@ export const renderFrequency = (response: FrequencyResponse): string => {
   ).join("\n");
   return `${response.total} occurrence${
     response.total === 1 ? "" : "s"
-  } of the phrase "${response.q}", grouped by ${response.by} ` +
+  } of the phrase "${response.q}", grouped by ${response.groupBy} ` +
     `(sorted by count; relative = per 1000 tokens):\n\n${rows}`;
 };
 

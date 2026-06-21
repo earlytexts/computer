@@ -26,7 +26,13 @@ cached for five minutes. A typical call looks like:
 
 The part after `?` is a list of `name=value` options, joined by `&`. Every
 option is optional unless stated otherwise; sensible defaults apply when you
-leave one out.
+leave one out. A value you _do_ supply must be valid, though: an option set to
+something off its list (`match=fuzzy`), a count that is not a whole number or is
+below 1 (`page=0`), or a name the route does not recognise (a typo like
+`cassSensitive=1`) is answered with `400 Bad Request` and a message naming the
+problem — rather than being quietly ignored in favour of the default. (A count
+_above_ its documented maximum is the exception: it is clamped to the cap, not
+refused.)
 
 ## Words this guide uses
 
@@ -38,14 +44,29 @@ A few terms recur across every route:
 - **Edition slugs are years** — `1757`, `1742a` (the letter distinguishes two
   printings in one year). A work has one **canonical edition**: its default
   printing. If you don't name an edition, you get the canonical one.
-- **Scope.** On the search-family routes, leaving the edition out scopes you to
-  the **canonical editions only** (one printing per work — the usual choice).
-  Pass `edition=all` to include every printing, or a year slug for just that
-  one. `author` and `work` narrow the scope further.
+- **Scope.** The search-family routes range over many works at once, so the
+  edition scope is **two separate knobs**. `editions` chooses the _universe_:
+  `canonical` (one printing per work — the default, and the usual choice) or
+  `all` (every printing). Separately, `edition` (a year slug) pins to **one
+  specific printing**, and is only meaningful together with a `work` — a bare
+  year would name different, unrelated printings across different works, so it is
+  refused without one. `author` and `work` narrow the scope further. (A year is
+  only a stable name _within_ a work, which is why a specific edition needs one.)
 - **Version.** Editorial work makes each edition _two_ texts: `edited`, the
   clean reading text (corrections applied), and `original`, the text as actually
   printed (corrections undone). The default is always `edited`. Reading routes
   also accept `both`, which returns the raw editorial markup (what was changed).
+  `version` is offered wherever the text is read straight off the page — the
+  reading routes and the phrase routes (search, frequency, concordance,
+  keywords). It is _not_ offered on collocations, similar, or topics: those read
+  a fixed index built once from the edited text, so there is no original to swap
+  to. (Comparison routes accept `edited|original` but not `both`.)
+- **Paging.** Two patterns, by the kind of answer. Routes that return passages —
+  `/search` and `/concordance` — page through everything with `page` and
+  `perPage` (default 20, up to 100). Routes that return a _ranked_ list cap it
+  with `limit` instead (keywords, collocations, similar, topics/mix); there is
+  no paging past the limit, because only the top of a ranking is meaningful.
+  `/frequency` does neither — it returns every group, since the groups are few.
 - **Imported flag.** Some works are catalogued but have no text yet (stubs).
   Every work, edition, and section carries an `imported` flag; `false` means
   "listed, but nothing to read".
@@ -126,9 +147,10 @@ work the same way on all of them:
 - **`caseSensitive`** — off by default (case ignored). Turn it on to require
   capitalisation to agree.
 
-`version=edited|original` and the scope options (`author`, `work`, `edition`)
-apply throughout, as described above. Matches always keep the spelling on the
-page — a tolerant search for "show" still highlights _shew_.
+`version=edited|original` and the scope options (`author`, `work`, `editions`,
+and `edition` for a single work) apply throughout, as described above. Matches
+always keep the spelling on the page — a tolerant search for "show" still
+highlights _shew_.
 
 ### Search — `/search`
 
@@ -146,16 +168,17 @@ to 100 per page).
 ### Frequency — `/frequency`
 
 How often your phrase occurs, **counted up and grouped** by `author`, `work`, or
-`edition` (`by=`). Each group reports the raw count and a **relative rate** (per
-1,000 words), so groups of different sizes can be compared fairly.
+`edition` (`groupBy=`). Each group reports the raw count and a **relative rate**
+(per 1,000 words), so groups of different sizes can be compared fairly.
 
 ### Concordance — `/concordance`
 
 One line per occurrence, shown **keyword-in-context**: your phrase with a few
 words of context on each side — the classic concordance view for reading a word
-across all its uses at once. `context` sets the words per side (default 6, max
-25); `sort` orders the lines by corpus `position` (default) or by the words
-nearest on the `left` or `right`. Paged like search.
+across all its uses at once. `window` sets the words of context per side
+(default 6, max 25 — the same knob `/collocations` calls `window`); `sort`
+orders the lines by corpus `position` (default) or by the words nearest on the
+`left` or `right`. Paged like search.
 
 ## 4. Statistical discovery
 
@@ -170,11 +193,12 @@ The one search route that takes **no query**. Name a target (an `author`,
 optionally narrowed to a `work`) and it returns the words that target uses _more
 than the rest of the corpus does_ — its characteristic vocabulary, its verbal
 fingerprint. This is **keyness**. The comparison set is the rest of the edition
-universe (canonical editions by default, or whatever `edition` scope you set).
+universe (canonical editions by default, or every printing with `editions=all`).
 
 - `by` reports words as `lemma` (dictionary form — _causes/caused_ count as
-  _cause_; the default), `form` (the inflection-tolerant bucket), or `surface`
-  (spellings as written).
+  _cause_; the default), `form` (the inflection-tolerant bucket), or `exact`
+  (spellings exactly as written). These name the same grain as `match`'s `form`
+  and `exact`, so the two share one vocabulary.
 - `min` is the noise floor (ignore words occurring fewer than this many times in
   the target; default 5); `limit` caps the rows (default 50).
 

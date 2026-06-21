@@ -10,10 +10,10 @@ Deno.test("frequency groups occurrences by work with a relative rate", async () 
   const computer = await testComputer();
   const byWork = await computer.frequency({
     q: "liberty",
-    by: "work",
-    edition: "all",
+    groupBy: "work",
+    editions: "all",
   });
-  assertEquals(byWork.by, "work");
+  assertEquals(byWork.groupBy, "work");
   assert(byWork.total > 0);
   assert(byWork.results.length > 0);
   // grouped by work: no edition dimension
@@ -29,14 +29,14 @@ Deno.test("frequency groups occurrences by work with a relative rate", async () 
   }
 });
 
-Deno.test("by=edition adds the edition dimension", async () => {
+Deno.test("groupBy=edition adds the edition dimension", async () => {
   const computer = await testComputer();
   const byEdition = await computer.frequency({
     q: "liberty",
-    by: "edition",
-    edition: "all",
+    groupBy: "edition",
+    editions: "all",
   });
-  assertEquals(byEdition.by, "edition");
+  assertEquals(byEdition.groupBy, "edition");
   assert(byEdition.results.every((r) => r.edition !== null));
 });
 

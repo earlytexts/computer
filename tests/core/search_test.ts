@@ -42,7 +42,7 @@ Deno.test("tolerant search unites variant spellings and inflections", async () =
 
 Deno.test("match=exact pins to the spelling as written; form/spelling widen", async () => {
   const computer = await testComputer();
-  const all = { edition: "all" } as const;
+  const all = { editions: "all" } as const;
   // tolerant (form) unites the two tw spellings: encrease/increase, both ways
   assertEquals(await count(computer, "encrease", { ...all, work: "tw" }), 2);
   assertEquals(await count(computer, "increase", { ...all, work: "tw" }), 2);
@@ -67,7 +67,7 @@ Deno.test("match=spelling unites spellings but keeps the surface inflection", as
   assertEquals(
     await count(computer, "encrease", {
       work: "tw",
-      edition: "all",
+      editions: "all",
       match: "spelling",
     }),
     2,
@@ -82,7 +82,7 @@ Deno.test("match=spelling unites spellings but keeps the surface inflection", as
 
 Deno.test("caseSensitive requires initial capitalisation to agree", async () => {
   const computer = await testComputer();
-  const all = { edition: "all" } as const;
+  const all = { editions: "all" } as const;
   const any = await count(computer, "avarice", all); // "Avarice" in the source
   assert(any > 0);
   assertEquals(
@@ -117,7 +117,7 @@ Deno.test("filters restrict to an author, work, and edition", async () => {
 Deno.test("borrowed text is indexed under its own work only", async () => {
   const computer = await testComputer();
   // "avarice" lives only in tw/1750, which comp borrows — still attributed to tw
-  const borrowed = await computer.search({ q: "avarice", edition: "all" });
+  const borrowed = await computer.search({ q: "avarice", editions: "all" });
   assert(borrowed.total > 0);
   assert(borrowed.results.every((r) => r.work === "tw"));
   // comp's own inline essay is indexed under comp
@@ -126,14 +126,14 @@ Deno.test("borrowed text is indexed under its own work only", async () => {
   assert(inline.results.every((r) => r.work === "comp"));
 });
 
-Deno.test("scope is canonical by default and widens with edition=all", async () => {
+Deno.test("scope is canonical by default and widens with editions=all", async () => {
   const computer = await testComputer();
   // tolerant "encrease" matches "increase" in the canonical 1760
   const canonical = await computer.search({ q: "encrease" });
   assertEquals(canonical.total, 1);
   assertEquals(canonical.results[0].edition, "1760");
-  // edition=all reaches the non-canonical 1750 too
-  assertEquals(await count(computer, "encrease", { edition: "all" }), 2);
+  // editions=all reaches the non-canonical 1750 too
+  assertEquals(await count(computer, "encrease", { editions: "all" }), 2);
 });
 
 Deno.test("version selects the edited or original text", async () => {
@@ -243,7 +243,7 @@ Deno.test("results paginate", async () => {
   const computer = await testComputer();
   const paged = await computer.search({
     q: "paragraph",
-    edition: "all",
+    editions: "all",
     perPage: 1,
     page: 2,
   });

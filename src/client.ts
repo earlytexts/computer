@@ -121,6 +121,7 @@ export const computerClient = (
       if (params.author !== undefined) query.set("author", params.author);
       if (params.work !== undefined) query.set("work", params.work);
       if (params.edition !== undefined) query.set("edition", params.edition);
+      if (params.editions !== undefined) query.set("editions", params.editions);
       if (params.page !== undefined) query.set("page", String(params.page));
       if (params.perPage !== undefined) {
         query.set("perPage", String(params.perPage));
@@ -129,19 +130,20 @@ export const computerClient = (
     },
     frequency: (params) => {
       const query = new URLSearchParams({ q: params.q });
-      if (params.by !== undefined) query.set("by", params.by);
+      if (params.groupBy !== undefined) query.set("groupBy", params.groupBy);
       if (params.match !== undefined) query.set("match", params.match);
       if (params.caseSensitive) query.set("caseSensitive", "1");
       if (params.version !== undefined) query.set("version", params.version);
       if (params.author !== undefined) query.set("author", params.author);
       if (params.work !== undefined) query.set("work", params.work);
       if (params.edition !== undefined) query.set("edition", params.edition);
+      if (params.editions !== undefined) query.set("editions", params.editions);
       return must(`/frequency?${query}`);
     },
     concordance: (params) => {
       const query = new URLSearchParams({ q: params.q });
-      if (params.context !== undefined) {
-        query.set("context", String(params.context));
+      if (params.window !== undefined) {
+        query.set("window", String(params.window));
       }
       if (params.sort !== undefined) query.set("sort", params.sort);
       if (params.match !== undefined) query.set("match", params.match);
@@ -150,6 +152,7 @@ export const computerClient = (
       if (params.author !== undefined) query.set("author", params.author);
       if (params.work !== undefined) query.set("work", params.work);
       if (params.edition !== undefined) query.set("edition", params.edition);
+      if (params.editions !== undefined) query.set("editions", params.editions);
       if (params.page !== undefined) query.set("page", String(params.page));
       if (params.perPage !== undefined) {
         query.set("perPage", String(params.perPage));
@@ -161,6 +164,7 @@ export const computerClient = (
       if (params.author !== undefined) query.set("author", params.author);
       if (params.work !== undefined) query.set("work", params.work);
       if (params.edition !== undefined) query.set("edition", params.edition);
+      if (params.editions !== undefined) query.set("editions", params.editions);
       if (params.by !== undefined) query.set("by", params.by);
       if (params.version !== undefined) query.set("version", params.version);
       if (params.min !== undefined) query.set("min", String(params.min));
@@ -179,6 +183,7 @@ export const computerClient = (
       if (params.author !== undefined) query.set("author", params.author);
       if (params.work !== undefined) query.set("work", params.work);
       if (params.edition !== undefined) query.set("edition", params.edition);
+      if (params.editions !== undefined) query.set("editions", params.editions);
       return must(`/collocations?${query}`);
     },
     similar: (params) => {
