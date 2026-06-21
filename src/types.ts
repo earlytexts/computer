@@ -428,6 +428,134 @@ export type CollocationsResponse = {
   results: CollocationEntry[];
 };
 
+/* ------------------------------ similar ------------------------------ */
+
+/**
+ * The granularity a similarity query works at, both for the target and for the
+ * items returned: a single SECTION (one document), a whole EDITION (its sections
+ * summed), or a whole WORK (its canonical edition's sections summed).
+ */
+export type SimilarLevel = "section" | "edition" | "work";
+
+/** One corpus item lexically similar to the target. */
+export type SimilarItem = {
+  author: string; // author slug
+  authorName: string; // surname, for display
+  work: string;
+  workBreadcrumb: string;
+  /** The edition (a year slug) for section/edition levels; null for work level. */
+  edition: string | null;
+  /** The section path for the section level; empty otherwise. */
+  sectionPath: string[];
+  /** The section title for the section level; null otherwise. */
+  sectionTitle: string | null;
+  /**
+   * Cosine similarity to the target (0–1): higher is more alike. Opaque, like
+   * the search score — the TF-IDF vectors it derives from never leave the server.
+   */
+  score: number;
+};
+
+export type SimilarResponse = {
+  /** The granularity compared (target and results alike). */
+  level: SimilarLevel;
+  /** Echo of the target scope. */
+  author: string | null;
+  work: string | null;
+  /** The target edition (a year slug), resolved to canonical when omitted. */
+  edition: string | null;
+  /** The target section path (section level only); empty otherwise. */
+  sectionPath: string[];
+  /**
+   * Whether the target resolved to a non-empty vector. False means the
+   * author/work/edition/section was not found or had no indexed text, so there
+   * is nothing to compare and `results` is empty.
+   */
+  found: boolean;
+  /** Number of rows returned. */
+  total: number;
+  /** Similar items, ranked by similarity descending; the target's own work is
+   * never among them. */
+  results: SimilarItem[];
+};
+
+/* ------------------------------- topics ------------------------------ */
+
+/**
+ * The granularity a topic-mix query works at: a single SECTION, a whole EDITION
+ * (its sections aggregated), or a whole WORK (its canonical edition aggregated).
+ * The same three levels as `similar`.
+ */
+export type TopicLevel = SimilarLevel;
+
+/** One lemma of a topic's term distribution, with its weight in the topic (0–1). */
+export type TopicTermWeight = {
+  lemma: string;
+  weight: number;
+};
+
+/** One corpus work where a topic is prominent (for tracing a topic). */
+export type TopicProminentItem = {
+  author: string; // author slug
+  authorName: string; // surname, for display
+  work: string;
+  workBreadcrumb: string;
+  /** The work's canonical edition (a year slug). */
+  edition: string;
+  /** The topic's share of this work's content (0–1). */
+  weight: number;
+};
+
+/** One topic of the model: its term distribution and where it is most prominent. */
+export type TopicSummary = {
+  /** Stable 0-based topic id. */
+  id: number;
+  /** A short label: the topic's top few lemmas, joined. */
+  label: string;
+  /** The topic's highest-weight lemmas, descending — what the topic is "about". */
+  terms: TopicTermWeight[];
+  /** The canonical-edition works this topic is most prominent in, descending. */
+  prominent: TopicProminentItem[];
+};
+
+export type TopicsResponse = {
+  /** Number of topics in the model. */
+  k: number;
+  /** Every topic, in id order. */
+  topics: TopicSummary[];
+};
+
+/** One topic in a target's mix: the topic, plus its share of the target. */
+export type TopicMixItem = {
+  id: number;
+  label: string;
+  /** A few of the topic's top lemmas, for context. */
+  terms: TopicTermWeight[];
+  /** The topic's share of the target (0–1). */
+  weight: number;
+};
+
+export type TopicMixResponse = {
+  /** The granularity aggregated. */
+  level: TopicLevel;
+  /** Echo of the target scope. */
+  author: string | null;
+  work: string | null;
+  /** The target edition (a year slug), resolved to canonical when omitted. */
+  edition: string | null;
+  /** The target section path (section level only); empty otherwise. */
+  sectionPath: string[];
+  /**
+   * Whether the target resolved to a mix. False means the author/work/edition/
+   * section was not found or had no indexed text, so `topics` is empty.
+   */
+  found: boolean;
+  /** Number of topics returned (those with non-zero weight, capped by `limit`). */
+  total: number;
+  /** The target's topics, by descending weight. */
+  topics: TopicMixItem[];
+};
+
 /* ------------------------------- errors ------------------------------ */
 
 export type ErrorResponse = { error: string };
@@ -500,6 +628,61 @@ export type KeywordsParams = {
   /** Minimum target occurrences for a term to be scored (default 5). */
   min?: number;
   /** Maximum rows to return (default 50). */
+  limit?: number;
+};
+
+export type SimilarParams = {
+  /** Target author slug — the item to find lookalikes for lives here. */
+  author?: string;
+  /** Target work slug within the author. */
+  work?: string;
+  /**
+   * Target edition (a year slug). Omit for the work's canonical edition. At the
+   * "work" level it is ignored (the work is taken as a whole).
+   */
+  edition?: string;
+  /**
+   * Target section path (slugs from the edition root). Provide it for a section
+   * comparison; omit it for an edition- or work-level comparison.
+   */
+  path?: string[];
+  /**
+   * Granularity of both the target and the results. Defaults to "section" when a
+   * `path` is given, otherwise "edition".
+   */
+  level?: SimilarLevel;
+  /** Maximum items to return (default 20, max 200). */
+  limit?: number;
+};
+
+export type TopicsParams = {
+  /** Top lemmas to report per topic (default 12, max 25). */
+  terms?: number;
+  /** Prominent works to report per topic (default 8, max 50). */
+  works?: number;
+};
+
+export type TopicMixParams = {
+  /** Target author slug — the item whose topic mix you want lives here. */
+  author?: string;
+  /** Target work slug within the author. */
+  work?: string;
+  /**
+   * Target edition (a year slug). Omit for the work's canonical edition. At the
+   * "work" level it is ignored (the work is taken as a whole).
+   */
+  edition?: string;
+  /**
+   * Target section path (slugs from the edition root). Provide it for a section
+   * mix; omit it for an edition- or work-level mix.
+   */
+  path?: string[];
+  /**
+   * Granularity of the target. Defaults to "section" when a `path` is given,
+   * otherwise "edition".
+   */
+  level?: TopicLevel;
+  /** Maximum topics to return, by descending weight (default 10, max k). */
   limit?: number;
 };
 
@@ -587,4 +770,10 @@ export type Computer = {
   keywords: (params: KeywordsParams) => Promise<KeywordsResponse>;
   /** Words that occur near a node word more than chance (collocation). */
   collocations: (params: CollocationsParams) => Promise<CollocationsResponse>;
+  /** Corpus items most lexically similar to a target (cosine over TF-IDF). */
+  similar: (params: SimilarParams) => Promise<SimilarResponse>;
+  /** The corpus's topic model: each topic's top terms and where it is prominent. */
+  topics: (params: TopicsParams) => Promise<TopicsResponse>;
+  /** A target's topic mix (NMF over the DTM): "what this work is about". */
+  topicMix: (params: TopicMixParams) => Promise<TopicMixResponse>;
 };

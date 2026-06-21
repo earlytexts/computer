@@ -16,6 +16,7 @@ import {
   type WorkEntry,
 } from "../artefacts.ts";
 import {
+  aggregateMix,
   type AlignedSection,
   alignSections,
   blockText,
@@ -38,12 +39,19 @@ import {
   resolveBlock,
   search,
   type SearchOptions,
+  similar,
   type Sort,
   surfaceIds,
   TARGET,
   tokenize,
 } from "../text/mod.ts";
-import { type BlockStore, findEditionEntry, type TokenStore } from "./store.ts";
+import {
+  type BlockStore,
+  type DtmStore,
+  findEditionEntry,
+  type TokenStore,
+  type TopicsStore,
+} from "./store.ts";
 import type {
   AlignedRow,
   CatalogResponse,
@@ -70,6 +78,18 @@ import type {
   SectionRef,
   SectionResponse,
   SectionSummary,
+  SimilarItem,
+  SimilarLevel,
+  SimilarParams,
+  SimilarResponse,
+  TopicLevel,
+  TopicMixItem,
+  TopicMixParams,
+  TopicMixResponse,
+  TopicsParams,
+  TopicsResponse,
+  TopicSummary,
+  TopicTermWeight,
   Version,
 } from "../../types.ts";
 
@@ -706,6 +726,338 @@ export const collocationsResponse = async (
       logLikelihood: row.logLikelihood,
       tScore: row.tScore,
     })),
+  };
+};
+
+/* ------------------------------ similar ------------------------------ */
+
+const MAX_SIMILAR = 200;
+const DEFAULT_SIMILAR = 20;
+
+const parseLevel = (
+  level: SimilarLevel | undefined,
+  hasPath: boolean,
+): SimilarLevel =>
+  level === "section" || level === "edition" || level === "work"
+    ? level
+    : hasPath
+    ? "section"
+    : "edition";
+
+/**
+ * Similarity: the corpus items most lexically like a target, by cosine over the
+ * TF-IDF document vectors (the DTM artefact, read lazily here). The target is an
+ * author/work, narrowed to an edition (canonical by default) and — at the section
+ * level — a section path; coarser levels sum their constituent document rows. The
+ * result universe is the canonical editions (one printing per work, as the other
+ * routes default), with the target's own work excluded, so the answer is "what
+ * ELSE in the corpus reads like this". Pure scoring lives in `similar`; here we
+ * resolve the target's rows, partition the universe into candidate items, and
+ * label the ranked rows.
+ */
+export const similarResponse = async (
+  dtmStore: DtmStore,
+  artefacts: ServeArtefacts,
+  params: SimilarParams,
+): Promise<SimilarResponse> => {
+  const requestPath = params.path ?? [];
+  const level = parseLevel(params.level, requestPath.length > 0);
+  const limit = Math.min(
+    MAX_SIMILAR,
+    Math.max(1, Math.floor(params.limit ?? DEFAULT_SIMILAR)),
+  );
+  // The section path matters only at the section level; lowercase it to match
+  // the stored slugs (as the text routes do).
+  const sectionPath = level === "section"
+    ? requestPath.map((slug) => slug.toLowerCase())
+    : [];
+
+  const notFound: SimilarResponse = {
+    level,
+    author: params.author ?? null,
+    work: params.work ?? null,
+    edition: params.edition ?? null,
+    sectionPath,
+    found: false,
+    total: 0,
+    results: [],
+  };
+  if (params.author === undefined || params.work === undefined) return notFound;
+
+  const { manifest, units } = artefacts;
+  // Resolve the target edition: the named one, or the work's canonical edition
+  // when omitted. The work level ignores any named edition and takes the
+  // canonical printing, so the target is represented as the result universe is.
+  const wantEdition = level === "work" ? undefined : params.edition;
+  const targetEdition = manifest.editions.findIndex((ref) =>
+    ref.author === params.author && ref.work === params.work &&
+    (wantEdition === undefined ? ref.canonical : ref.edition === wantEdition)
+  );
+  if (targetEdition === -1) return notFound;
+  const resolvedEdition = manifest.editions[targetEdition].edition;
+
+  const dtm = await dtmStore.matrix();
+  const targetKey = sectionPath.join("/");
+
+  // The target's document rows: the matching section at the section level, or
+  // every section of the target edition at the edition/work level.
+  const targetDocs: number[] = [];
+  for (let d = 0; d < dtm.docs.length; d++) {
+    if (dtm.docs[d].edition !== targetEdition) continue;
+    if (level === "section" && dtm.docs[d].sectionPath !== targetKey) continue;
+    targetDocs.push(d);
+  }
+  // Found only if the target carries indexed text (a non-empty vector).
+  const found = targetDocs.some((d) => dtm.rowPtr[d] < dtm.rowPtr[d + 1]);
+  if (!found) return notFound;
+
+  // Section titles, for labelling section-level results.
+  const titleOf = new Map<string, string>();
+  if (level === "section") {
+    for (let u = 0; u < units.edition.length; u++) {
+      const key = `${units.edition[u]}\t${units.sectionPath[u]}`;
+      if (!titleOf.has(key)) titleOf.set(key, units.sectionTitle[u]);
+    }
+  }
+
+  // Candidate items: documents of the canonical editions (the result universe),
+  // minus the target work, grouped at the chosen level. `labels` runs parallel
+  // to `groupDocs`; the pure scorer returns group indices into both.
+  const groupDocs: number[][] = [];
+  const labels: SimilarItem[] = [];
+  const groupOf = new Map<string, number>();
+  for (let d = 0; d < dtm.docs.length; d++) {
+    const ref = manifest.editions[dtm.docs[d].edition];
+    if (!ref.canonical) continue;
+    if (ref.author === params.author && ref.work === params.work) continue;
+    const key = level === "work"
+      ? `${ref.author}/${ref.work}`
+      : level === "edition"
+      ? `${dtm.docs[d].edition}`
+      : `${d}`;
+    let g = groupOf.get(key);
+    if (g === undefined) {
+      g = groupDocs.length;
+      groupOf.set(key, g);
+      groupDocs.push([]);
+      const docPath = dtm.docs[d].sectionPath;
+      labels.push({
+        author: ref.author,
+        authorName: ref.authorName,
+        work: ref.work,
+        workBreadcrumb: ref.workBreadcrumb,
+        edition: level === "work" ? null : ref.edition,
+        sectionPath: level === "section"
+          ? (docPath === "" ? [] : docPath.split("/"))
+          : [],
+        sectionTitle: level === "section"
+          ? titleOf.get(`${dtm.docs[d].edition}\t${docPath}`) ?? null
+          : null,
+        score: 0,
+      });
+    }
+    groupDocs[g].push(d);
+  }
+
+  const ranked = similar(dtm, targetDocs, groupDocs, { limit });
+  const results = ranked.map((row) => ({
+    ...labels[row.group],
+    score: row.score,
+  }));
+  return {
+    level,
+    author: params.author,
+    work: params.work,
+    edition: level === "work" ? null : resolvedEdition,
+    sectionPath,
+    found: true,
+    total: results.length,
+    results,
+  };
+};
+
+/* ------------------------------ topics ------------------------------- */
+
+const MAX_TOPIC_TERMS = 25; // matches the per-topic terms stored at build time
+const DEFAULT_TOPIC_TERMS = 12;
+const MAX_PROMINENT_WORKS = 50;
+const DEFAULT_PROMINENT_WORKS = 8;
+const DEFAULT_MIX_TOPICS = 10;
+const MIX_CONTEXT_TERMS = 6; // top terms shown beside a topic in a mix
+
+const round4 = (n: number): number => Math.round(n * 10000) / 10000;
+
+/** A topic's short label: its top few lemmas, joined. */
+const topicLabel = (terms: { lemma: string }[]): string =>
+  terms.slice(0, 3).map((term) => term.lemma).join(", ");
+
+/** Round a stored term distribution to the wire shape, capping the term count. */
+const wireTerms = (
+  terms: { lemma: string; weight: number }[],
+  count: number,
+): TopicTermWeight[] =>
+  terms.slice(0, count)
+    .map((term) => ({ lemma: term.lemma, weight: round4(term.weight) }))
+    .filter((term) => term.weight > 0);
+
+/**
+ * The corpus's topic model: every topic with its highest-weight terms (what the
+ * topic is about) and the canonical-edition works it is most prominent in (so a
+ * client can trace a topic across authors and decades). The model is trained at
+ * build time (NMF over the DTM, read lazily here); this only labels and ranks.
+ * Works are grouped from the document mix and each aggregated once, then ranked
+ * per topic by that work's share of the topic.
+ */
+export const topicsResponse = async (
+  topicsStore: TopicsStore,
+  artefacts: ServeArtefacts,
+  params: TopicsParams,
+): Promise<TopicsResponse> => {
+  const model = await topicsStore.model();
+  const { manifest } = artefacts;
+  const nTerms = Math.min(
+    MAX_TOPIC_TERMS,
+    Math.max(1, Math.floor(params.terms ?? DEFAULT_TOPIC_TERMS)),
+  );
+  const nWorks = Math.min(
+    MAX_PROMINENT_WORKS,
+    Math.max(1, Math.floor(params.works ?? DEFAULT_PROMINENT_WORKS)),
+  );
+
+  // Group the canonical-edition documents by work, then aggregate each work's
+  // topic mix once (reused across all topics). `labels` runs parallel to the
+  // groups.
+  const groupDocs: number[][] = [];
+  const labels: {
+    author: string;
+    authorName: string;
+    work: string;
+    workBreadcrumb: string;
+    edition: string;
+  }[] = [];
+  const groupOf = new Map<string, number>();
+  for (let d = 0; d < model.docs.length; d++) {
+    const ref = manifest.editions[model.docs[d].edition];
+    if (!ref.canonical) continue;
+    const key = `${ref.author}/${ref.work}`;
+    let g = groupOf.get(key);
+    if (g === undefined) {
+      g = groupDocs.length;
+      groupOf.set(key, g);
+      groupDocs.push([]);
+      labels.push({
+        author: ref.author,
+        authorName: ref.authorName,
+        work: ref.work,
+        workBreadcrumb: ref.workBreadcrumb,
+        edition: ref.edition,
+      });
+    }
+    groupDocs[g].push(d);
+  }
+  const workMix = groupDocs.map((docs) => aggregateMix(model, docs));
+
+  const topics: TopicSummary[] = [];
+  for (let t = 0; t < model.k; t++) {
+    const prominent = workMix
+      .map((mix, g) => ({ g, weight: round4(mix[t]) }))
+      .filter((entry) => entry.weight > 0)
+      .sort((a, b) => b.weight - a.weight || a.g - b.g)
+      .slice(0, nWorks)
+      .map((entry) => ({ ...labels[entry.g], weight: entry.weight }));
+    topics.push({
+      id: t,
+      label: topicLabel(model.terms[t]),
+      terms: wireTerms(model.terms[t], nTerms),
+      prominent,
+    });
+  }
+  return { k: model.k, topics };
+};
+
+/**
+ * A target's topic mix — "what this work is about". The target is an author/work,
+ * narrowed by edition (canonical by default) and, at the section level, a path;
+ * coarser levels aggregate their constituent document mixes. Returns the topics
+ * the target carries, by descending share, each tagged with a few top terms for
+ * context. Mirrors `similarResponse`'s target resolution; the aggregation is the
+ * pure `aggregateMix`.
+ */
+export const topicMixResponse = async (
+  topicsStore: TopicsStore,
+  artefacts: ServeArtefacts,
+  params: TopicMixParams,
+): Promise<TopicMixResponse> => {
+  const requestPath = params.path ?? [];
+  const level: TopicLevel = parseLevel(params.level, requestPath.length > 0);
+  const sectionPath = level === "section"
+    ? requestPath.map((slug) => slug.toLowerCase())
+    : [];
+
+  const notFound: TopicMixResponse = {
+    level,
+    author: params.author ?? null,
+    work: params.work ?? null,
+    edition: params.edition ?? null,
+    sectionPath,
+    found: false,
+    total: 0,
+    topics: [],
+  };
+  if (params.author === undefined || params.work === undefined) return notFound;
+
+  const { manifest } = artefacts;
+  const wantEdition = level === "work" ? undefined : params.edition;
+  const targetEdition = manifest.editions.findIndex((ref) =>
+    ref.author === params.author && ref.work === params.work &&
+    (wantEdition === undefined ? ref.canonical : ref.edition === wantEdition)
+  );
+  if (targetEdition === -1) return notFound;
+  const resolvedEdition = manifest.editions[targetEdition].edition;
+
+  const model = await topicsStore.model();
+  const targetKey = sectionPath.join("/");
+  const targetDocs: number[] = [];
+  for (let d = 0; d < model.docs.length; d++) {
+    if (model.docs[d].edition !== targetEdition) continue;
+    if (level === "section" && model.docs[d].sectionPath !== targetKey) {
+      continue;
+    }
+    targetDocs.push(d);
+  }
+
+  const mix = aggregateMix(model, targetDocs);
+  let sum = 0;
+  for (let t = 0; t < model.k; t++) sum += mix[t];
+  if (sum === 0) return notFound; // no indexed text → no mix
+
+  const limit = Math.min(
+    model.k,
+    Math.max(1, Math.floor(params.limit ?? DEFAULT_MIX_TOPICS)),
+  );
+  const topics: TopicMixItem[] = Array.from(
+    { length: model.k },
+    (_, t) => ({ t, weight: round4(mix[t]) }),
+  )
+    .filter((entry) => entry.weight > 0)
+    .sort((a, b) => b.weight - a.weight || a.t - b.t)
+    .slice(0, limit)
+    .map((entry) => ({
+      id: entry.t,
+      label: topicLabel(model.terms[entry.t]),
+      terms: wireTerms(model.terms[entry.t], MIX_CONTEXT_TERMS),
+      weight: entry.weight,
+    }));
+
+  return {
+    level,
+    author: params.author,
+    work: params.work,
+    edition: level === "work" ? null : resolvedEdition,
+    sectionPath,
+    found: true,
+    total: topics.length,
+    topics,
   };
 };
 

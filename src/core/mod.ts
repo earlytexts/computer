@@ -15,7 +15,12 @@
 
 import { type Manifest, PIPELINE_VERSION } from "./artefacts.ts";
 import { buildArtefactsToDisk, loadForServing } from "./pipeline.ts";
-import { createBlockStore, createTokenStore } from "./serve/store.ts";
+import {
+  createBlockStore,
+  createDtmStore,
+  createTokenStore,
+  createTopicsStore,
+} from "./serve/store.ts";
 import { localComputer } from "./serve/localComputer.ts";
 import { denoIo, type Io } from "./io.ts";
 import type { Computer } from "../types.ts";
@@ -44,8 +49,10 @@ export const openComputer = async (
   const reader = io.blockReader(paths.artefactsDir);
   const store = createBlockStore(artefacts, reader);
   const tokens = createTokenStore(artefacts, reader);
+  const dtm = createDtmStore(reader);
+  const topics = createTopicsStore(reader);
   return {
-    computer: localComputer(artefacts, store, tokens),
+    computer: localComputer(artefacts, store, tokens, dtm, topics),
     manifest: artefacts.manifest,
   };
 };

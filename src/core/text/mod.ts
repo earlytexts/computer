@@ -59,6 +59,13 @@ export type {
   CollocationRow,
 } from "./collocations.ts";
 
+/* similarity (cosine over the TF-IDF document vectors) */
+export { similar } from "./similar.ts";
+export type { SimilarOptions, SimilarRow } from "./similar.ts";
+
+/* topic models (aggregating the NMF document-topic mix) */
+export { aggregateMix } from "./topics.ts";
+
 /* diff, edition comparison, concordance */
 export { diffBlocks, diffToBlocks } from "./diff.ts";
 export { alignSections, findSectionByKey, pathKey } from "./compare.ts";

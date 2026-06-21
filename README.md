@@ -80,6 +80,9 @@ served over MCP (Streamable HTTP) at `/mcp`.
 | `/concordance?q=&context=&sort=&match=&caseSensitive=&version=&author=&work=&edition=&page=&perPage=` | keyword-in-context lines                       |
 | `/keywords?author=&work=&edition=&by=&version=&min=&limit=`                                           | a subcorpus's distinctive words (keyness)      |
 | `/collocations?q=&by=&match=&window=&min=&limit=&author=&work=&edition=`                              | words occurring near a node word               |
+| `/similar?author=&work=&edition=&path=&level=&limit=`                                                 | corpus items most lexically like a target      |
+| `/topics?terms=&works=`                                                                               | the corpus topic model (themes + top terms)    |
+| `/topics/mix?author=&work=&edition=&path=&level=&limit=`                                              | a target's topic mix (what a text is about)    |
 | `/mcp` (POST/GET/DELETE)                                                                              | the corpus tools over MCP                      |
 
 Edition slugs are year slugs like `1757` or `1742a`. A request without
@@ -174,6 +177,46 @@ is the co-occurrence noise floor (default 3); `limit` caps the rows (default
 50). Marginal frequencies come from `postings.bin`, so only the node word's own
 units are read from `tokens.bin` (cached per edition) — never the whole scope.
 
+### Similar
+
+Where keyness and collocations _characterise_ a text, `similar` finds its
+_neighbours_: given a target, the corpus items whose vocabulary most resembles
+it — "what else reads like this passage on miracles". It is the public face of
+the document-term matrix (`dtm.bin`): each (edition, section) document is its
+L2-normalised TF-IDF row, so the cosine similarity between two items is their
+dot product. The `level` (`section`, `edition`, or `work`) sets the granularity
+of both the target and the results — a single section, a whole edition, or a
+whole work, the coarser two summing and re-normalising their constituent rows —
+and defaults to `section` when a `path` is given, else `edition`. The target is
+an `author`/`work`, narrowed by `edition` (canonical by default) and, at the
+section level, a `path`; results are drawn from the canonical editions (one
+printing per work) with the target's own work excluded. The score is an opaque
+cosine in [0, 1], the same opacity as the search `score` — the vectors never
+leave the server. `limit` caps the rows (default 20, max 200). The DTM is read
+lazily on first use and cached (like `tokens.bin`), not loaded at boot.
+
+### Topics
+
+Where `similar` finds a text's neighbours, `topics` steps back to the corpus's
+themes. A topic model is trained over the whole corpus at build time — a
+non-negative matrix factorisation (NMF) of the document-term matrix into a
+document-topic mix and a topic-term distribution — and the two routes read it
+back. `/topics` is the model itself: each of the model's _K_ topics as its
+highest-weight terms (what the topic is about) and the canonical-edition works
+it is most prominent in (so a theme can be traced across authors and decades);
+`terms` and `works` cap each list. `/topics/mix` is the other face: given a
+target (an `author`/`work`, narrowed by `edition` and, at the section level, a
+`path`, with the same `level` granularity and defaults as `similar`), it returns
+the topics that target draws on most, each with its share (0–1) and a few top
+terms — "what this work is about". The factors never leave the server; only
+topic labels, terms, and shares do. The model is read lazily on first use and
+cached, like the DTM.
+
+Lemmas occurring in more than half the documents (the function-word glue) are
+dropped from the model's view of the DTM before training, so topics carry
+lexical signal rather than syntax; the stored DTM that `similar` reads keeps
+every column.
+
 ## Artefacts
 
 `deno task build` compiles the corpus and writes everything derived to
@@ -200,6 +243,18 @@ units are read from `tokens.bin` (cached per edition) — never the whole scope.
   (pre-correction) text, covering only the units that carry editorial markup, so
   an `original` search reads those units from the overlay instead of the
   primary.
+- `dtm.bin` + `dtm.json` — the document-term matrix: one sparse row per
+  (edition, section) document of TF-IDF weights over lemma columns, stored CSR
+  (row pointers, column ids, L2-normalised Float32 values) with the row/column
+  labels and non-zero count in the JSON sidecar. The substrate for the vector
+  routes — the `/similar` route and the topic model both read it; like
+  `tokens.bin` it is read lazily by those routes, not loaded into memory at
+  boot.
+- `topics.bin` + `topics.json` — the topic model (NMF over the DTM): the
+  document-topic mix as a dense Float32 matrix (one row per DTM document, each
+  summing to 1), with the topic count, the document row labels, and each topic's
+  top terms in the JSON sidecar. Trained at build time and read lazily by the
+  `/topics` and `/topics/mix` routes.
 - `editions/<author>/<work>/<edition>/blocks.jsonl` + `text.txt` + `tokens.bin`
   — each compiled block as a JSON line (search hits are read back by byte
   range), the extracted plain text of every block, and the token stream as
@@ -218,11 +273,15 @@ stamped into the manifest and mismatched artefacts are rebuilt, while type-level
 changes (variants.json, lemmas) only change vocab.json.
 
 The index is keyed by surface form and queries are expanded through the
-vocabulary, so the exact/spelling/form layers share one index. Document/
-collection frequencies and per-unit token counts are already stored, so ranked
-retrieval (BM25/TF-IDF), frequency and distribution measures, and document-term
-matrices for vectors/topic models can all be derived from `vocab.json` +
-`units.json` + `tokens.bin` without touching the pipeline.
+vocabulary, so the exact/spelling/form layers share one index. Search ranks hits
+by BM25 (saturating term frequency, length-normalised by the per-unit token
+counts; the `score` is opaque, only its ordering is contractual), and the
+document-term matrix (`dtm.bin`) is built from the same `vocab.json` +
+`units.json` + `postings.bin` as the TF-IDF substrate for the vector routes —
+the `/similar` route and the topic model (`topics.bin`, an NMF factorisation of
+the DTM serving `/topics` and `/topics/mix`) both consume it. Further frequency
+and distribution measures can be derived the same way, without touching the
+pipeline.
 
 ## Architecture
 
@@ -267,8 +326,9 @@ Above the core, depending only on the `Computer` interface.
 ### The core (`src/core/`)
 
 - `mod.ts` — the front door: `openComputer(io, paths)` loads the artefacts
-  (rebuilding from the corpus first if stale), wires the lazy block and token
-  stores, and returns a `Computer`. The artefact format never escapes this seam.
+  (rebuilding from the corpus first if stale), wires the lazy block, token, DTM,
+  and topic stores, and returns a `Computer`. The artefact format never escapes
+  this seam.
 - `io.ts` — the swappable reader: the only module that touches the filesystem.
   It implements the `Io` adapter (corpus scan, artefact read/write, the lazy
   block reader) backed by Deno; everything below it is pure or reaches the disk
@@ -283,8 +343,9 @@ Above the core, depending only on the `Computer` interface.
   an injected `CorpusFs`, compile Markit, resolve `children` references and
   cascade metadata — how composite works like ETSS/FD/HE share text) and
   `builder.ts` (fold the corpus into the tables).
-- `serve/` — artefacts → API responses. `store.ts` (lazy block and token-stream
-  reads — the block-store and token-store LRUs and byte-range reads, over an
+- `serve/` — artefacts → API responses. `store.ts` (lazy block, token-stream,
+  DTM, and topic-model reads — the block-store and token-store LRUs and
+  byte-range reads and the cached document-term matrix and topic model, over an
   injected `BlockReader` — and catalog lookups), `api.ts` (pure response
   builders), and `localComputer.ts` (the in-process `Computer`, resolving slugs
   and the canonical default over the api builders).
@@ -295,10 +356,11 @@ Above the core, depending only on the `Computer` interface.
   expansion, postings intersection with phrase positions), `keywords.ts`
   (keyness: log-likelihood and log-ratio over a target/reference partition),
   `collocations.ts` (positional co-occurrence around a node word, scored by
-  G²/PMI/t-score), `diff.ts` (Myers word/punctuation diff, block alignment by
-  Markit ids), `compare.ts` (section-tree alignment between editions), and
-  `concordance.ts` (keyword-in-context lines). `build/` and `serve/` import only
-  `text/mod.ts`.
+  G²/PMI/t-score), `similar.ts` (cosine similarity over the TF-IDF document
+  vectors), `topics.ts` (aggregating the topic model's document-topic mix),
+  `diff.ts` (Myers word/punctuation diff, block alignment by Markit ids),
+  `compare.ts` (section-tree alignment between editions), and `concordance.ts`
+  (keyword-in-context lines). `build/` and `serve/` import only `text/mod.ts`.
 
 Imports run strictly downward: entry points → `server.ts`/`mcp.ts` →
 `core/mod.ts` → `{build, serve}` → `text/mod.ts` → `artefacts.ts`/`types.ts`.

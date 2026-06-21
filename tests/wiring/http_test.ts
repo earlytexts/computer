@@ -13,6 +13,9 @@ import type {
   CollocationsResponse,
   KeywordsResponse,
   SearchResponse,
+  SimilarResponse,
+  TopicMixResponse,
+  TopicsResponse,
 } from "../../src/types.ts";
 
 /** A handler over the test computer, with optional rate-limit/clock. */
@@ -100,6 +103,61 @@ Deno.test("collocations query parameters are parsed and wired through", async ()
   assert(response.nodeCount >= 2);
   assert(response.results.length > 0);
   assert(response.results.length <= 5);
+});
+
+Deno.test("similar query parameters are parsed and wired through", async () => {
+  // A section-level target with a path; level inferred from the path's presence.
+  const section = await getJson<SimilarResponse>(
+    "/similar?author=test&work=tw&path=1&limit=5",
+  );
+  assertEquals(section.level, "section");
+  assertEquals(section.author, "test");
+  assertEquals(section.work, "tw");
+  assertEquals(section.edition, "1760"); // tw's canonical edition
+  assertEquals(section.sectionPath, ["1"]);
+  assert(section.found);
+  assert(section.results.length <= 5);
+  // The target's own work never appears among the results.
+  assert(section.results.every((r) => r.work !== "tw"));
+
+  // An explicit level and an unknown work fall through to a not-found body.
+  const missing = await getJson<SimilarResponse>(
+    "/similar?author=test&work=nope&level=work",
+  );
+  assertEquals(missing.level, "work");
+  assert(!missing.found);
+  assertEquals(missing.results.length, 0);
+});
+
+Deno.test("topics query parameters are parsed and wired through", async () => {
+  // The model itself: topics with terms and (capped) prominent works.
+  const model = await getJson<TopicsResponse>("/topics?terms=5&works=3");
+  assert(model.k >= 1);
+  assertEquals(model.topics.length, model.k);
+  for (const topic of model.topics) {
+    assert(topic.terms.length <= 5);
+    assert(topic.prominent.length <= 3);
+  }
+
+  // A target's mix; level inferred from the path's presence.
+  const mix = await getJson<TopicMixResponse>(
+    "/topics/mix?author=test&work=tw&path=1&limit=4",
+  );
+  assertEquals(mix.level, "section");
+  assertEquals(mix.author, "test");
+  assertEquals(mix.work, "tw");
+  assertEquals(mix.edition, "1760"); // tw's canonical edition
+  assertEquals(mix.sectionPath, ["1"]);
+  assert(mix.found);
+  assert(mix.topics.length <= 4);
+
+  // An unknown work falls through to a not-found body.
+  const missing = await getJson<TopicMixResponse>(
+    "/topics/mix?author=test&work=nope&level=work",
+  );
+  assertEquals(missing.level, "work");
+  assert(!missing.found);
+  assertEquals(missing.topics.length, 0);
 });
 
 Deno.test("unknown resources return JSON 404s", async () => {

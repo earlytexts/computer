@@ -8,7 +8,13 @@
  * interface, so it runs over HTTP (a client) or in-process (localComputer).
  */
 
-import type { Computer, KeyMode, MatchLevel } from "./types.ts";
+import type {
+  Computer,
+  KeyMode,
+  MatchLevel,
+  SimilarLevel,
+  TopicLevel,
+} from "./types.ts";
 import {
   renderAuthors,
   renderCollocations,
@@ -20,6 +26,9 @@ import {
   renderKeywords,
   renderSearch,
   renderSection,
+  renderSimilar,
+  renderTopicMix,
+  renderTopics,
   renderWorks,
 } from "./render.ts";
 
@@ -76,6 +85,16 @@ const strArray = (input: Record<string, unknown>, key: string): string[] => {
     throw new Error(`missing required string array argument "${key}"`);
   }
   return value;
+};
+
+const strArrayOpt = (
+  input: Record<string, unknown>,
+  key: string,
+): string[] | undefined => {
+  const value = input[key];
+  return Array.isArray(value) && value.every((item) => typeof item === "string")
+    ? value as string[]
+    : undefined;
 };
 
 const slugProperty = (description: string) => ({
@@ -308,6 +327,99 @@ export const createTools = (computer: Computer): ToolSet => {
       },
     },
     {
+      name: "similar",
+      description:
+        'Find the corpus items most lexically similar to a target — what else reads like it. Name a target author and work (and optionally a specific edition, or a section path) and it returns the items whose vocabulary most resembles the target, by cosine similarity over TF-IDF vectors, with an opaque 0–1 score (higher is more alike). The level sets the granularity of both the target and the results: "section" compares one section against every other section, "edition" a whole edition against others, "work" a whole work against others. It defaults to "section" when a path is given, otherwise "edition". The target\'s own work is always excluded, and results are drawn from each work\'s canonical edition. Use it for discovery — "what other passages treat this subject", "which works most resemble this one" — where keywords and collocations characterise a text, this finds its neighbours.',
+      inputSchema: {
+        type: "object",
+        properties: {
+          author: {
+            ...authorProperty,
+            description:
+              'Target author slug, e.g. "hume" — the item to find lookalikes for lives here.',
+          },
+          work: workProperty,
+          edition: slugProperty(
+            'Target edition (a year slug like "1751"). Omit for the work\'s canonical edition. Ignored at the "work" level.',
+          ),
+          path: {
+            ...pathProperty,
+            description:
+              "Target section path (slugs from the edition root). Give it to compare one section; omit it to compare a whole edition or work.",
+          },
+          level: {
+            type: "string",
+            enum: ["section", "edition", "work"],
+            description:
+              'Granularity of the target and the results. "section": a single section. "edition": a whole edition. "work": a whole work. Defaults to "section" when a path is given, else "edition".',
+          },
+          limit: {
+            type: "number",
+            description: "Maximum items to return (default 20, max 200).",
+          },
+        },
+        required: ["author", "work"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "topics",
+      description:
+        'Survey the corpus\'s themes through its topic model — a set of unsupervised topics learned over the whole corpus (NMF over the TF-IDF document vectors). Each topic is a cluster of words that co-occur across documents (e.g. religion and miracles, or commerce and money), reported as its highest-weight terms together with the works it is most prominent in — so you can see what the corpus is about and trace a theme across authors and decades. Takes no target; use topic_mix for one work\'s themes. Use it for the big picture — "what are the main themes in the corpus", "which works are most about <theme>" — where keywords and similarity work from a text you name, this starts from the themes themselves.',
+      inputSchema: {
+        type: "object",
+        properties: {
+          terms: {
+            type: "number",
+            description: "Top terms to show per topic (default 12, max 25).",
+          },
+          works: {
+            type: "number",
+            description:
+              "Prominent works to list per topic (default 8, max 50).",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "topic_mix",
+      description:
+        'Show what a particular text is about, as a mix over the corpus\'s topics. Name a target author and work (and optionally a specific edition, or a section path) and it returns the topics the target draws on most, each with its share of the text (0–1) and its top terms. The level sets the granularity: "section" a single section, "edition" a whole edition, "work" a whole work; it defaults to "section" when a path is given, otherwise "edition". Use it to characterise a text thematically — "what is this work mainly about", "which themes run through this section" — and pair it with the topics tool (which defines the topics and shows where each is prominent across the corpus).',
+      inputSchema: {
+        type: "object",
+        properties: {
+          author: {
+            ...authorProperty,
+            description:
+              'Target author slug, e.g. "hume" — the text whose topic mix you want lives here.',
+          },
+          work: workProperty,
+          edition: slugProperty(
+            'Target edition (a year slug like "1751"). Omit for the work\'s canonical edition. Ignored at the "work" level.',
+          ),
+          path: {
+            ...pathProperty,
+            description:
+              "Target section path (slugs from the edition root). Give it for one section's mix; omit it for a whole edition or work.",
+          },
+          level: {
+            type: "string",
+            enum: ["section", "edition", "work"],
+            description:
+              'Granularity of the target. "section": a single section. "edition": a whole edition. "work": a whole work. Defaults to "section" when a path is given, else "edition".',
+          },
+          limit: {
+            type: "number",
+            description:
+              "Maximum topics to return, by descending share (default 10).",
+          },
+        },
+        required: ["author", "work"],
+        additionalProperties: false,
+      },
+    },
+    {
       name: "get_edition",
       description:
         "Get an edition's metadata, front matter, and full table of contents (section paths, titles, and stub flags). With no edition, returns the work's canonical edition. Call this before fetching sections, to find the right section paths.",
@@ -455,6 +567,35 @@ export const createTools = (computer: Computer): ToolSet => {
           author: strOpt(input, "author"),
           work: strOpt(input, "work"),
           edition: strOpt(input, "edition"),
+        }),
+      ),
+    similar: async (input) =>
+      renderSimilar(
+        await computer.similar({
+          author: str(input, "author"),
+          work: str(input, "work"),
+          edition: strOpt(input, "edition"),
+          path: strArrayOpt(input, "path"),
+          level: strOpt(input, "level") as SimilarLevel | undefined,
+          limit: numOpt(input, "limit"),
+        }),
+      ),
+    topics: async (input) =>
+      renderTopics(
+        await computer.topics({
+          terms: numOpt(input, "terms"),
+          works: numOpt(input, "works"),
+        }),
+      ),
+    topic_mix: async (input) =>
+      renderTopicMix(
+        await computer.topicMix({
+          author: str(input, "author"),
+          work: str(input, "work"),
+          edition: strOpt(input, "edition"),
+          path: strArrayOpt(input, "path"),
+          level: strOpt(input, "level") as TopicLevel | undefined,
+          limit: numOpt(input, "limit"),
         }),
       ),
     get_edition: async (input) => {

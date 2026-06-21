@@ -52,7 +52,7 @@ Deno.test("lists every tool with a name, description, and object schema", async 
   const { client, close } = await connect();
   try {
     const { tools } = await client.listTools();
-    assertEquals(tools.length, 11);
+    assertEquals(tools.length, 14);
     assertEquals(
       tools.map((t: { name: string }) => t.name).sort(),
       [
@@ -67,6 +67,9 @@ Deno.test("lists every tool with a name, description, and object schema", async 
         "keywords",
         "list_authors",
         "search",
+        "similar",
+        "topic_mix",
+        "topics",
       ],
     );
     for (const tool of tools) {
@@ -216,6 +219,39 @@ Deno.test("collocations renders a node word's neighbourhood", async () => {
     assertStringIncludes(text, 'collocating with "liberty" in test/tw');
     assertStringIncludes(text, "G²=");
     assertStringIncludes(text, "PMI=");
+  } finally {
+    await close();
+  }
+});
+
+Deno.test("similar renders lexically similar items", async () => {
+  const { client, close } = await connect();
+  try {
+    const { text } = await call(client, "similar", {
+      author: "test",
+      work: "tw",
+      level: "work",
+    });
+    assertStringIncludes(text, "most lexically similar to test/tw");
+    assertStringIncludes(text, "similarity");
+  } finally {
+    await close();
+  }
+});
+
+Deno.test("topics and topic_mix render the topic model", async () => {
+  const { client, close } = await connect();
+  try {
+    const model = await call(client, "topics", { terms: 4 });
+    assertStringIncludes(model.text, "topics");
+    assertStringIncludes(model.text, "Topic 0");
+
+    const mix = await call(client, "topic_mix", {
+      author: "test",
+      work: "tw",
+      level: "work",
+    });
+    assertStringIncludes(mix.text, "topic mix of test/tw");
   } finally {
     await close();
   }

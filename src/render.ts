@@ -27,6 +27,9 @@ import type {
   SearchResponse,
   SectionResponse,
   SectionSummary,
+  SimilarResponse,
+  TopicMixResponse,
+  TopicsResponse,
   WorkMeta,
 } from "./types.ts";
 
@@ -340,6 +343,86 @@ export const renderCollocations = (response: CollocationsResponse): string => {
     `${response.by} within ±${response.window} tokens ` +
     `(${response.nodeCount} occurrences), ranked by log-likelihood (G²); ` +
     `PMI is the effect size, t a frequency-weighted confidence:\n\n${rows}`;
+};
+
+/* ------------------------------ similar ------------------------------ */
+
+export const renderSimilar = (response: SimilarResponse): string => {
+  const target = [
+    response.author,
+    response.work,
+    response.edition,
+    ...response.sectionPath,
+  ].filter((p) => p !== null && p !== undefined).join("/") || "the target";
+  if (!response.found) {
+    return `No ${response.level} found for ${target}, or it has no indexed ` +
+      `text, so there is nothing to compare.`;
+  }
+  if (response.total === 0) {
+    return `Nothing in the corpus is lexically similar to ${target} ` +
+      `(by ${response.level}).`;
+  }
+  const cite = (entry: SimilarResponse["results"][number]): string => {
+    const parts = [entry.author, entry.work, entry.edition]
+      .filter((p) => p !== null).join("/");
+    return response.level === "section" && entry.sectionPath.length > 0
+      ? `${parts} § ${entry.sectionPath.join("/")}` +
+        (entry.sectionTitle ? ` (${entry.sectionTitle})` : "")
+      : parts;
+  };
+  const rows = response.results.map((entry, index) =>
+    `${index + 1}. ${cite(entry)} — similarity ${entry.score}`
+  ).join("\n");
+  return `Corpus ${response.level}s most lexically similar to ${target}, ` +
+    `ranked by cosine similarity (0–1) over TF-IDF vectors ` +
+    `(the target's own work is excluded):\n\n${rows}`;
+};
+
+/* ------------------------------ topics ------------------------------- */
+
+const termList = (terms: { lemma: string }[]): string =>
+  terms.map((term) => term.lemma).join(", ");
+
+export const renderTopics = (response: TopicsResponse): string => {
+  if (response.k === 0) {
+    return "The corpus has no topic model (it has no indexed text).";
+  }
+  const blocks = response.topics.map((topic) => {
+    const lines = [`Topic ${topic.id} — ${termList(topic.terms)}`];
+    if (topic.prominent.length > 0) {
+      const works = topic.prominent
+        .map((work) =>
+          `${work.authorName}, ${work.workBreadcrumb} (${work.weight})`
+        )
+        .join("; ");
+      lines.push(`  prominent in: ${works}`);
+    }
+    return lines.join("\n");
+  }).join("\n\n");
+  return `The corpus's ${response.k} topics (unsupervised, by NMF over the ` +
+    `TF-IDF document vectors). Each lists its highest-weight terms and the ` +
+    `works it is most prominent in (the topic's share of the work, 0–1):` +
+    `\n\n${blocks}`;
+};
+
+export const renderTopicMix = (response: TopicMixResponse): string => {
+  const target = [
+    response.author,
+    response.work,
+    response.edition,
+    ...response.sectionPath,
+  ].filter((part) => part !== null && part !== undefined).join("/") ||
+    "the target";
+  if (!response.found) {
+    return `No ${response.level} found for ${target}, or it has no indexed ` +
+      `text, so there is no topic mix.`;
+  }
+  const rows = response.topics.map((topic) =>
+    `${topic.weight} — topic ${topic.id} (${termList(topic.terms)})`
+  ).join("\n");
+  return `The topic mix of ${target} (by ${response.level}), the topics it ` +
+    `draws on most, with each topic's share (0–1) and its top terms:` +
+    `\n\n${rows}`;
 };
 
 /* ------------------------------ compare ------------------------------ */

@@ -19,6 +19,9 @@
  *   /concordance?q=&context=&sort=position|left|right&match=&caseSensitive=&version=&author=&work=&edition=&page=&perPage=  keyword-in-context lines
  *   /keywords?author=&work=&edition=&by=lemma|form|surface&version=&min=&limit=  keyness: a subcorpus's distinctive words
  *   /collocations?q=&by=lemma|form|surface&match=&window=&min=&limit=&author=&work=&edition=  words that occur near a node word
+ *   /similar?author=&work=&edition=&path=&level=section|edition|work&limit=  corpus items most lexically like a target
+ *   /topics?terms=&works=                                       the corpus topic model: each topic's top terms and prominent works
+ *   /topics/mix?author=&work=&edition=&path=&level=section|edition|work&limit=  a target's topic mix ("what this work is about")
  *
  * A request without `/editions/:edition` addresses the work's canonical
  * edition. Search with no `edition` is scoped to canonical editions;
@@ -36,7 +39,14 @@ import {
   type RateLimiterOptions,
 } from "./ratelimit.ts";
 import { createMcpHandler } from "./mcp.ts";
-import type { Computer, KeyMode, MatchLevel, Version } from "./types.ts";
+import type {
+  Computer,
+  KeyMode,
+  MatchLevel,
+  SimilarLevel,
+  TopicLevel,
+  Version,
+} from "./types.ts";
 
 export type Api = {
   /** The computer the routes call; the same interface MCP and the client use. */
@@ -177,6 +187,49 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
         edition: p.get("edition") ?? undefined,
       }),
     );
+  }
+
+  if (segments[0] === "similar" && segments.length === 1) {
+    const path = p.get("path");
+    return json(
+      await computer.similar({
+        author: p.get("author") ?? undefined,
+        work: p.get("work") ?? undefined,
+        edition: p.get("edition") ?? undefined,
+        path: path === null
+          ? undefined
+          : path.split("/").filter((s) => s !== ""),
+        level: (p.get("level") ?? undefined) as SimilarLevel | undefined,
+        limit: Number(p.get("limit")) || undefined,
+      }),
+    );
+  }
+
+  if (segments[0] === "topics") {
+    if (segments.length === 1) {
+      return json(
+        await computer.topics({
+          terms: Number(p.get("terms")) || undefined,
+          works: Number(p.get("works")) || undefined,
+        }),
+      );
+    }
+    if (segments[1] === "mix" && segments.length === 2) {
+      const path = p.get("path");
+      return json(
+        await computer.topicMix({
+          author: p.get("author") ?? undefined,
+          work: p.get("work") ?? undefined,
+          edition: p.get("edition") ?? undefined,
+          path: path === null
+            ? undefined
+            : path.split("/").filter((s) => s !== ""),
+          level: (p.get("level") ?? undefined) as TopicLevel | undefined,
+          limit: Number(p.get("limit")) || undefined,
+        }),
+      );
+    }
+    return notFound();
   }
 
   if (

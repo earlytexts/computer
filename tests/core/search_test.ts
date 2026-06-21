@@ -6,7 +6,8 @@
  */
 
 import { assert, assertEquals } from "@std/assert";
-import { testComputer } from "../helpers.ts";
+import { openTestComputer, testComputer } from "../helpers.ts";
+import { corpus } from "../corpus.ts";
 import { marks } from "../markit.ts";
 import type { Computer, SearchParams } from "../../src/types.ts";
 
@@ -176,6 +177,61 @@ Deno.test("a phrase marked across a formatting boundary stays one match", async 
     "liberty",
     " of",
   ]);
+});
+
+Deno.test("BM25 ranking saturates term frequency and normalises by length", async () => {
+  // Three single-block works, all canonical, each carrying "widget" once or
+  // thrice in a short or long block. BM25 should rank the dense short block
+  // first (more occurrences, saturating), then the sparse short block, then the
+  // long block (its single hit diluted by length).
+  const filler = "filler ".repeat(40);
+  const meta = (slug: string) => ({
+    title: slug,
+    breadcrumb: slug,
+    published: [1700],
+    canonical: "1700",
+  });
+  const ed = (slug: string) => ({
+    imported: true,
+    title: slug,
+    breadcrumb: slug,
+    published: [1700],
+  });
+  const files = corpus()
+    .author("z", { forename: "Z", surname: "Zed", published: 1700 })
+    .work("z", "sparse", meta("sparse"))
+    .edition(
+      "z",
+      "sparse",
+      "1700",
+      ed("sparse"),
+      "{#1}\nAlpha beta widget gamma.",
+    )
+    .work("z", "dense", meta("dense"))
+    .edition(
+      "z",
+      "dense",
+      "1700",
+      ed("dense"),
+      "{#1}\nAlpha widget widget widget beta gamma.",
+    )
+    .work("z", "long", meta("long"))
+    .edition(
+      "z",
+      "long",
+      "1700",
+      ed("long"),
+      `{#1}\n${filler}widget ${filler}.`,
+    )
+    .build();
+
+  const { computer } = await openTestComputer(files);
+  const found = await computer.search({ q: "widget" });
+  assertEquals(found.results.map((r) => r.work), ["dense", "sparse", "long"]);
+  // Scores are strictly descending and positive (a well-formed BM25 value).
+  const scores = found.results.map((r) => r.score);
+  assert(scores.every((s) => s > 0));
+  assert(scores[0] > scores[1] && scores[1] > scores[2]);
 });
 
 Deno.test("an empty query matches nothing", async () => {

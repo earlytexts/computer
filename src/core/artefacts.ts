@@ -33,6 +33,22 @@
  *   overlay.json     { affectedUnits }: the units the overlay covers, so an
  *                    original search reads them from the overlay instead of
  *                    the (edited) primary
+ *   dtm.bin          the document-term matrix: one sparse row per (edition,
+ *                    section) document of TF-IDF weights over lemma columns, in
+ *                    CSR form (row pointers, then column ids, then L2-normalised
+ *                    Float32 values). Built here as the substrate for the vector
+ *                    routes (similarity, topics); like tokens.bin it is read
+ *                    lazily by those routes, not loaded at boot
+ *   dtm.json         the DTM's row labels (each document's edition index and
+ *                    section path), its column labels (the lemmas), and the
+ *                    non-zero count, so dtm.bin can be sliced back into arrays
+ *   topics.bin       the topic model's document-topic matrix: one dense row per
+ *                    DTM document of its mix over the K topics (Float32, each row
+ *                    summing to 1, or 0 for an empty document). Trained at build
+ *                    time (NMF over the DTM); read lazily by the topic routes
+ *   topics.json      the topic model's metadata: the topic count K, the document
+ *                    row labels (same order as dtm.json's), and per topic its
+ *                    highest-weight lemmas (the topic-term distribution)
  *   editions/<author>/<work>/<edition>/
  *     blocks.jsonl   one compiled block per line, in unit order (units.json
  *                    holds byte ranges, so single blocks are read directly)
@@ -57,8 +73,16 @@ import { EXTRACTION_VERSION, TOKENIZER_VERSION } from "./text/mod.ts";
 
 /** Bump when the Vocab schema changes (invalidates built artefacts). */
 export const VOCAB_VERSION = 2;
+/**
+ * Bump when the *set* of artefacts changes without a vocab/extraction/tokenizer
+ * change — adding, removing, or reshaping a derived file — so that an artefacts
+ * directory built before the change is treated as stale and rebuilt. The DTM
+ * (dtm.bin/dtm.json) landing took this to 1; the topic model (topics.bin/
+ * topics.json) to 2.
+ */
+export const ARTEFACT_VERSION = 2;
 export const PIPELINE_VERSION =
-  `x${EXTRACTION_VERSION}.t${TOKENIZER_VERSION}.v${VOCAB_VERSION}`;
+  `x${EXTRACTION_VERSION}.t${TOKENIZER_VERSION}.v${VOCAB_VERSION}.a${ARTEFACT_VERSION}`;
 
 /**
  * A posting's position word is `position | (capital ? CAP_BIT : 0)`: the low
@@ -87,6 +111,24 @@ export const ARTEFACT_FILES = {
   postingsOriginal: "postings-original.bin",
   overlay: "overlay.json",
 } as const;
+
+/**
+ * The DTM artefact files. Kept out of ARTEFACT_FILES on purpose: those are the
+ * tables read into memory at boot (readArtefacts/parseArtefacts), whereas the
+ * DTM is written at build time and read lazily by the vector routes (item 3/4),
+ * exactly as tokens.bin is. The codec (de)serializes it through parseDtm.
+ */
+export const DTM_BIN = "dtm.bin";
+export const DTM_JSON = "dtm.json";
+
+/**
+ * The topic-model artefact files, kept out of ARTEFACT_FILES for the same reason
+ * the DTM is: they are trained at build time and read lazily by the topic routes
+ * (item 4), not loaded into memory at boot. The codec (de)serializes them through
+ * parseTopics.
+ */
+export const TOPICS_BIN = "topics.bin";
+export const TOPICS_JSON = "topics.json";
 
 /** The serialized artefacts: a relative path -> bytes map (see serializeArtefacts). */
 export type ArtefactFiles = Map<string, Uint8Array>;
@@ -238,6 +280,68 @@ export type Postings = {
   pairs: Uint32Array;
 };
 
+/**
+ * One row of the DTM: a document is all the units sharing an (edition, section)
+ * pair, so a row addresses a section as it appears in one edition. `edition`
+ * indexes into manifest.editions; `sectionPath` is the unit's sectionPath ("" for
+ * an edition's own title blocks), matching UnitTable.sectionPath.
+ */
+export type DocRef = {
+  edition: number;
+  sectionPath: string;
+};
+
+/**
+ * The document-term matrix in compressed sparse row (CSR) form: rows are the
+ * `docs`, columns the `lemmas`, values L2-normalised TF-IDF weights (so cosine
+ * similarity between two rows is their dot product). `rowPtr` has length
+ * docs+1; row d's entries are `cols[rowPtr[d]..rowPtr[d+1]]` with weights
+ * `vals[...]`, columns ascending. The substrate for items 3 (similarity) and 4
+ * (topics); no route reads it yet.
+ */
+export type Dtm = {
+  docs: DocRef[];
+  /** Column labels: the citation-form lemmas present in the edited text. */
+  lemmas: string[];
+  /** Row offsets into cols/vals; length docs.length + 1. */
+  rowPtr: Uint32Array;
+  /** Column (lemma) id of each non-zero, grouped by row, ascending within a row. */
+  cols: Uint32Array;
+  /** L2-normalised TF-IDF weight of each non-zero, parallel to cols. */
+  vals: Float32Array;
+};
+
+/** One lemma of a topic's term distribution: the lemma and its weight in [0, 1]. */
+export type TopicTerm = {
+  lemma: string;
+  /** The lemma's share of the topic's mass (the normalised NMF factor). */
+  weight: number;
+};
+
+/**
+ * An unsupervised topic model over the DTM (item 4 of the roadmap), trained by
+ * NMF: the document-term matrix V factors as V ≈ W·H, with W the document-topic
+ * matrix (`mix`, one row per DTM document, summing to 1) and H the topic-term
+ * matrix (summarised here as each topic's highest-weight `terms`). `docs` runs
+ * parallel to the DTM's docs (same order), so a document's mix and its DTM row
+ * share an index. No factor is exposed raw on the wire — the routes report topic
+ * labels, top terms, and per-target mixes, the same opacity as the vectors.
+ */
+export type Topics = {
+  /** Number of topics K. */
+  k: number;
+  /** Row labels of `mix`, identical in order to the DTM's docs. */
+  docs: DocRef[];
+  /** Per topic, its highest-weight lemmas (descending); length k. */
+  terms: TopicTerm[][];
+  /**
+   * Document-topic mixes, row-major `docs.length` × k: row d's weight for topic
+   * t is `mix[d * k + t]`. Each row sums to 1 (a mix over topics), or to 0 for a
+   * document with no indexed text.
+   */
+  mix: Float32Array;
+};
+
 export type BuiltEdition = EditionRef & {
   text: string;
   /** Encoded JSON lines (each ending "\n"), one per unit of this edition. */
@@ -257,6 +361,10 @@ export type Artefacts = {
   /** Unit indices that carry editorial markup, ascending. */
   affectedUnits: number[];
   editions: BuiltEdition[];
+  /** Document-term matrix (TF-IDF), the substrate for similarity and topics. */
+  dtm: Dtm;
+  /** Topic model (NMF over the DTM): topic-term and document-topic factors. */
+  topics: Topics;
 };
 
 /** Everything the server holds in memory to answer requests. */
@@ -305,7 +413,7 @@ const concat = (parts: Uint8Array[]): Uint8Array => {
   return out;
 };
 
-const asBytes = (array: Uint32Array): Uint8Array =>
+const asBytes = (array: Uint32Array | Float32Array): Uint8Array =>
   new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
 
 const postingsBytes = (postings: Postings): Uint8Array =>
@@ -332,6 +440,21 @@ export const serializeArtefacts = (artefacts: Artefacts): ArtefactFiles => {
   );
   const json = (value: unknown, pretty = false): Uint8Array =>
     encoder.encode(JSON.stringify(value, null, pretty ? 2 : undefined));
+  const { dtm } = artefacts;
+  files.set(
+    DTM_BIN,
+    concat([asBytes(dtm.rowPtr), asBytes(dtm.cols), asBytes(dtm.vals)]),
+  );
+  files.set(
+    DTM_JSON,
+    json({ docs: dtm.docs, lemmas: dtm.lemmas, nnz: dtm.cols.length }),
+  );
+  const { topics } = artefacts;
+  files.set(TOPICS_BIN, asBytes(topics.mix));
+  files.set(
+    TOPICS_JSON,
+    json({ k: topics.k, docs: topics.docs, terms: topics.terms }),
+  );
   files.set(
     ARTEFACT_FILES.overlay,
     json({ affectedUnits: artefacts.affectedUnits }),
@@ -404,5 +527,58 @@ export const parseArtefacts = (files: ArtefactFiles): ServeArtefacts => {
     spellingSurfaces,
     formSurfaces,
     editionUnits,
+  };
+};
+
+/**
+ * Reconstruct the DTM from its two files (the bytes of dtm.json and dtm.bin).
+ * The inverse of the DTM half of serializeArtefacts. Read lazily by the vector
+ * routes (similarity, topics) — not by parseArtefacts, which loads only what the
+ * search/text routes need. The typed-array views borrow `bin`'s buffer, so it
+ * must be 4-byte aligned (a whole-file read is).
+ */
+export const parseDtm = (json: Uint8Array, bin: Uint8Array): Dtm => {
+  const meta = JSON.parse(decoder.decode(json)) as {
+    docs: DocRef[];
+    lemmas: string[];
+    nnz: number;
+  };
+  const nDocs = meta.docs.length;
+  const nnz = meta.nnz;
+  const words = new Uint32Array(bin.buffer, bin.byteOffset, nDocs + 1 + nnz);
+  return {
+    docs: meta.docs,
+    lemmas: meta.lemmas,
+    rowPtr: words.subarray(0, nDocs + 1),
+    cols: words.subarray(nDocs + 1, nDocs + 1 + nnz),
+    vals: new Float32Array(
+      bin.buffer,
+      bin.byteOffset + (nDocs + 1 + nnz) * 4,
+      nnz,
+    ),
+  };
+};
+
+/**
+ * Reconstruct the topic model from its two files (the bytes of topics.json and
+ * topics.bin). The inverse of the topics half of serializeArtefacts. Read lazily
+ * by the topic routes, like parseDtm. The Float32 view borrows `bin`'s buffer, so
+ * it must be 4-byte aligned (a whole-file read is).
+ */
+export const parseTopics = (json: Uint8Array, bin: Uint8Array): Topics => {
+  const meta = JSON.parse(decoder.decode(json)) as {
+    k: number;
+    docs: DocRef[];
+    terms: TopicTerm[][];
+  };
+  return {
+    k: meta.k,
+    docs: meta.docs,
+    terms: meta.terms,
+    mix: new Float32Array(
+      bin.buffer,
+      bin.byteOffset,
+      meta.docs.length * meta.k,
+    ),
   };
 };

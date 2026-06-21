@@ -9,10 +9,12 @@
 import type { ServeArtefacts } from "../artefacts.ts";
 import {
   type BlockStore,
+  type DtmStore,
   findAuthorEntry,
   findEditionEntry,
   findWorkEntry,
   type TokenStore,
+  type TopicsStore,
 } from "./store.ts";
 import {
   catalogResponse,
@@ -27,6 +29,9 @@ import {
   searchResponse,
   sectionFullTextResponse,
   sectionResponse,
+  similarResponse,
+  topicMixResponse,
+  topicsResponse,
 } from "./api.ts";
 import type { Computer } from "../../types.ts";
 
@@ -37,6 +42,8 @@ export const localComputer = (
   artefacts: ServeArtefacts,
   store: BlockStore,
   tokens: TokenStore,
+  dtm: DtmStore,
+  topics: TopicsStore,
 ): Computer => {
   // Resolve author and work entries; slugs are lowercased to match the HTTP
   // routes (server.ts lowercases every path segment).
@@ -139,5 +146,8 @@ export const localComputer = (
     concordance: (params) => concordanceResponse(store, artefacts, params),
     keywords: (params) => Promise.resolve(keywordsResponse(artefacts, params)),
     collocations: (params) => collocationsResponse(tokens, artefacts, params),
+    similar: (params) => similarResponse(dtm, artefacts, params),
+    topics: (params) => topicsResponse(topics, artefacts, params),
+    topicMix: (params) => topicMixResponse(topics, artefacts, params),
   };
 };

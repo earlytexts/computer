@@ -13,9 +13,17 @@ import type { Block } from "@earlytexts/markit";
 import {
   type AuthorEntry,
   type CatalogArtefact,
+  type Dtm,
+  DTM_BIN,
+  DTM_JSON,
   editionDir,
   type EditionEntry,
+  parseDtm,
+  parseTopics,
   type ServeArtefacts,
+  type Topics,
+  TOPICS_BIN,
+  TOPICS_JSON,
   type WorkEntry,
 } from "../artefacts.ts";
 
@@ -187,6 +195,66 @@ export const createTokenStore = (
       return surfaces;
     },
   };
+};
+
+/* ---------------------------- DTM store ------------------------------ */
+
+/**
+ * Reads the document-term matrix for the similarity route. Unlike the tables in
+ * ServeArtefacts (loaded at boot by parseArtefacts), the DTM sits on disk and is
+ * read on first use, exactly as tokens.bin is — it is large and only the vector
+ * routes need it. The whole matrix is parsed once (via parseDtm) and cached for
+ * the process: it is read-only and shared by every request, so there is nothing
+ * to evict.
+ */
+export type DtmStore = {
+  /** The parsed DTM, read and cached on first call. */
+  matrix: () => Promise<Dtm>;
+};
+
+export const createDtmStore = (reader: BlockReader): DtmStore => {
+  let cached: Promise<Dtm> | undefined;
+  const load = async (): Promise<Dtm> => {
+    const [json, bin] = await Promise.all([
+      reader.readBytes(DTM_JSON),
+      reader.readBytes(DTM_BIN),
+    ]);
+    if (json === null || bin === null) {
+      throw new Error("DTM artefact is missing (rebuild the artefacts)");
+    }
+    return parseDtm(json, bin);
+  };
+  return { matrix: () => cached ??= load() };
+};
+
+/* --------------------------- topics store ---------------------------- */
+
+/**
+ * Reads the topic model for the topic routes. Like the DTM (and tokens.bin), the
+ * topic artefact sits on disk and is read on first use, parsed once via
+ * parseTopics, and cached for the process — read-only and shared by every
+ * request.
+ */
+export type TopicsStore = {
+  /** The parsed topic model, read and cached on first call. */
+  model: () => Promise<Topics>;
+};
+
+export const createTopicsStore = (reader: BlockReader): TopicsStore => {
+  let cached: Promise<Topics> | undefined;
+  const load = async (): Promise<Topics> => {
+    const [json, bin] = await Promise.all([
+      reader.readBytes(TOPICS_JSON),
+      reader.readBytes(TOPICS_BIN),
+    ]);
+    if (json === null || bin === null) {
+      throw new Error(
+        "topic-model artefact is missing (rebuild the artefacts)",
+      );
+    }
+    return parseTopics(json, bin);
+  };
+  return { model: () => cached ??= load() };
 };
 
 /* --------------------------- catalog lookup -------------------------- */

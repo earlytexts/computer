@@ -33,7 +33,17 @@ Deno.test("build.ts compiles the corpus and writes artefacts", async () => {
     );
     assertEquals(manifest.stats.authors, 2);
     assertEquals(manifest.stats.works, 4);
-    for (const name of ["catalog.json", "vocab.json", "units.json"]) {
+    for (
+      const name of [
+        "catalog.json",
+        "vocab.json",
+        "units.json",
+        "dtm.bin",
+        "dtm.json",
+        "topics.bin",
+        "topics.json",
+      ]
+    ) {
       assert((await Deno.stat(`${dir}/${name}`)).isFile, `missing ${name}`);
     }
   } finally {

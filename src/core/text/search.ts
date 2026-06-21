@@ -24,6 +24,18 @@
  * to its own surface only, for `exact`). Results can be filtered by author,
  * work, and edition.
  *
+ * Hits are ranked by BM25 (the `score` field, deliberately opaque — only the
+ * ordering it imposes is part of the contract). The whole query is one phrase,
+ * so it acts as a single term: its document frequency is the number of units it
+ * occurs in, and its term frequency in a unit is the count of phrase
+ * occurrences there. BM25 saturates that term frequency (a fifth occurrence
+ * adds far less than the first) and normalises by the unit's length against the
+ * corpus average (the per-unit token counts in units.json), so a short block
+ * full of the phrase outranks a long one that merely contains it. The phrase's
+ * IDF is constant across all of one query's hits, so it never changes their
+ * order; it is folded in only to keep the score a well-formed BM25 value. Title
+ * blocks keep a fixed weight multiplier, as before.
+ *
  * Matched token positions are converted back to character ranges in a block's
  * extracted text by `matchRanges`, for highlighting via highlightBlock
  * (text.ts).
@@ -244,6 +256,25 @@ export type Filters = { author?: string; work?: string; edition?: string };
 
 export const ALL_EDITIONS = "all";
 
+/* -------------------------------- BM25 -------------------------------- */
+
+/** Saturation of term frequency, and the strength of length normalisation —
+ * the conventional BM25 defaults. */
+const BM25_K1 = 1.2;
+const BM25_B = 0.75;
+
+/** BM25 inverse document frequency (Robertson–Spärck-Jones, +1 inside the log
+ * so it can never go negative for very common terms). */
+const bm25Idf = (docs: number, df: number): number =>
+  Math.log(1 + (docs - df + 0.5) / (df + 0.5));
+
+/** BM25 saturating term frequency with document-length normalisation: `length`
+ * is the unit's token count, `avgLength` the corpus mean. */
+const bm25Tf = (tf: number, length: number, avgLength: number): number => {
+  const norm = 1 - BM25_B + BM25_B * (length / (avgLength || 1));
+  return (tf * (BM25_K1 + 1)) / (tf + BM25_K1 * norm);
+};
+
 export const search = (
   artefacts: ServeArtefacts,
   q: string,
@@ -261,6 +292,11 @@ export const search = (
   const candidates = phraseMatches(slots);
 
   const { units, manifest } = artefacts;
+  // BM25 constants for this query. The phrase is one term: its document
+  // frequency is the number of units it matches (corpus-wide, before scoping),
+  // and N and the mean unit length come from the manifest stats.
+  const idf = bm25Idf(manifest.stats.units, candidates.size);
+  const avgLength = manifest.stats.tokens / Math.max(1, manifest.stats.units);
   const hits: SearchHit[] = [];
   for (const [unitIndex, positions] of candidates) {
     if (positions.length === 0) continue;
@@ -274,11 +310,15 @@ export const search = (
     ) {
       continue;
     }
+    const sorted = [...new Set(positions)].sort((a, b) => a - b);
+    // Term frequency is the count of phrase occurrences (each is a run of
+    // `words.length` consecutive matched positions; see `occurrences`).
+    const tf = occurrences(sorted, words.length).length;
     const weight = units.isTitle[unitIndex] === 1 ? 3 : 1;
     hits.push({
       unitIndex,
-      positions: [...new Set(positions)].sort((a, b) => a - b),
-      score: positions.length * weight,
+      positions: sorted,
+      score: weight * idf * bm25Tf(tf, units.tokenCount[unitIndex], avgLength),
     });
   }
   hits.sort((a, b) => b.score - a.score || a.unitIndex - b.unitIndex);

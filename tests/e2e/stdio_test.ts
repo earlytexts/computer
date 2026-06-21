@@ -40,7 +40,7 @@ Deno.test("stdio.ts serves the corpus tools over MCP", async () => {
     await client.connect(transport);
 
     const { tools } = await client.listTools();
-    assertEquals(tools.length, 11);
+    assertEquals(tools.length, 14);
 
     const result = await client.callTool({
       name: "list_authors",

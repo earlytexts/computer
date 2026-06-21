@@ -183,5 +183,36 @@ export const computerClient = (
       if (params.edition !== undefined) query.set("edition", params.edition);
       return must(`/collocations?${query}`);
     },
+    similar: (params) => {
+      const query = new URLSearchParams();
+      if (params.author !== undefined) query.set("author", params.author);
+      if (params.work !== undefined) query.set("work", params.work);
+      if (params.edition !== undefined) query.set("edition", params.edition);
+      if (params.path !== undefined) {
+        query.set("path", params.path.map(segment).join("/"));
+      }
+      if (params.level !== undefined) query.set("level", params.level);
+      if (params.limit !== undefined) query.set("limit", String(params.limit));
+      return must(`/similar?${query}`);
+    },
+    topics: (params) => {
+      const query = new URLSearchParams();
+      if (params.terms !== undefined) query.set("terms", String(params.terms));
+      if (params.works !== undefined) query.set("works", String(params.works));
+      const suffix = query.toString();
+      return must(suffix === "" ? "/topics" : `/topics?${suffix}`);
+    },
+    topicMix: (params) => {
+      const query = new URLSearchParams();
+      if (params.author !== undefined) query.set("author", params.author);
+      if (params.work !== undefined) query.set("work", params.work);
+      if (params.edition !== undefined) query.set("edition", params.edition);
+      if (params.path !== undefined) {
+        query.set("path", params.path.map(segment).join("/"));
+      }
+      if (params.level !== undefined) query.set("level", params.level);
+      if (params.limit !== undefined) query.set("limit", String(params.limit));
+      return must(`/topics/mix?${query}`);
+    },
   };
 };
