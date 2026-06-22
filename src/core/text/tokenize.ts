@@ -81,13 +81,6 @@ export const tokenize = (text: string): TokenSpan[] => {
   return spans;
 };
 
-/**
- * Fold a free-standing word (e.g. from a search query) exactly the way
- * `tokenize` folds corpus text. Returns "" for non-word input.
- */
-export const surfaceForm = (word: string): string =>
-  tokenize(word)[0]?.surface ?? "";
-
 /* -------------------------- Porter stemming -------------------------- */
 
 // The classic Porter (1980) algorithm, used to collapse inflections and

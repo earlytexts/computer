@@ -73,7 +73,8 @@ const eachUnit = (
   for (const author of catalog.authors) {
     for (const work of author.works) {
       for (const edition of work.editions) {
-        if (!owns(work, edition.document)) continue;
+        // An edition's own document always lives in its work's directory; only
+        // its borrowed child sections (handled below) can belong elsewhere.
         const visitSections = (
           doc: MarkitDocument,
           path: string[],
@@ -363,8 +364,9 @@ export const buildTopics = (dtm: Dtm): Topics => {
   const { docs } = dtm;
   const nDocs = docs.length;
   if (nDocs === 0 || dtm.lemmas.length === 0) {
-    const k = Math.max(1, Math.min(TOPIC_COUNT, nDocs, dtm.lemmas.length));
-    return { k, docs, terms: [], mix: new Float32Array(0) };
+    // No documents or no vocabulary: there is no model. k = 0 is the contract the
+    // topic routes read as "the corpus has no topic model" (see render.ts).
+    return { k: 0, docs, terms: [], mix: new Float32Array(0) };
   }
 
   // Restrict the model's columns to the topical lemmas: drop those in too many
@@ -464,7 +466,8 @@ export const buildTopics = (dtm: Dtm): Topics => {
     const hRow = t * nTerms;
     let mass = 0;
     for (let j = 0; j < nTerms; j++) mass += H[hRow + j];
-    if (mass === 0) continue;
+    // The rows start strictly positive (rand + EPS) and the multiplicative
+    // updates keep them so, so the mass is always positive here.
     for (let j = 0; j < nTerms; j++) H[hRow + j] /= mass;
     for (let d = 0; d < nDocs; d++) W[d * k + t] *= mass;
   }

@@ -12,8 +12,9 @@
  * keeps insertions and drops deletions (the curated reading text, matching
  * Markit's renderText); `original` keeps deletions and drops insertions (the
  * printed text, character for character); `both` keeps the markup intact (the
- * within-edition diff). The walk takes a version: `edited`/`original` unwrap
- * the surviving side to plain content, `both` leaves the wrappers in place.
+ * within-edition diff). The walk itself only ever runs for `edited`/`original`,
+ * unwrapping the surviving side to plain content; `both` is served by returning
+ * the block untouched (resolveBlock), so the walk never sees it.
  *
  * Both `blockText` (used by the build pipeline's tokenizer and by diffing)
  * and `highlightBlock` (used to mark search matches in full formatted
@@ -127,10 +128,9 @@ const walkInline = (
         ? state.version === "original"
         : state.version === "edited";
       if (dropped) return []; // contribute nothing; the side is gone
-      const content = walkInline(element.content, state);
-      // edited/original unwrap the surviving side to plain reading text;
-      // `both` keeps the wrapper so the markup (the diff) shows.
-      return state.version === "both" ? [{ ...element, content }] : content;
+      // The walk only ever runs for edited/original (resolveBlock short-circuits
+      // `both`), so the surviving side is always unwrapped to plain reading text.
+      return walkInline(element.content, state);
     }
     if ("content" in element) {
       return [{ ...element, content: walkInline(element.content, state) }];
@@ -213,34 +213,21 @@ export const blockText = (
   return text;
 };
 
-/** Sorted, merged, non-empty copy of the given ranges. */
-const mergeRanges = (ranges: HighlightRange[]): HighlightRange[] => {
-  const sorted = ranges.filter((range) => range.end > range.start)
-    .toSorted((a, b) => a.start - b.start);
-  const out: HighlightRange[] = [];
-  for (const range of sorted) {
-    const last = out[out.length - 1];
-    if (last !== undefined && range.start <= last.end) {
-      last.end = Math.max(last.end, range.end);
-    } else out.push({ ...range });
-  }
-  return out;
-};
-
 /**
  * A copy of the block resolved to the given version (default edited), with
  * the given ranges of its extracted text wrapped in Markit `highlight`
  * elements (rendered as <mark> by renderHTML). The ranges must be measured
- * against `blockText(block, version)`: the walk emits the same version, so
- * offsets line up. Only plainText nodes are ever split; characters
- * contributed by other elements are passed over, so a range spanning a line
- * break or page break simply resumes marking after it.
+ * against `blockText(block, version)` and be sorted and non-overlapping (as
+ * `matchRanges` produces them): the walk emits the same version, so offsets
+ * line up. Only plainText nodes are ever split; characters contributed by other
+ * elements are passed over, so a range spanning a line break or page break
+ * simply resumes marking after it.
  */
 export const highlightBlock = (
   block: Block,
   ranges: HighlightRange[],
   version: Version = "edited",
-): Block => walkBlock(block, { pos: 0, ranges: mergeRanges(ranges), version });
+): Block => walkBlock(block, { pos: 0, ranges, version });
 
 /**
  * A copy of the block resolved to the given version, with no highlights:

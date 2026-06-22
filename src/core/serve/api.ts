@@ -531,9 +531,9 @@ export const frequencyResponse = (
       edition: g.edition,
       count: g.count,
       tokens: g.tokens,
-      relative: g.tokens > 0
-        ? Math.round((g.count / g.tokens) * 10000) / 10
-        : 0,
+      // A group only exists because an in-scope edition matched, and the second
+      // pass adds that edition's (non-zero) token count, so tokens > 0 here.
+      relative: Math.round((g.count / g.tokens) * 10000) / 10,
     }));
 
   return {
@@ -552,8 +552,11 @@ const DEFAULT_MIN_COUNT = 5;
 
 const parseMode = (by?: KeyMode): KeyMode => by ?? "lemma";
 
+// Every caller has already established a non-zero token denominator (keywords
+// bails when either side has no tokens; collocations only reports a node that
+// occurs, which always has context tokens), so the division is always defined.
 const per1000 = (count: number, tokens: number): number =>
-  tokens > 0 ? Math.round((count / tokens) * 10000) / 10 : 0;
+  Math.round((count / tokens) * 10000) / 10;
 
 /**
  * Keyness: the terms a target subcorpus uses more than the rest of the corpus.
@@ -602,7 +605,7 @@ export const keywordsResponse = (
   return {
     by: mode,
     version,
-    author: params.author ?? null,
+    author: params.author, // narrowed to a string by the guard above
     work: params.work ?? null,
     editions: resolveEditions(params),
     edition: params.edition ?? null,
@@ -888,8 +891,11 @@ export const similarResponse = async (
         sectionPath: level === "section"
           ? (docPath === "" ? [] : docPath.split("/"))
           : [],
+        // Every section has a unit, and titleOf is keyed off those units, so a
+        // section-level doc always has a title (the builder falls back to the
+        // section id when none is given).
         sectionTitle: level === "section"
-          ? titleOf.get(`${dtm.docs[d].edition}\t${docPath}`) ?? null
+          ? titleOf.get(`${dtm.docs[d].edition}\t${docPath}`)!
           : null,
         score: 0,
       });

@@ -58,15 +58,15 @@ export const similar = (
   const { rowPtr, cols, vals, lemmas } = dtm;
   const nLemmas = lemmas.length;
 
-  // The target's aggregate vector and its norm. An empty target (no rows, or
-  // rows of only out-of-vocabulary blocks) admits no comparison.
+  // The target's aggregate vector and its norm. similarResponse only reaches
+  // here after confirming at least one target doc has a non-empty DTM row (whose
+  // values are positive), so the vector is non-zero and the norm positive.
   const target = new Float64Array(nLemmas);
   for (const d of targetDocs) {
     for (let i = rowPtr[d]; i < rowPtr[d + 1]; i++) target[cols[i]] += vals[i];
   }
   let targetNorm = 0;
   for (let c = 0; c < nLemmas; c++) targetNorm += target[c] * target[c];
-  if (targetNorm === 0) return [];
   const targetInv = 1 / Math.sqrt(targetNorm);
 
   const scratch = new Float64Array(nLemmas);

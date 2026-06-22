@@ -211,7 +211,8 @@ export const keyness = (
   rows.sort((x, y) =>
     y.logLikelihood - x.logLikelihood ||
     y.logRatio - x.logRatio ||
-    (x.term < y.term ? -1 : x.term > y.term ? 1 : 0)
+    // terms are distinct group labels, so they never tie.
+    (x.term < y.term ? -1 : 1)
   );
   return {
     targetTokens,

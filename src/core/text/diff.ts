@@ -50,19 +50,6 @@ export type BlockDiff =
 
 const TOKEN_RE = /[\p{L}\p{N}'’—&-]+|[^\s\p{L}\p{N}]/gu;
 
-export const tokenize = (text: string): Token[] => {
-  const tokens: Token[] = [];
-  let lastEnd = 0;
-  for (const match of text.matchAll(TOKEN_RE)) {
-    tokens.push({
-      text: match[0],
-      spaced: match.index > lastEnd,
-    });
-    lastEnd = match.index + match[0].length;
-  }
-  return tokens;
-};
-
 /** Beyond this edit distance we give up and report delete-all/insert-all. */
 const MAX_EDIT_DISTANCE = 3000;
 
@@ -88,11 +75,12 @@ export const diffTokens = (a: Token[], b: Token[]): DiffOp[] => {
   const middleB = b.slice(start, endB);
 
   const ops: DiffOp[] = [];
+  // The prefix and suffix are equal; the middle's myers ops already begin and
+  // end with a non-equal op (the trim guarantees the middle ends differ), so no
+  // two pushes are ever the same type — a plain append suffices.
   const push = (type: DiffOp["type"], tokens: Token[]) => {
     if (tokens.length === 0) return;
-    const last = ops[ops.length - 1];
-    if (last !== undefined && last.type === type) last.tokens.push(...tokens);
-    else ops.push({ type, tokens: [...tokens] });
+    ops.push({ type, tokens: [...tokens] });
   };
 
   push("equal", a.slice(0, start));
@@ -164,33 +152,18 @@ const myers = (a: Token[], b: Token[]): DiffOp[] => {
       x--;
     }
   }
-  while (x > 0 && y > 0) {
-    reversed.push({ type: "equal", tokens: [a[x - 1]] });
-    x--;
-    y--;
-  }
-  while (x > 0) {
-    reversed.push({ type: "delete", tokens: [a[x - 1]] });
-    x--;
-  }
-  while (y > 0) {
-    reversed.push({ type: "insert", tokens: [b[y - 1]] });
-    y--;
-  }
+  // No leading-snake tail to recover: diffTokens trims the common prefix before
+  // calling myers, so the backtrack always lands exactly at the origin.
 
-  const ops: DiffOp[] = [];
-  for (let i = reversed.length - 1; i >= 0; i--) {
-    const op = reversed[i];
+  // Reverse into reading order, merging adjacent ops of the same type.
+  return reversed.reverse().reduce<DiffOp[]>((ops, op) => {
     const last = ops[ops.length - 1];
     if (last !== undefined && last.type === op.type) {
       last.tokens.push(...op.tokens);
     } else ops.push({ type: op.type, tokens: [...op.tokens] });
-  }
-  return ops;
+    return ops;
+  }, []);
 };
-
-export const diffText = (a: string, b: string): DiffOp[] =>
-  diffTokens(tokenize(a), tokenize(b));
 
 /** A contiguous run of characters sharing one inline wrapper context. */
 type TextSpan = { start: number; end: number; context: ContextFrame[] };
@@ -203,8 +176,9 @@ const buildSpans = (block: Block): { text: string; spans: TextSpan[] } => {
   let text = "";
   const spans: TextSpan[] = [];
 
+  // Every caller passes a non-empty string (Markit never emits empty plainText,
+  // and the joiners/leaves are constants), so each call records a real span.
   const add = (s: string, ctx: ContextFrame[]): void => {
-    if (s === "") return;
     spans.push({
       start: text.length,
       end: text.length + s.length,
@@ -225,8 +199,6 @@ const buildSpans = (block: Block): { text: string; spans: TextSpan[] } => {
         add("[...]", ctx);
       } else if (el.type === "language") {
         inlineCtx(el.content, [...ctx, { type: "language", lang: el.lang }]);
-      } else if (el.type === "highlight") {
-        inlineCtx(el.content, [...ctx, { type: "highlight" }]);
       } else if ("content" in el) {
         // Wrapper: el is narrowed to Wrapper, el.type is WrapperType
         inlineCtx(el.content, [...ctx, { type: el.type }]);
@@ -298,7 +270,9 @@ const tokenizeBlock = (block: Block): Token[] => {
     tokens.push({
       text: match[0],
       spaced: idx > lastEnd,
-      context: spans[si]?.context ?? [],
+      // Every character of `text` was recorded as a span, so the covering span
+      // for this match always exists.
+      context: spans[si]!.context,
     });
     lastEnd = idx + match[0].length;
   }
@@ -379,9 +353,12 @@ const contextsEqual = (a: ContextFrame[], b: ContextFrame[]): boolean => {
 const opsToInline = (ops: DiffOp[]): InlineElement[] =>
   ops.flatMap((op): InlineElement[] => {
     if (op.type !== "equal") {
-      const text = opText(op.tokens);
-      if (text === "") return [];
-      const plain: InlineElement = { type: "plainText", content: text };
+      // op.tokens is always non-empty (myers never emits an empty op) and every
+      // token carries non-empty text, so opText is never "".
+      const plain: InlineElement = {
+        type: "plainText",
+        content: opText(op.tokens),
+      };
       return op.type === "delete"
         ? [{ type: "deletion", content: [plain] }]
         : [{ type: "insertion", content: [plain] }];
@@ -390,11 +367,13 @@ const opsToInline = (ops: DiffOp[]): InlineElement[] =>
     const result: InlineElement[] = [];
     let i = 0;
     while (i < op.tokens.length) {
-      const ctx = op.tokens[i].context ?? [];
+      // These ops come from tokenizeBlock, which annotates every token with its
+      // wrapper context, so context is always present here.
+      const ctx = op.tokens[i].context!;
       let j = i + 1;
       while (
         j < op.tokens.length &&
-        contextsEqual(op.tokens[j].context ?? [], ctx)
+        contextsEqual(op.tokens[j].context!, ctx)
       ) j++;
       const text = opText(op.tokens.slice(i, j));
       if (text !== "") {

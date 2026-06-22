@@ -312,11 +312,64 @@ Deno.test("unknown resources return JSON 404s", async () => {
       "/authors/test/tw/99", // not a real section
       "/authors/test/tw/compare/1750/1750", // an edition with itself
       "/authors/test/tw/compare/1750/1760/99", // no such section to diff
+      "/authors/test/tw/compare/1750", // compare needs two edition slugs
+      "/topics/bogus", // an unknown /topics subroute
     ]
   ) {
     const response = await request(path);
     assertEquals(response.status, 404, `expected 404 for ${path}`);
     assertEquals((await response.json()).error, "not found");
+  }
+});
+
+Deno.test("a falsey flag value is accepted and read as false", async () => {
+  // The truth words 0/false are the off side of caseSensitive (the on side, 1,
+  // is exercised above); both resolve, neither errors.
+  for (const value of ["false", "0"]) {
+    const response = await request(`/search?q=virtue&caseSensitive=${value}`);
+    assertEquals(response.status, 200, value);
+    await response.body?.cancel();
+  }
+});
+
+Deno.test("the rate limiter evicts refilled buckets once it grows past its cap", async () => {
+  // Drive more distinct clients than MAX_BUCKETS (10_000) so the bookkeeping
+  // sweep runs. The clock advances each request, so the older buckets have
+  // refilled back to their burst and are dropped, while the newest are kept.
+  let clock = 0;
+  const limited = await handler({
+    rateLimit: { ratePerSecond: 1000, burst: 1 },
+    now: () => clock,
+  });
+  for (let i = 0; i < 10_050; i++) {
+    clock += 1; // 1ms later: a one-request-old bucket has fully refilled
+    const response = await limited(
+      new Request("http://localhost/catalog", {
+        headers: { "x-forwarded-for": `198.51.100.${i}` },
+      }),
+    );
+    assertEquals(response.status, 200);
+    await response.body?.cancel();
+  }
+});
+
+Deno.test("an unexpected failure inside the computer is a 500", async () => {
+  // A handler over a computer whose every method throws: the route turns the
+  // (non-ParamError) failure into a 500 rather than leaking it.
+  const boom = new Proxy({}, {
+    get: () => () => {
+      throw new Error("boom");
+    },
+  }) as unknown as Parameters<typeof createHandler>[0]["computer"];
+  const handle = createHandler({ computer: boom });
+  const originalError = console.error;
+  console.error = () => {}; // the route logs the failure; keep the test quiet
+  try {
+    const response = await handle(new Request("http://localhost/catalog"));
+    assertEquals(response.status, 500);
+    assertEquals((await response.json()).error, "internal error");
+  } finally {
+    console.error = originalError;
   }
 });
 

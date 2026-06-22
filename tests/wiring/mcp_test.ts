@@ -12,6 +12,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createMcpServer } from "../../src/mcp.ts";
 import { testComputer } from "../helpers.ts";
+import type { Computer } from "../../src/types.ts";
 
 type CallResult = {
   content: { type: string; text: string }[];
@@ -171,6 +172,53 @@ Deno.test("get_edition defaults to the work's canonical edition", async () => {
     });
     assertStringIncludes(text, 'edition "1760"');
     assertStringIncludes(text, "Sections");
+  } finally {
+    await close();
+  }
+});
+
+Deno.test("get_author_works marks a stub work and its stub editions", async () => {
+  const { client, close } = await connect();
+  try {
+    // The "other" author owns only an un-transcribed work.
+    const { text } = await call(client, "get_author_works", {
+      author: "other",
+    });
+    assertStringIncludes(text, "[stub]"); // the stub work and its stub edition
+  } finally {
+    await close();
+  }
+});
+
+Deno.test("the reading and compare tools report missing resources", async () => {
+  const { client, close } = await connect();
+  try {
+    const edition = await call(client, "get_edition", {
+      author: "test",
+      work: "tw",
+      edition: "9999",
+    });
+    assertStringIncludes(edition.text, "Not found");
+    const full = await call(client, "get_full_text", {
+      author: "test",
+      work: "nope",
+    });
+    assertStringIncludes(full.text, "Not found");
+    const editions = await call(client, "compare_editions", {
+      author: "test",
+      work: "tw",
+      a: "1750",
+      b: "9999",
+    });
+    assertStringIncludes(editions.text, "Not found");
+    const section = await call(client, "compare_section", {
+      author: "test",
+      work: "tw",
+      a: "1750",
+      b: "1760",
+      path: ["404"],
+    });
+    assertStringIncludes(section.text, "Not found");
   } finally {
     await close();
   }
@@ -390,6 +438,68 @@ Deno.test("bad arguments and unknown tools come back as tool errors", async () =
     assertStringIncludes(unknown.text, 'unknown tool "nonsense"');
   } finally {
     await close();
+  }
+});
+
+Deno.test("a native array path argument is parsed, and an argument-less call works", async () => {
+  const { client, close } = await connect();
+  try {
+    // MCP passes a section path as a native array (not a "/"-joined string).
+    const { isError } = await call(client, "similar", {
+      author: "test",
+      work: "tw",
+      path: ["1"],
+      level: "section",
+    });
+    assert(!isError);
+    // A tool invoked with no arguments object at all (the server defaults it).
+    const result = await client.callTool({ name: "list_authors" }) as {
+      content: { text: string }[];
+    };
+    assertStringIncludes(result.content[0].text, "test —");
+  } finally {
+    await close();
+  }
+});
+
+Deno.test("a native boolean argument is accepted as a flag", async () => {
+  const { client, close } = await connect();
+  try {
+    // MCP arguments arrive as native JSON, so caseSensitive is a real boolean
+    // (not a truth word) — the flag parser takes it as-is.
+    const { text, isError } = await call(client, "search", {
+      q: "liberty",
+      caseSensitive: true,
+      editions: "all",
+    });
+    assert(!isError);
+    assertStringIncludes(text, "case-sensitive");
+  } finally {
+    await close();
+  }
+});
+
+Deno.test("a non-Error thrown below the tool is still wrapped as a tool error", async () => {
+  // The MCP boundary stringifies whatever a tool throws, including a value that
+  // is not an Error instance.
+  const exploding = new Proxy({}, {
+    get: () => () => {
+      throw "catalog exploded"; // a bare string, not an Error
+    },
+  }) as unknown as Computer;
+  const server = createMcpServer(exploding);
+  const [clientTransport, serverTransport] = InMemoryTransport
+    .createLinkedPair();
+  await server.connect(serverTransport);
+  const client = new Client({ name: "test", version: "1.0.0" });
+  await client.connect(clientTransport);
+  try {
+    const { text, isError } = await call(client, "list_authors");
+    assert(isError);
+    assertStringIncludes(text, "catalog exploded");
+  } finally {
+    await client.close();
+    await server.close();
   }
 });
 

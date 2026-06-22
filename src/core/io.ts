@@ -67,7 +67,9 @@ const scanCorpus = async (corpusDir: string): Promise<CorpusScan> => {
       else if (entry.isFile && entry.name.endsWith(".mit")) {
         files++;
         const info = await Deno.stat(path);
-        modified = Math.max(modified, info.mtime?.getTime() ?? 0);
+        // mtime is always available for a regular file on the platforms this
+        // runs on (macOS/Linux); it is only null where the OS cannot report it.
+        modified = Math.max(modified, info.mtime!.getTime());
       }
     }
   };

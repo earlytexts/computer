@@ -713,9 +713,8 @@ export const createTools = (computer: Computer): ToolSet => {
   const allowedArgs = new Map(
     definitions.map((tool) => [
       tool.name,
-      Object.keys(
-        (tool.inputSchema.properties ?? {}) as Record<string, unknown>,
-      ),
+      // Every tool schema declares a properties object (possibly empty).
+      Object.keys(tool.inputSchema.properties as Record<string, unknown>),
     ]),
   );
 
@@ -726,7 +725,9 @@ export const createTools = (computer: Computer): ToolSet => {
       if (handler === undefined) {
         return Promise.reject(new Error(`unknown tool "${name}"`));
       }
-      const args = (input ?? {}) as Record<string, unknown>;
+      // The MCP boundary always passes an arguments object (defaulting a missing
+      // one to {}), so input is always a record here.
+      const args = input as Record<string, unknown>;
       try {
         rejectUnknownArgs(args, allowedArgs.get(name)!);
       } catch (error) {

@@ -271,7 +271,9 @@ const bm25Idf = (docs: number, df: number): number =>
 /** BM25 saturating term frequency with document-length normalisation: `length`
  * is the unit's token count, `avgLength` the corpus mean. */
 const bm25Tf = (tf: number, length: number, avgLength: number): number => {
-  const norm = 1 - BM25_B + BM25_B * (length / (avgLength || 1));
+  // bm25Tf only runs for a hit, which means the corpus has matched tokens, so
+  // the mean unit length is positive.
+  const norm = 1 - BM25_B + BM25_B * (length / avgLength);
   return (tf * (BM25_K1 + 1)) / (tf + BM25_K1 * norm);
 };
 
@@ -299,7 +301,8 @@ export const search = (
   const avgLength = manifest.stats.tokens / Math.max(1, manifest.stats.units);
   const hits: SearchHit[] = [];
   for (const [unitIndex, positions] of candidates) {
-    if (positions.length === 0) continue;
+    // phraseMatches only records a unit with at least one match, so positions
+    // is always non-empty here.
     const ref = manifest.editions[units.edition[unitIndex]];
     if (filters.author !== undefined && ref.author !== filters.author) continue;
     if (filters.work !== undefined && ref.work !== filters.work) continue;
@@ -337,8 +340,9 @@ export const matchRanges = (
   const spans = tokenize(text);
   const ranges: HighlightRange[] = [];
   for (const position of positions) {
-    const span = spans[position];
-    if (span === undefined) continue;
+    // The positions index into this same tokenization (the version's), so the
+    // span always exists.
+    const span = spans[position]!;
     const last = ranges[ranges.length - 1];
     if (last !== undefined && spans[position - 1]?.end === last.end) {
       last.end = span.end;

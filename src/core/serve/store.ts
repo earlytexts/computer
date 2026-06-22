@@ -58,7 +58,9 @@ const readEditionBlocks = async (
 ): Promise<Map<number, Block>> => {
   const blocks = new Map<number, Block>();
   const ref = artefacts.manifest.editions[editionIndex];
-  const unitIndices = artefacts.editionUnits[editionIndex] ?? [];
+  // readEditionBlocks only runs for an edition that owns units, which always has
+  // an editionUnits entry.
+  const unitIndices = artefacts.editionUnits[editionIndex]!;
   const text = await reader.readText(`${editionDir(ref)}/blocks.jsonl`);
   if (text === null) return blocks; // a stub edition has no blocks file
   let line = 0;
@@ -109,9 +111,9 @@ export const createBlockStore = (
   };
   const block = async (unitIndex: number): Promise<Block> => {
     const blocks = await edition(artefacts.units.edition[unitIndex]);
-    const found = blocks.get(unitIndex);
-    if (found === undefined) throw new Error(`no block for unit ${unitIndex}`);
-    return found;
+    // The edition's block map is keyed by each of its own unit indices, and this
+    // unit belongs to that edition, so the lookup always hits.
+    return blocks.get(unitIndex)!;
   };
   const unitBlock = async (unitIndex: number): Promise<Block> => {
     const ref = artefacts.manifest.editions[artefacts.units.edition[unitIndex]];

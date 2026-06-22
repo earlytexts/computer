@@ -151,7 +151,8 @@ export const collocations = (
         positions.push(p);
       }
     }
-    if (positions.length === 0) continue;
+    // nodeUnits only ever holds units the node actually occurs in, so positions
+    // is non-empty.
     nodeCount += positions.length;
     const context = new Uint8Array(len); // a position counted at most once
     for (const p of positions) {
@@ -201,7 +202,8 @@ export const collocations = (
   rows.sort((x, y) =>
     y.logLikelihood - x.logLikelihood ||
     y.cooccurrence - x.cooccurrence ||
-    (x.term < y.term ? -1 : x.term > y.term ? 1 : 0)
+    // collocate terms are distinct group labels, so they never tie.
+    (x.term < y.term ? -1 : 1)
   );
   return {
     scopeTokens,

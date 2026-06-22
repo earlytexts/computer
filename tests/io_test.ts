@@ -1,9 +1,16 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { parseArtefacts } from "../src/core/artefacts.ts";
+import {
+  ARTEFACT_FILES,
+  type Manifest,
+  parseArtefacts,
+} from "../src/core/artefacts.ts";
 import { createBlockStore } from "../src/core/serve/store.ts";
 import { denoIo } from "../src/core/io.ts";
 import { blockText } from "../src/core/text/mod.ts";
 import { testData, unitText } from "./helpers.ts";
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
 // The io adapter is the only module that touches the filesystem, so it is
 // exercised directly here: serialize -> write -> read -> parse, plus the
@@ -35,6 +42,80 @@ Deno.test("io round-trips artefacts through a directory", async () => {
 Deno.test("readManifest returns null when the directory is absent", async () => {
   assertEquals(await denoIo.readManifest("/no/such/computer-dir"), null);
 });
+
+Deno.test("the corpus FS returns null for a missing file and a missing stat", async () => {
+  assertEquals(await denoIo.corpus.readFile("/no/such/file.mit"), null);
+  assertEquals(await denoIo.corpus.stat("/no/such/path"), null);
+});
+
+Deno.test("writeArtefacts creates a fresh directory that does not yet exist", async () => {
+  const data = await testData();
+  const base = await Deno.makeTempDir({ prefix: "computer-io-" });
+  const dir = `${base}/not/created/yet`; // readDir on it will throw → treated empty
+  try {
+    await denoIo.writeArtefacts(dir, data.files);
+    assert((await denoIo.readManifest(dir)) !== null);
+  } finally {
+    await Deno.remove(base, { recursive: true });
+  }
+});
+
+Deno.test("the block reader returns null for missing block and token files", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "computer-io-" });
+  try {
+    const reader = denoIo.blockReader(dir);
+    assertEquals(await reader.readText("absent/blocks.jsonl"), null);
+    assertEquals(await reader.readBytes("absent/tokens.bin"), null);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("readRange past the end of a file is an error", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "computer-io-" });
+  try {
+    await Deno.writeFile(`${dir}/small.bin`, new Uint8Array([1, 2, 3]));
+    const reader = denoIo.blockReader(dir);
+    // Reading the three bytes back is fine.
+    assertEquals(
+      await reader.readRange("small.bin", 0, 3),
+      new Uint8Array([1, 2, 3]),
+    );
+    // Asking for more than the file holds hits EOF before the length is met.
+    await assertRejects(
+      () => reader.readRange("small.bin", 0, 9),
+      Error,
+      "unexpected EOF",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("parseArtefacts rejects artefacts from a different pipeline version", async () => {
+  const data = await testData();
+  const files = new Map(data.files);
+  const manifest = JSON.parse(
+    decoder.decode(files.get(ARTEFACT_FILES.manifest)),
+  ) as Manifest;
+  const tampered = {
+    ...manifest,
+    pipelineVersion: manifest.pipelineVersion + 1,
+  };
+  files.set(ARTEFACT_FILES.manifest, encoder.encode(JSON.stringify(tampered)));
+  assertThrowsVersion(() => parseArtefacts(files));
+});
+
+const assertThrowsVersion = (fn: () => unknown): void => {
+  try {
+    fn();
+  } catch (error) {
+    assert(error instanceof Error);
+    assert(error.message.includes("pipeline"));
+    return;
+  }
+  throw new Error("expected a pipeline-version mismatch to throw");
+};
 
 Deno.test("writeArtefacts refuses to clobber a non-artefacts directory", async () => {
   const data = await testData();

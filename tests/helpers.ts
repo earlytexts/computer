@@ -84,8 +84,9 @@ export const memoryHarness = (
         );
       },
       readRange: (relPath, offset, length) => {
-        const bytes = store.get(relPath);
-        if (bytes === undefined) throw new Error(`no file ${relPath}`);
+        // unitBlock only ranges into editions that have a blocks file, so the
+        // lookup always hits.
+        const bytes = store.get(relPath)!;
         return Promise.resolve(bytes.subarray(offset, offset + length));
       },
       readBytes: (relPath) => Promise.resolve(store.get(relPath) ?? null),

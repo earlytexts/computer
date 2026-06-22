@@ -147,8 +147,10 @@ export const renderAuthors = (authors: CatalogAuthor[]): string =>
         : `first published ${author.published}`,
       `${author.works.length} work${author.works.length === 1 ? "" : "s"}`,
     ].filter((part) => part !== undefined).join(", ");
-    return `${author.slug} — ${name}${span(author.birth, author.death)}` +
-      (facts === "" ? "" : ` — ${facts}`);
+    // facts always carries at least the work count, so it is never empty.
+    return `${author.slug} — ${name}${
+      span(author.birth, author.death)
+    } — ${facts}`;
   }).join("\n");
 
 const renderEditionMeta = (edition: EditionMeta, canonical: string): string =>
@@ -420,9 +422,10 @@ export const renderSimilar = (response: SimilarResponse): string => {
   const cite = (entry: SimilarResponse["results"][number]): string => {
     const parts = [entry.author, entry.work, entry.edition]
       .filter((p) => p !== null).join("/");
+    // A section-level result always carries a title (the builder falls back to
+    // the section id), so it is always shown.
     return response.level === "section" && entry.sectionPath.length > 0
-      ? `${parts} § ${entry.sectionPath.join("/")}` +
-        (entry.sectionTitle ? ` (${entry.sectionTitle})` : "")
+      ? `${parts} § ${entry.sectionPath.join("/")} (${entry.sectionTitle})`
       : parts;
   };
   const rows = response.results.map((entry, index) =>

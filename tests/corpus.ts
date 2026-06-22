@@ -18,15 +18,17 @@ import type { CorpusFs } from "../src/core/build/catalog.ts";
 /** The root every corpus path hangs off (an arbitrary absolute prefix). */
 export const CORPUS_ROOT = "/corpus";
 
-/** Normalise a path textually, resolving "." and ".." (as the catalog does). */
+/**
+ * Collapse a path's empty and "." segments. Every path reaching this in-memory
+ * FS descends from the absolute corpus root, so the result is always absolute.
+ */
 const normalizePath = (path: string): string => {
   const out: string[] = [];
   for (const part of path.split("/")) {
     if (part === "" || part === ".") continue;
-    if (part === "..") out.pop();
-    else out.push(part);
+    out.push(part);
   }
-  return (path.startsWith("/") ? "/" : "") + out.join("/");
+  return "/" + out.join("/");
 };
 
 /* ------------------------------ corpus FS ----------------------------- */
@@ -35,7 +37,8 @@ const normalizePath = (path: string): string => {
 export const memoryCorpus = (files: Record<string, string>): CorpusFs => ({
   readFile: (path) => Promise.resolve(files[normalizePath(path)] ?? null),
   readDir: (path) => {
-    const prefix = normalizePath(path) + "/";
+    const normalized = normalizePath(path);
+    const prefix = normalized === "/" ? "/" : normalized + "/";
     const children = new Map<string, boolean>(); // name → isFile
     for (const key of Object.keys(files)) {
       if (!key.startsWith(prefix)) continue;
@@ -359,3 +362,605 @@ export const testCorpus = (): Record<string, string> =>
       published: [1730],
     })
     .build();
+
+/* ------------------------- the rich corpus --------------------------- */
+
+// One paragraph exercising the whole inline vocabulary the extraction and
+// diff walks recognise: every wrapper type, a two-word foreign run (so a
+// diff's equal grouping compares two `language` contexts), the spacing and
+// break leaves (a Markit line break is a backslash before whitespace), a page
+// break, a footnote reference, an illegible gap, and the hyphen edges the
+// tokenizer trims. Only the final word differs between the two editions, so the
+// block diffs as one changed paragraph whose long equal run carries all that
+// formatting.
+const richBlock1 = (finalWord: string): string =>
+  String
+    .raw`Here _truly_ stands *Rome*, with $la:ipsa loquitur$ as a "maxim", ` +
+  String.raw`an _em_ *st* pair and $la:una$ $de:zwei$ tongues, ` +
+  String.raw`a school-men compound, a lone - mark, an abrupt- stop, an [...] ` +
+  String.raw`gap,~~spaced~tight, a break\ here, a page//9//turn, a note<n1>, ` +
+  `then ${finalWord}.`;
+
+// A block of several block-level element types (a blockquote, a nested list,
+// and a table), so rendering it walks every BlockElement arm and — when it is
+// the block present in only one edition — the whole-block editorial marking
+// walks them too, and when it differs between editions the diff's span builder
+// walks them as well. The final table cell varies so the block can also serve
+// as a *changed* block.
+const richBlock3 = (lastCell: string): string =>
+  `> A quoted line one.
+>
+> A quoted line two.
+
+- alpha
+- beta
+  - beta-i
+  - beta-ii
+- gamma
+
+| Apple | Pear |
+|-------|------|
+| Plum | ${lastCell} |
+|  | gap |`;
+
+// Word pairs that drive the lemmatiser's suffix rules: each inflected form
+// sits beside the base it should resolve to (and a few -er/-es/-st cases where
+// only the silent-e base is present, exercising the "+e" arms — e.g. lov'st →
+// love).
+const lemmaWords = [
+  "running run causing cause trying try tried tries greatest great",
+  "doeth do causeth pleased please called call speaker speak larger large",
+  "boxes box names name naturally natural wouldst would love lov'st",
+  "witnesses agreed freed hopping filing controlling duties happiness",
+].join(" ") + ".";
+
+// Section 2 differs between the editions only in two small paragraphs, chosen to
+// drive the word-diff: {#3} has a common subsequence with edits on both sides
+// (exercising the Myers backtrack), and {#4} is a pure middle insertion.
+const richEdition = (variant: "first" | "second") => {
+  const final = variant === "first" ? "ALPHA" : "OMEGA";
+  // The block present in only this edition, and (for the first) a subtitle whose
+  // heading the whole-block marking must walk when it is deleted in the diff.
+  const onlyBlock = variant === "first"
+    ? `{#subtitle}
+^2 A MARGINAL HEADING
+
+{#3}
+${richBlock3("Fig")}`
+    : `{#4}
+${richBlock3("Fig")}`;
+  const ownSection = variant === "first"
+    ? `## 3
+
+[metadata]
+title = "First Only"
+breadcrumb = "First Only"
+
+{#1}
+This whole section exists only in the first edition.`
+    : `## 4
+
+[metadata]
+title = "Second Only"
+breadcrumb = "Second Only"
+
+{#1}
+This whole section exists only in the second edition.`;
+  const myers = variant === "first"
+    ? "alpha beta gamma delta"
+    : "alpha gamma zeta delta";
+  const inserted = variant === "first" ? "one three" : "one two three";
+  // A subtitle whose heading differs, and a rich multi-element block whose last
+  // cell differs: both diff as *changed* blocks, so the diff's span builder
+  // walks a heading and the blockquote/list/table arms.
+  const subhead = variant === "first" ? "ONE" : "TWO";
+  const richDiffCell = variant === "first" ? "Fig" : "Date";
+  return `{#title}
+^2 AN
+^1 ANTHOLOGY
+
+## 1
+
+[metadata]
+title = "Of Forms"
+breadcrumb = "Of Forms"
+
+{#1}
+${richBlock1(final)}
+
+{#2}
+The clerk [-mistook-][+corrected+] the entry and [+also+] signed it.
+
+${onlyBlock}
+
+{#n1}
+A footnote at the foot of the page.
+
+## 2
+
+[metadata]
+title = "Of Words"
+breadcrumb = "Of Words"
+
+{#1}
+${lemmaWords}
+
+{#hl}
+The liberty here stands firm, yet _truly_ the liberty there endures.
+
+{#echo}
+echo echo echo echo at the close.
+
+{#subtitle}
+^3 SECTION
+^2 HEADING ${subhead}
+
+{#myers}
+${myers}
+
+{#ins}
+${inserted}
+
+{#richdiff}
+${richBlock3(richDiffCell)}
+
+${ownSection}`;
+};
+
+/**
+ * A second corpus, exercising the full Markit inline/block vocabulary and a
+ * two-edition word diff. Author "rich" has one work "anth" with editions 1700
+ * and 1710 that share sections 1 and 2 (so a section comparison has a
+ * neighbour in both) and each carry one section of their own (so a work
+ * comparison aligns added/removed sections). Section 1 holds the rich block
+ * that diffs as a single changed paragraph plus blocks present in only one
+ * edition; section 2 holds the lemmatiser word bag and a few small paragraphs
+ * tuned to drive the word diff and the search highlighter.
+ */
+export const richCorpus = (): Record<string, string> =>
+  corpus()
+    .author("rich", {
+      forename: "Rachel",
+      surname: "Rich",
+      birth: 1690,
+      death: 1760,
+      published: 1700,
+      nationality: "English",
+      sex: "Female",
+    })
+    .work("rich", "anth", {
+      title: "An Anthology",
+      breadcrumb: "Anthology",
+      published: [1700, 1710],
+      canonical: "1710",
+    })
+    .edition("rich", "anth", "1700", {
+      imported: true,
+      title: "An Anthology",
+      breadcrumb: "Anthology",
+      published: [1700],
+    }, richEdition("first"))
+    .edition("rich", "anth", "1710", {
+      imported: true,
+      title: "An Anthology",
+      breadcrumb: "Anthology",
+      published: [1710],
+    }, richEdition("second"))
+    .build();
+
+/** A long paragraph of `n` unique tokens, all sharing a prefix. */
+const uniqueWords = (prefix: string, n: number): string =>
+  Array.from({ length: n }, (_, i) => `${prefix}${i}`).join(" ");
+
+/**
+ * A corpus whose two editions share a block id but fill it with wholly
+ * disjoint text long enough that the word diff exceeds its edit-distance
+ * ceiling and falls back to delete-all/insert-all.
+ */
+export const bigDiffCorpus = (): Record<string, string> =>
+  corpus()
+    .author("big", { forename: "Barnaby", surname: "Big" })
+    .work("big", "tome", {
+      title: "A Tome",
+      breadcrumb: "Tome",
+      published: [1700, 1710],
+      canonical: "1710",
+    })
+    .edition(
+      "big",
+      "tome",
+      "1700",
+      {
+        imported: true,
+        title: "A Tome",
+        breadcrumb: "Tome",
+        published: [1700],
+      },
+      `## 1\n\n[metadata]\ntitle = "One"\nbreadcrumb = "One"\n\n{#1}\n${
+        uniqueWords("alpha", 1600)
+      }`,
+    )
+    .edition(
+      "big",
+      "tome",
+      "1710",
+      {
+        imported: true,
+        title: "A Tome",
+        breadcrumb: "Tome",
+        published: [1710],
+      },
+      `## 1\n\n[metadata]\ntitle = "One"\nbreadcrumb = "One"\n\n{#1}\n${
+        uniqueWords("omega", 1600)
+      }`,
+    )
+    .build();
+
+/** A two-author corpus where both authors have a transcribed work sharing a
+ * word, so an author-scoped count must exclude the other author's editions. */
+export const openableTwoAuthor = (): Record<string, string> => {
+  const body = (line: string) =>
+    `## 1\n\n[metadata]\ntitle = "S"\nbreadcrumb = "S"\n\n{#1}\n${line}`;
+  return corpus()
+    .author("a", { forename: "Ann", surname: "Aa", published: 1700 })
+    .author("b", { forename: "Ben", surname: "Bb", published: 1710 })
+    .work("a", "w", {
+      title: "Wa",
+      breadcrumb: "Wa",
+      published: [1700],
+      canonical: "1700",
+    })
+    .edition("a", "w", "1700", {
+      imported: true,
+      title: "Wa",
+      breadcrumb: "Wa",
+      published: [1700],
+    }, body("shared virtue dwells here among friends."))
+    .work("b", "x", {
+      title: "Xb",
+      breadcrumb: "Xb",
+      published: [1710],
+      canonical: "1710",
+    })
+    .edition("b", "x", "1710", {
+      imported: true,
+      title: "Xb",
+      breadcrumb: "Xb",
+      published: [1710],
+    }, body("shared virtue lingers there among strangers."))
+    .build();
+};
+
+/** A corpus with no imported text at all (only an un-transcribed stub). */
+export const emptyCorpus = (): Record<string, string> =>
+  corpus()
+    .author("void", { forename: "Vera", surname: "Void" })
+    .work("void", "stub", {
+      title: "An Untranscribed Work",
+      breadcrumb: "Untranscribed",
+      published: [1700],
+      canonical: "1700",
+    })
+    .edition("void", "stub", "1700", {
+      imported: false,
+      title: "An Untranscribed Work",
+      breadcrumb: "Untranscribed",
+      published: [1700],
+    })
+    .build();
+
+/* ---------------------- branch-coverage corpora ---------------------- */
+
+/**
+ * Sparse and irregular metadata, to drive the catalog's and renderer's
+ * fallback branches: an author with a birth but no death and a single work; an
+ * author with no metadata at all; a work whose index omits title/breadcrumb/
+ * published; an edition with empty metadata; a year-named directory edition; a
+ * work whose publication list is empty.
+ */
+export const metadataCorpus = (): Record<string, string> => {
+  const section = '\n\n## 1\n\n[metadata]\ntitle = "S"\nbreadcrumb = "S"\n\n' +
+    "{#1}\nA short sentence of text.";
+  return corpus()
+    // birth but no death; nationality/sex/published set; a single work.
+    .file(
+      "authors/alpha.mit",
+      '# alpha\n\n[metadata]\nforename = "Al"\nsurname = "Pha"\nbirth = 1700\n' +
+        'published = 1700\nnationality = "English"\nsex = "Male"\n',
+    )
+    // no metadata at all: forename/surname/published all absent.
+    .file("authors/min.mit", "# min\n")
+    // a death but no birth (the other side of the date-span fallback).
+    // published year ties with alpha, so the author sort falls to its slug
+    // tiebreak; the death-without-birth feeds the other date-span fallback.
+    .file(
+      "authors/gamma.mit",
+      '# gamma\n\n[metadata]\nforename = "Ga"\nsurname = "Mma"\ndeath = 1799\n' +
+        "published = 1700\n",
+    )
+    .file(
+      "works/gamma/g/index.mit",
+      '# gamma.g\n\n[metadata]\ntitle = "G"\nbreadcrumb = "G"\n' +
+        'published = [1700]\ncanonical = "1700"\n',
+    )
+    .file(
+      "works/gamma/g/1700.mit",
+      '# gamma.g.1700\n\n[metadata]\ntitle = "G"\nbreadcrumb = "G"\n' +
+        "imported = true\npublished = [1700]" + section,
+    )
+    // alpha/a: full work, a normal edition, and a directory-style edition.
+    .file(
+      "works/alpha/a/index.mit",
+      '# alpha.a\n\n[metadata]\ntitle = "A"\nbreadcrumb = "A"\n' +
+        'published = [1700]\ncanonical = "1700"\n',
+    )
+    .file(
+      "works/alpha/a/1700.mit",
+      '# alpha.a.1700\n\n[metadata]\ntitle = "A"\nbreadcrumb = "A"\n' +
+        "imported = true\npublished = [1700]" + section,
+    )
+    .file(
+      "works/alpha/a/1758/index.mit",
+      '# alpha.a.1758\n\n[metadata]\ntitle = "A"\nbreadcrumb = "A"\n' +
+        "imported = true\npublished = [1758]" + section,
+    )
+    // a non-.mit file inside the work folder (the edition scan ignores it).
+    .file("works/alpha/a/readme.txt", "notes, not an edition")
+    // alpha/b and alpha/c: two works with empty publication lists, so the work
+    // sort compares two missing years (and a missing against a present one).
+    .file(
+      "works/alpha/b/index.mit",
+      '# alpha.b\n\n[metadata]\ntitle = "B"\nbreadcrumb = "B"\ncanonical = "1700"\n',
+    )
+    .file(
+      "works/alpha/b/1700.mit",
+      '# alpha.b.1700\n\n[metadata]\ntitle = "B"\nbreadcrumb = "B"\nimported = true' +
+        section,
+    )
+    .file(
+      "works/alpha/c/index.mit",
+      '# alpha.c\n\n[metadata]\ntitle = "C"\nbreadcrumb = "C"\ncanonical = "1700"\n',
+    )
+    .file(
+      "works/alpha/c/1700.mit",
+      '# alpha.c.1700\n\n[metadata]\ntitle = "C"\nbreadcrumb = "C"\nimported = true' +
+        section,
+    )
+    // min/w: index without title/breadcrumb/published; an edition with empty
+    // metadata (no title/breadcrumb/imported/published).
+    .file("works/min/w/index.mit", "# min.w\n")
+    .file("works/min/w/1700.mit", "# min.w.1700\n\n[metadata]\n" + section)
+    .build();
+};
+
+/**
+ * A work with real text and a work whose only edition is imported but empty
+ * (no content blocks), so the build produces a zero-vector document and a
+ * zero-mass topic mix, and the similarity scan meets a candidate with no
+ * shared vocabulary.
+ */
+export const emptyDocCorpus = (): Record<string, string> =>
+  corpus()
+    .author("solid", { forename: "Sol", surname: "Id", published: 1700 })
+    .work("solid", "real", {
+      title: "Real",
+      breadcrumb: "Real",
+      published: [1700],
+      canonical: "1700",
+    })
+    .edition(
+      "solid",
+      "real",
+      "1700",
+      {
+        imported: true,
+        title: "Real",
+        breadcrumb: "Real",
+        published: [1700],
+      },
+      '## 1\n\n[metadata]\ntitle = "S"\nbreadcrumb = "S"\n\n{#1}\nphilosophy virtue reason nature passion liberty understanding.',
+    )
+    .work("solid", "hollow", {
+      title: "Hollow",
+      breadcrumb: "Hollow",
+      published: [1710],
+      canonical: "1710",
+    })
+    // imported (the metadata says so) but with no content blocks at all.
+    .file(
+      "works/solid/hollow/1710.mit",
+      '# solid.hollow.1710\n\n[metadata]\ntitle = "Hollow"\nbreadcrumb = "Hollow"\n' +
+        "imported = true\npublished = [1710]\n",
+    )
+    .build();
+
+/**
+ * A two-edition work whose section has subsections present in both editions,
+ * so a section comparison reports child rows (and the section comparison's
+ * neighbour search and matching-edition list have something to find).
+ */
+export const subsectionCompareCorpus = (): Record<string, string> => {
+  const body = (extra: string) =>
+    `## 1\n\n[metadata]\ntitle = "One"\nbreadcrumb = "One"\n\n{#1}\nShared opening ${extra}.\n\n` +
+    `### a\n\n[metadata]\ntitle = "Sub A"\nbreadcrumb = "Sub A"\n\n{#1}\nSubsection ${extra} text.`;
+  return corpus()
+    .author("pair", { forename: "Pa", surname: "Ir", published: 1700 })
+    .work("pair", "w", {
+      title: "Paired",
+      breadcrumb: "Paired",
+      published: [1700, 1710],
+      canonical: "1710",
+    })
+    .edition("pair", "w", "1700", {
+      imported: true,
+      title: "Paired",
+      breadcrumb: "Paired",
+      published: [1700],
+    }, body("first"))
+    .edition("pair", "w", "1710", {
+      imported: true,
+      title: "Paired",
+      breadcrumb: "Paired",
+      published: [1710],
+    }, body("second"))
+    .build();
+};
+
+/**
+ * A corpus tuned for the similarity and topic vector branches: a target work, a
+ * candidate sharing no vocabulary (zero dot product), a candidate whose only
+ * block has no word tokens (zero norm — also a zero-mass topic document), and
+ * two identical candidates (equal similarity and topic weight, so the sorts
+ * fall to their tiebreaks).
+ */
+export const vectorCorpus = (): Record<string, string> => {
+  const sec = (words: string) =>
+    `## 1\n\n[metadata]\ntitle = "S"\nbreadcrumb = "S"\n\n{#1}\n${words}`;
+  return corpus()
+    .author("vec", { forename: "Vee", surname: "Ctor", published: 1700 })
+    .work("vec", "target", {
+      title: "T",
+      breadcrumb: "T",
+      published: [1700],
+      canonical: "1700",
+    })
+    .edition(
+      "vec",
+      "target",
+      "1700",
+      { imported: true, title: "T", breadcrumb: "T", published: [1700] },
+      sec(
+        "philosophy virtue reason nature passion liberty understanding cause effect",
+      ),
+    )
+    .work("vec", "disjoint", {
+      title: "D",
+      breadcrumb: "D",
+      published: [1700],
+      canonical: "1700",
+    })
+    .edition("vec", "disjoint", "1700", {
+      imported: true,
+      title: "D",
+      breadcrumb: "D",
+      published: [1700],
+    }, sec("kappa lambda mu nu omicron sigma tau upsilon"))
+    .work("vec", "hollow", {
+      title: "H",
+      breadcrumb: "H",
+      published: [1700],
+      canonical: "1700",
+    })
+    .edition("vec", "hollow", "1700", {
+      imported: true,
+      title: "H",
+      breadcrumb: "H",
+      published: [1700],
+    }, sec("[...]"))
+    .work("vec", "twinA", {
+      title: "TA",
+      breadcrumb: "TA",
+      published: [1700],
+      canonical: "1700",
+    })
+    .edition("vec", "twinA", "1700", {
+      imported: true,
+      title: "TA",
+      breadcrumb: "TA",
+      published: [1700],
+    }, sec("virtue reason cause"))
+    .work("vec", "twinB", {
+      title: "TB",
+      breadcrumb: "TB",
+      published: [1700],
+      canonical: "1700",
+    })
+    .edition("vec", "twinB", "1700", {
+      imported: true,
+      title: "TB",
+      breadcrumb: "TB",
+      published: [1700],
+    }, sec("virtue reason cause"))
+    .build();
+};
+
+/**
+ * Several works built from a single shared lemma, so the topic model collapses
+ * to one topic in which every work has weight 1 — the prominent-works sort then
+ * exercises its tiebreak.
+ */
+export const oneTopicCorpus = (): Record<string, string> => {
+  const one =
+    '## 1\n\n[metadata]\ntitle = "S"\nbreadcrumb = "S"\n\n{#1}\nphilosophy philosophy philosophy.';
+  return corpus()
+    .author("one", { forename: "On", surname: "E", published: 1700 })
+    .work("one", "a", {
+      title: "A",
+      breadcrumb: "A",
+      published: [1700],
+      canonical: "1700",
+    })
+    .edition("one", "a", "1700", {
+      imported: true,
+      title: "A",
+      breadcrumb: "A",
+      published: [1700],
+    }, one)
+    .work("one", "b", {
+      title: "B",
+      breadcrumb: "B",
+      published: [1700],
+      canonical: "1700",
+    })
+    .edition("one", "b", "1700", {
+      imported: true,
+      title: "B",
+      breadcrumb: "B",
+      published: [1700],
+    }, one)
+    .work("one", "c", {
+      title: "C",
+      breadcrumb: "C",
+      published: [1700],
+      canonical: "1700",
+    })
+    .edition("one", "c", "1700", {
+      imported: true,
+      title: "C",
+      breadcrumb: "C",
+      published: [1700],
+    }, one)
+    .build();
+};
+
+/**
+ * A target section and two candidate sections that share its vocabulary — one
+ * with a title, one without — so section-level similarity returns a result both
+ * with and without a section title.
+ */
+export const sectionSimilarCorpus = (): Record<string, string> => {
+  const ed = (id: string, title: string, words: string) =>
+    `# ${id}\n\n[metadata]\ntitle = "W"\nbreadcrumb = "W"\nimported = true\n` +
+    `published = [1700]\n\n## 1\n\n[metadata]\n${title}breadcrumb = "x"\n\n{#1}\n${words}`;
+  const idx = (id: string) =>
+    `# ${id}\n\n[metadata]\ntitle = "W"\nbreadcrumb = "W"\npublished = [1700]\ncanonical = "1700"\n`;
+  return corpus()
+    .author("sec", { forename: "Se", surname: "C", published: 1700 })
+    .file("works/sec/tgt/index.mit", idx("sec.tgt"))
+    .file(
+      "works/sec/tgt/1700.mit",
+      ed("sec.tgt.1700", 'title = "T"\n', "alpha beta gamma delta epsilon"),
+    )
+    .file("works/sec/titled/index.mit", idx("sec.titled"))
+    .file(
+      "works/sec/titled/1700.mit",
+      ed("sec.titled.1700", 'title = "Titled"\n', "alpha beta gamma zeta"),
+    )
+    .file("works/sec/bare/index.mit", idx("sec.bare"))
+    // the section has no title metadata, so a result for it has a null title.
+    .file(
+      "works/sec/bare/1700.mit",
+      ed("sec.bare.1700", "", "alpha beta delta eta"),
+    )
+    .build();
+};

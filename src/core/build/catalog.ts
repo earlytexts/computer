@@ -97,7 +97,7 @@ const EDITION_RE = /^\d{4}[a-z]?$/;
 
 export const lastSegment = (id: string): string => {
   const parts = id.split(/[./]/);
-  return parts[parts.length - 1] ?? id;
+  return parts[parts.length - 1]!; // split always yields at least one part
 };
 
 const metaString = (doc: MarkitDocument, key: string): string | undefined => {
@@ -122,7 +122,11 @@ const metaArray = (doc: MarkitDocument, key: string): (string | number)[] => {
   return [];
 };
 
-/** Normalise a path textually, resolving "." and "..". */
+/**
+ * Normalise an absolute path textually, resolving "." and "..". Every path here
+ * descends from the corpus dir, which buildCatalog absolutises (realPath) first,
+ * so the result is always absolute.
+ */
 const normalizePath = (path: string): string => {
   const out: string[] = [];
   for (const part of path.split("/")) {
@@ -130,7 +134,7 @@ const normalizePath = (path: string): string => {
     if (part === "..") out.pop();
     else out.push(part);
   }
-  return (path.startsWith("/") ? "/" : "") + out.join("/");
+  return "/" + out.join("/");
 };
 
 const dirOf = (path: string): string => path.slice(0, path.lastIndexOf("/"));
@@ -152,7 +156,7 @@ const findFile = async (
     // fall through to the case-insensitive walk
   }
   const parts = normalizePath(path).split("/").filter((p) => p !== "");
-  let current = path.startsWith("/") ? "" : ".";
+  let current = ""; // paths here are always absolute (see normalizePath)
   for (const part of parts) {
     let matched: string | undefined;
     try {
@@ -463,29 +467,3 @@ export const sectionTree = (
     };
   });
 };
-
-/** Depth-first flattening of a section tree (for prev/next navigation). */
-export const flattenSections = (sections: Section[]): Section[] =>
-  sections.flatMap((s) => [s, ...flattenSections(s.children)]);
-
-/** Find a section by its slug path. */
-export const findSection = (
-  doc: MarkitDocument,
-  path: string[],
-): Section | undefined => {
-  let sections = sectionTree(doc);
-  let found: Section | undefined;
-  for (const slug of path) {
-    found = sections.find((s) => s.slug === slug.toLowerCase());
-    if (found === undefined) return undefined;
-    sections = found.children;
-  }
-  return found;
-};
-
-export const findWork = (
-  catalog: Catalog,
-  authorSlug: string,
-  workSlug: string,
-): Work | undefined =>
-  catalog.byAuthor.get(authorSlug)?.works.find((w) => w.slug === workSlug);
