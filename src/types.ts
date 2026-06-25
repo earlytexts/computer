@@ -34,7 +34,8 @@ export type AuthorMeta = {
 };
 
 export type EditionMeta = {
-  authorSlug: string;
+  /** Author slugs, in title order; [0] is the primary (host) author. */
+  authorSlugs: string[];
   workSlug: string;
   slug: string; // a year slug, e.g. "1757", "1742a"
   title: string;
@@ -48,7 +49,9 @@ export type EditionMeta = {
 };
 
 export type WorkMeta = {
-  authorSlug: string;
+  /** Author slugs, in title order; [0] is the primary (host) author. A
+   * co-authored work appears under each of these in the catalog. */
+  authorSlugs: string[];
   slug: string;
   title: string;
   breadcrumb: string;
@@ -79,6 +82,10 @@ export type SectionSummary = {
   breadcrumb: string;
   /** Whether this section's text is present (own value or inherited). */
   imported: boolean;
+  /** Author slugs of this section (cascaded): one for a letter in a
+   * correspondence, the work's authors elsewhere. Map to names via the
+   * response's `authors`. */
+  authors: string[];
   children: SectionSummary[];
 };
 
@@ -89,12 +96,15 @@ export type SectionContent = {
   title: string;
   breadcrumb: string;
   imported: boolean;
+  /** Author slugs of this section (cascaded); see SectionSummary.authors. */
+  authors: string[];
   blocks: Block[];
   children: SectionContent[];
 };
 
 export type EditionResponse = {
-  author: AuthorMeta;
+  /** Every author of the work, in title order (one, or both of a correspondence). */
+  authors: AuthorMeta[];
   work: WorkMeta;
   edition: EditionMeta;
   /** Which version the blocks below are resolved to. */
@@ -105,7 +115,8 @@ export type EditionResponse = {
 };
 
 export type FullTextResponse = {
-  author: AuthorMeta;
+  /** Every author of the work, in title order (one, or both of a correspondence). */
+  authors: AuthorMeta[];
   work: WorkMeta;
   edition: EditionMeta;
   version: Version;
@@ -131,7 +142,8 @@ export type EditionSection = {
 };
 
 export type SectionResponse = {
-  author: AuthorMeta;
+  /** Every author of the work, in title order (one, or both of a correspondence). */
+  authors: AuthorMeta[];
   work: WorkMeta;
   edition: EditionMeta;
   version: Version;
@@ -140,6 +152,8 @@ export type SectionResponse = {
     title: string;
     breadcrumb: string;
     imported: boolean;
+    /** Author slugs of this section (cascaded); map to names via `authors`. */
+    authors: string[];
     blocks: Block[];
     children: SectionSummary[];
   };
@@ -154,7 +168,8 @@ export type SectionResponse = {
 };
 
 export type SectionFullTextResponse = {
-  author: AuthorMeta;
+  /** Every author of the work, in title order (one, or both of a correspondence). */
+  authors: AuthorMeta[];
   work: WorkMeta;
   edition: EditionMeta;
   version: Version;
@@ -181,7 +196,8 @@ export type AlignedRow = {
 };
 
 export type CompareResponse = {
-  author: AuthorMeta;
+  /** Every author of the work, in title order (one, or both of a correspondence). */
+  authors: AuthorMeta[];
   work: WorkMeta;
   a: EditionMeta;
   b: EditionMeta;
@@ -189,7 +205,8 @@ export type CompareResponse = {
 };
 
 export type CompareSectionResponse = {
-  author: AuthorMeta;
+  /** Every author of the work, in title order (one, or both of a correspondence). */
+  authors: AuthorMeta[];
   work: WorkMeta;
   a: EditionMeta;
   b: EditionMeta;
@@ -231,8 +248,8 @@ export type CompareSectionResponse = {
 export type MatchLevel = "exact" | "spelling" | "form";
 
 export type SearchResult = {
-  author: string; // author slug
-  authorName: string; // surname, for display
+  authors: string[]; // author slugs, in title order
+  authorNames: string[]; // surnames, parallel to authors, for display
   work: string;
   workBreadcrumb: string;
   edition: string; // a year slug
@@ -271,7 +288,7 @@ export type SearchResponse = {
 
 export type FrequencyEntry = {
   label: string;
-  author: string;
+  authors: string[];
   work: string;
   edition: string | null; // null unless by="edition"
   count: number; // phrase occurrences in this group
@@ -290,8 +307,8 @@ export type FrequencyResponse = {
 
 /** One occurrence of the phrase, shown keyword-in-context. */
 export type ConcordanceLine = {
-  author: string; // author slug
-  authorName: string; // surname, for display
+  authors: string[]; // author slugs, in title order
+  authorNames: string[]; // surnames, parallel to authors, for display
   work: string;
   workBreadcrumb: string;
   edition: string; // a year slug
@@ -443,8 +460,8 @@ export type SimilarLevel = "section" | "edition" | "work";
 
 /** One corpus item lexically similar to the target. */
 export type SimilarItem = {
-  author: string; // author slug
-  authorName: string; // surname, for display
+  authors: string[]; // author slugs, in title order
+  authorNames: string[]; // surnames, parallel to authors, for display
   work: string;
   workBreadcrumb: string;
   /** The edition (a year slug) for section/edition levels; null for work level. */
@@ -500,8 +517,8 @@ export type TopicTermWeight = {
 
 /** One corpus work where a topic is prominent (for tracing a topic). */
 export type TopicProminentItem = {
-  author: string; // author slug
-  authorName: string; // surname, for display
+  authors: string[]; // author slugs, in title order
+  authorNames: string[]; // surnames, parallel to authors, for display
   work: string;
   workBreadcrumb: string;
   /** The work's canonical edition (a year slug). */

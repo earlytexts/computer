@@ -45,16 +45,22 @@ export const localComputer = (
   dtm: DtmStore,
   topics: TopicsStore,
 ): Computer => {
-  // Resolve author and work entries; slugs are lowercased to match the HTTP
-  // routes (server.ts lowercases every path segment).
+  // Resolve a work entry by any of its authors, and the full list of its authors
+  // (so a co-authored work resolves under either, and every response carries
+  // both). Slugs are lowercased to match the HTTP routes (server.ts lowercases
+  // every path segment).
   const authorWork = (author: string, work: string) => {
     const authorEntry = findAuthorEntry(artefacts.catalog, lower(author));
     const workEntry = authorEntry === undefined
       ? undefined
       : findWorkEntry(authorEntry, lower(work));
-    return authorEntry === undefined || workEntry === undefined
-      ? undefined
-      : { author: authorEntry, work: workEntry };
+    if (authorEntry === undefined || workEntry === undefined) return undefined;
+    // The work's authors, mapped to their metadata for the response; every slug
+    // names a catalog author (the build registered the work under each).
+    const authors = workEntry.meta.authorSlugs.map(
+      (slug) => findAuthorEntry(artefacts.catalog, slug)!.meta,
+    );
+    return { authors, work: workEntry };
   };
 
   // As above, plus an edition entry, defaulting to the work's canonical edition
@@ -77,7 +83,7 @@ export const localComputer = (
       const found = resolve(author, work, edition);
       return found === undefined ? Promise.resolve(undefined) : editionResponse(
         store,
-        found.author,
+        found.authors,
         found.work,
         found.edition,
         version,
@@ -89,7 +95,7 @@ export const localComputer = (
         ? Promise.resolve(undefined)
         : fullTextResponse(
           store,
-          found.author,
+          found.authors,
           found.work,
           found.edition,
           version,
@@ -99,7 +105,7 @@ export const localComputer = (
       const found = resolve(author, work, edition);
       return found === undefined ? Promise.resolve(undefined) : sectionResponse(
         store,
-        found.author,
+        found.authors,
         found.work,
         found.edition,
         lowerPath(path),
@@ -112,7 +118,7 @@ export const localComputer = (
         ? Promise.resolve(undefined)
         : sectionFullTextResponse(
           store,
-          found.author,
+          found.authors,
           found.work,
           found.edition,
           lowerPath(path),
@@ -123,7 +129,7 @@ export const localComputer = (
       const pair = authorWork(author, work);
       // compareResponse resolves the two edition slugs itself.
       return pair === undefined ? Promise.resolve(undefined) : Promise.resolve(
-        compareResponse(pair.author, pair.work, lower(a), lower(b)),
+        compareResponse(pair.authors, pair.work, lower(a), lower(b)),
       );
     },
     compareSection: (author, work, a, b, path, version) => {
@@ -132,7 +138,7 @@ export const localComputer = (
         ? Promise.resolve(undefined)
         : compareSectionResponse(
           store,
-          pair.author,
+          pair.authors,
           pair.work,
           lower(a),
           lower(b),

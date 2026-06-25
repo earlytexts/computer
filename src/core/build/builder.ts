@@ -70,8 +70,13 @@ const eachUnit = (
     return source === undefined || source.startsWith(work.dir + "/") ||
       source === work.dir;
   };
+  // A co-authored work is listed under each of its authors; index its blocks
+  // once (under the host author), or its units would be counted twice.
+  const seen = new Set<Work>();
   for (const author of catalog.authors) {
     for (const work of author.works) {
+      if (seen.has(work)) continue;
+      seen.add(work);
       for (const edition of work.editions) {
         // An edition's own document always lives in its work's directory; only
         // its borrowed child sections (handled below) can belong elsewhere.
@@ -115,7 +120,7 @@ const authorMeta = (author: Author): AuthorMeta => ({
 });
 
 const editionMeta = (edition: Edition): EditionMeta => ({
-  authorSlug: edition.authorSlug,
+  authorSlugs: edition.authorSlugs,
   workSlug: edition.workSlug,
   slug: edition.slug,
   title: edition.title,
@@ -128,7 +133,7 @@ const editionMeta = (edition: Edition): EditionMeta => ({
 });
 
 const workMeta = (work: Work): WorkMeta => ({
-  authorSlug: work.authorSlug,
+  authorSlugs: work.authorSlugs,
   slug: work.slug,
   title: work.title,
   breadcrumb: work.breadcrumb,
@@ -152,6 +157,7 @@ const skeletonSection = (
   title: section.title,
   breadcrumb: section.breadcrumb,
   imported: section.imported,
+  authors: section.authors,
   units: section.doc.blocks
     .map((block) => blockUnit.get(block))
     .filter((unit): unit is number => unit !== undefined),
@@ -509,19 +515,25 @@ export const buildArtefacts = (
   const encoder = new TextEncoder();
 
   // Every edition, in catalog order, with display names denormalised so
-  // that search responses need no other source.
+  // that search responses need no other source. A co-authored work appears in
+  // several authors' lists but is one edition on disk, so it is emitted once
+  // (under its host author) and carries all its authors.
+  const surnameOf = new Map(catalog.authors.map((a) => [a.slug, a.surname]));
   const editionRefs: EditionRef[] = [];
   const editionIndex = new Map<string, number>();
+  const seenWorks = new Set<Work>();
   for (const author of catalog.authors) {
     for (const work of author.works) {
+      if (seenWorks.has(work)) continue;
+      seenWorks.add(work);
       for (const edition of work.editions) {
         editionIndex.set(
-          `${author.slug}/${work.slug}/${edition.slug}`,
+          `${work.authorSlugs[0]}/${work.slug}/${edition.slug}`,
           editionRefs.length,
         );
         editionRefs.push({
-          author: author.slug,
-          authorName: author.surname,
+          authors: work.authorSlugs,
+          authorNames: work.authorSlugs.map((s) => surnameOf.get(s)!),
           work: work.slug,
           workBreadcrumb: work.breadcrumb,
           edition: edition.slug,
@@ -608,7 +620,7 @@ export const buildArtefacts = (
 
   eachUnit(catalog, (work, edition, sectionPath, sectionTitle, block) => {
     const editionIdx = editionIndex.get(
-      `${work.authorSlug}/${work.slug}/${edition.slug}`,
+      `${work.authorSlugs[0]}/${work.slug}/${edition.slug}`,
     )!;
     let acc = accumulators.get(editionIdx);
     if (acc === undefined) {
@@ -755,7 +767,12 @@ export const buildArtefacts = (
           units: edition.document.blocks
             .map((block) => blockUnit.get(block))
             .filter((unit): unit is number => unit !== undefined),
-          sections: sectionTree(edition.document)
+          sections: sectionTree(
+            edition.document,
+            [],
+            undefined,
+            edition.authorSlugs,
+          )
             .map((section) => skeletonSection(section, blockUnit)),
         })),
       })),
@@ -763,7 +780,9 @@ export const buildArtefacts = (
     editionSlugs: [...new Set(editionRefs.map((e) => e.edition))].sort(),
   };
 
-  const works = catalog.authors.reduce((n, a) => n + a.works.length, 0);
+  // `seenWorks` holds each work once (a co-authored work is listed under
+  // several authors), so its size is the distinct work count.
+  const works = seenWorks.size;
   const dtm = buildDtm(vocab, units, postings);
   return {
     manifest: {

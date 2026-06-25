@@ -158,8 +158,8 @@ Deno.test("results carry full formatted blocks with the phrase marked", async ()
   const found = await computer.search({ q: "liberty of the press" });
   assert(found.total > 0);
   const first = found.results[0];
-  assertEquals(first.author, "test");
-  assertEquals(first.authorName, "Test");
+  assertEquals(first.authors, ["test"]);
+  assertEquals(first.authorNames, ["Test"]);
   assertEquals(first.work, "tw");
   assertEquals(first.workBreadcrumb, "Test Work");
   assert(first.block.content.length > 0);

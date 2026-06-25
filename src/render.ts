@@ -181,14 +181,20 @@ const renderToc = (sections: SectionSummary[], depth: number): string =>
     renderToc(section.children, depth + 1)
   ).join("");
 
+/** Join author surnames for a header, e.g. "Astell & Norris". */
+const authorList = (authors: { surname: string }[]): string =>
+  authors.map((a) => a.surname).join(" & ");
+
 const editionHeader = (
   response: {
-    author: { surname: string };
+    authors: { surname: string }[];
     work: WorkMeta;
     edition: EditionMeta;
   },
 ): string =>
-  `${response.author.surname}, ${response.work.title} — edition "${response.edition.slug}"` +
+  `${
+    authorList(response.authors)
+  }, ${response.work.title} — edition "${response.edition.slug}"` +
   ` (published ${response.edition.published.join(", ")})` +
   `${response.edition.imported ? "" : " [stub]"}`;
 
@@ -298,7 +304,9 @@ export const renderSearch = (response: SearchResponse): string => {
     }).`;
   }
   const results = response.results.map((result, index) =>
-    `${index + 1}. ${result.author}/${result.work}/${result.edition} § ${
+    `${index + 1}. ${
+      result.authors.join("+")
+    }/${result.work}/${result.edition} § ${
       result.sectionPath.join("/")
     } (${result.sectionTitle}) [${result.blockId}]\n` +
     renderBlocks([result.block])
@@ -334,7 +342,7 @@ export const renderConcordance = (response: ConcordanceResponse): string => {
   const lines = response.lines.map((line) => {
     const left = (line.leftTruncated ? "… " : "") + line.left;
     const right = line.right + (line.rightTruncated ? " …" : "");
-    const cite = `${line.author}/${line.work}/${line.edition} § ${
+    const cite = `${line.authors.join("+")}/${line.work}/${line.edition} § ${
       line.sectionPath.join("/")
     } [${line.blockId}]`;
     return `${left} «${line.keyword}» ${right}\n    — ${cite}`;
@@ -420,7 +428,7 @@ export const renderSimilar = (response: SimilarResponse): string => {
       `(by ${response.level}).`;
   }
   const cite = (entry: SimilarResponse["results"][number]): string => {
-    const parts = [entry.author, entry.work, entry.edition]
+    const parts = [entry.authors.join("+"), entry.work, entry.edition]
       .filter((p) => p !== null).join("/");
     // A section-level result always carries a title (the builder falls back to
     // the section id), so it is always shown.
@@ -450,7 +458,9 @@ export const renderTopics = (response: TopicsResponse): string => {
     if (topic.prominent.length > 0) {
       const works = topic.prominent
         .map((work) =>
-          `${work.authorName}, ${work.workBreadcrumb} (${work.weight})`
+          `${
+            work.authorNames.join(" & ")
+          }, ${work.workBreadcrumb} (${work.weight})`
         )
         .join("; ");
       lines.push(`  prominent in: ${works}`);
@@ -496,7 +506,9 @@ const renderRows = (
   }).join("");
 
 export const renderCompare = (response: CompareResponse): string =>
-  `${response.author.surname}, ${response.work.title}: sections of edition ` +
+  `${
+    authorList(response.authors)
+  }, ${response.work.title}: sections of edition ` +
   `"${response.a.slug}" aligned with edition "${response.b.slug}":\n\n` +
   renderRows(response.rows, response.a.slug, response.b.slug, 0);
 
@@ -504,7 +516,9 @@ export const renderCompareSection = (
   response: CompareSectionResponse,
 ): string => {
   const header =
-    `${response.author.surname}, ${response.work.title}, "${response.title}": ` +
+    `${
+      authorList(response.authors)
+    }, ${response.work.title}, "${response.title}": ` +
     `edition "${response.a.slug}" vs edition "${response.b.slug}" ` +
     `(${response.version} text). ` +
     `[-…-] appears only in ${response.a.slug}, {+…+} only in ${response.b.slug}.`;

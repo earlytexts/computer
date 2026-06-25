@@ -93,9 +93,10 @@ export const PIPELINE_VERSION =
 export const CAP_BIT = 0x80000000;
 export const POSITION_MASK = 0x7fffffff;
 
-/** An edition's subdirectory under the artefacts root (its on-disk location). */
+/** An edition's subdirectory under the artefacts root (its on-disk location).
+ * Keyed by the primary (host) author so a co-authored work has one location. */
 export const editionDir = (ref: EditionRef): string =>
-  `editions/${ref.author}/${ref.work}/${ref.edition}`;
+  `editions/${ref.authors[0]}/${ref.work}/${ref.edition}`;
 
 /**
  * The fixed-name artefact files (everything but the per-edition subdirectories).
@@ -136,8 +137,9 @@ export type ArtefactFiles = Map<string, Uint8Array>;
 /* ------------------------------- types ------------------------------- */
 
 export type EditionRef = {
-  author: string;
-  authorName: string; // surname, for display
+  /** The work's author slugs, in title order; [0] is the primary (host). */
+  authors: string[];
+  authorNames: string[]; // surnames, parallel to `authors`, for display
   work: string;
   workBreadcrumb: string;
   edition: string; // a year slug
@@ -189,6 +191,8 @@ export type SkeletonSection = {
   title: string;
   breadcrumb: string;
   imported: boolean;
+  /** Author slugs of this section (cascaded), for per-section attribution. */
+  authors: string[];
   /** Unit indices of this section's own blocks, in order. */
   units: number[];
   children: SkeletonSection[];

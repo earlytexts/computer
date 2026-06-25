@@ -111,22 +111,25 @@ const doc = (heading: string, meta: Meta, body = ""): string =>
 export class CorpusBuilder {
   private files: Record<string, string> = {};
 
-  /** `authors/<slug>.mit`: the author's metadata (no text). */
+  /** `data/authors/<slug>.mit`: the author's metadata (no text). */
   author(slug: string, meta: Meta): this {
-    this.files[`${CORPUS_ROOT}/authors/${slug}.mit`] = doc(`# ${slug}`, meta);
+    this.files[`${CORPUS_ROOT}/data/authors/${slug}.mit`] = doc(
+      `# ${slug}`,
+      meta,
+    );
     return this;
   }
 
-  /** `works/<author>/<work>/index.mit`: the work's edition-independent identity. */
+  /** `data/works/<author>/<work>/index.mit`: the work's edition-independent identity. */
   work(author: string, work: string, meta: Meta): this {
-    this.files[`${CORPUS_ROOT}/works/${author}/${work}/index.mit`] = doc(
+    this.files[`${CORPUS_ROOT}/data/works/${author}/${work}/index.mit`] = doc(
       `# ${author}.${work}`,
       meta,
     );
     return this;
   }
 
-  /** `works/<author>/<work>/<slug>.mit`: a year-named edition with its text. */
+  /** `data/works/<author>/<work>/<slug>.mit`: a year-named edition with its text. */
   edition(
     author: string,
     work: string,
@@ -134,7 +137,7 @@ export class CorpusBuilder {
     meta: Meta,
     body = "",
   ): this {
-    this.files[`${CORPUS_ROOT}/works/${author}/${work}/${slug}.mit`] = doc(
+    this.files[`${CORPUS_ROOT}/data/works/${author}/${work}/${slug}.mit`] = doc(
       `# ${author}.${work}.${slug}`,
       meta,
       body,
@@ -264,8 +267,14 @@ Men of letters defend the natural _liberty_ of thinking<n1> in every age.
 {#n1}
 A remark re//42//corded at the foot of the page.`;
 
+// A composite edition: it borrows tw's 1750 text via an angle-bracket child
+// placeholder (`## <test.tw.1750>` — the bracketed id names the edition whose
+// text is spliced in at that point), then adds its own inline section. The two
+// child kinds mix freely in file order.
 const COMP_1755 = `{#title}
 ^1 A COMPOSITE COLLECTION.
+
+## <test.tw.1750>
 
 ## In
 
@@ -347,7 +356,9 @@ export const testCorpus = (): Record<string, string> =>
       title: "A Composite Collection",
       breadcrumb: "Composite",
       published: [1755],
-      children: ["../tw/1750", "in"],
+      // a scalar copytext (not an array): the loader coerces it to a one-element
+      // list, exercising the metadata-array helper's scalar arm.
+      copytext: "1750",
     }, COMP_1755)
     .work("other", "stub", {
       title: "A Stub Treatise, Not Yet Transcribed",
@@ -361,6 +372,103 @@ export const testCorpus = (): Record<string, string> =>
       breadcrumb: "Stub Treatise",
       published: [1730],
     })
+    .build();
+
+/* ------------------------ the co-author corpus ----------------------- */
+
+// A two-letter correspondence: each letter (section) overrides the work's
+// `authors` with the single author who wrote it — letter 1 as an array, letter 2
+// as a bare string (both forms the loader accepts).
+const CORR_1700 = `{#title}
+^1 A CORRESPONDENCE.
+
+## 1
+
+[metadata]
+title = "Letter 1"
+breadcrumb = "Letter 1"
+authors = ["bell"]
+
+{#1}
+Dear friend, virtue and reason should guide the understanding.
+
+## 2
+
+[metadata]
+title = "Letter 2"
+breadcrumb = "Letter 2"
+authors = "dee"
+
+{#1}
+Madam, liberty and passion alike move the soul.`;
+
+/**
+ * A genuinely co-authored work: "A Correspondence" lives under its host author
+ * (bell, alphabetically first) but names both authors, so the catalog lists it
+ * under bell and dee alike, and each letter is attributed to its writer. A
+ * second work names a co-author with no author file, to drive the phantom-author
+ * warning. Bell also has a solo work, so an author-scoped query has something to
+ * exclude.
+ */
+export const coauthorCorpus = (): Record<string, string> =>
+  corpus()
+    .author("bell", { forename: "Anna", surname: "Bell", published: 1700 })
+    .author("dee", { forename: "Carl", surname: "Dee", published: 1705 })
+    .work("bell", "corr", {
+      title: "A Correspondence",
+      breadcrumb: "Correspondence",
+      authors: ["bell", "dee"],
+      published: [1700],
+      canonical: "1700",
+    })
+    .edition("bell", "corr", "1700", {
+      imported: true,
+      title: "A Correspondence",
+      breadcrumb: "Correspondence",
+      authors: ["bell", "dee"],
+      published: [1700],
+    }, CORR_1700)
+    .work("bell", "solo", {
+      title: "A Solo Work",
+      breadcrumb: "Solo",
+      authors: ["bell"],
+      published: [1702],
+      canonical: "1702",
+    })
+    .edition(
+      "bell",
+      "solo",
+      "1702",
+      {
+        imported: true,
+        title: "A Solo Work",
+        breadcrumb: "Solo",
+        authors: ["bell"],
+        published: [1702],
+      },
+      '## 1\n\n[metadata]\ntitle = "S"\nbreadcrumb = "S"\n\n{#1}\nVirtue alone.',
+    )
+    // names a co-author with no data/authors file: a phantom author + warning.
+    .work("bell", "ghost", {
+      title: "A Ghost-written Work",
+      breadcrumb: "Ghost",
+      authors: ["bell", "zz"],
+      published: [1703],
+      canonical: "1703",
+    })
+    .edition(
+      "bell",
+      "ghost",
+      "1703",
+      {
+        imported: true,
+        title: "A Ghost-written Work",
+        breadcrumb: "Ghost",
+        authors: ["bell", "zz"],
+        published: [1703],
+      },
+      '## 1\n\n[metadata]\ntitle = "G"\nbreadcrumb = "G"\n\n{#1}\nReason and passion.',
+    )
     .build();
 
 /* ------------------------- the rich corpus --------------------------- */
@@ -664,72 +772,75 @@ export const metadataCorpus = (): Record<string, string> => {
   return corpus()
     // birth but no death; nationality/sex/published set; a single work.
     .file(
-      "authors/alpha.mit",
+      "data/authors/alpha.mit",
       '# alpha\n\n[metadata]\nforename = "Al"\nsurname = "Pha"\nbirth = 1700\n' +
         'published = 1700\nnationality = "English"\nsex = "Male"\n',
     )
     // no metadata at all: forename/surname/published all absent.
-    .file("authors/min.mit", "# min\n")
+    .file("data/authors/min.mit", "# min\n")
     // a death but no birth (the other side of the date-span fallback).
     // published year ties with alpha, so the author sort falls to its slug
     // tiebreak; the death-without-birth feeds the other date-span fallback.
     .file(
-      "authors/gamma.mit",
+      "data/authors/gamma.mit",
       '# gamma\n\n[metadata]\nforename = "Ga"\nsurname = "Mma"\ndeath = 1799\n' +
         "published = 1700\n",
     )
     .file(
-      "works/gamma/g/index.mit",
+      "data/works/gamma/g/index.mit",
       '# gamma.g\n\n[metadata]\ntitle = "G"\nbreadcrumb = "G"\n' +
         'published = [1700]\ncanonical = "1700"\n',
     )
     .file(
-      "works/gamma/g/1700.mit",
+      "data/works/gamma/g/1700.mit",
       '# gamma.g.1700\n\n[metadata]\ntitle = "G"\nbreadcrumb = "G"\n' +
         "imported = true\npublished = [1700]" + section,
     )
     // alpha/a: full work, a normal edition, and a directory-style edition.
     .file(
-      "works/alpha/a/index.mit",
+      "data/works/alpha/a/index.mit",
       '# alpha.a\n\n[metadata]\ntitle = "A"\nbreadcrumb = "A"\n' +
         'published = [1700]\ncanonical = "1700"\n',
     )
     .file(
-      "works/alpha/a/1700.mit",
+      "data/works/alpha/a/1700.mit",
       '# alpha.a.1700\n\n[metadata]\ntitle = "A"\nbreadcrumb = "A"\n' +
         "imported = true\npublished = [1700]" + section,
     )
     .file(
-      "works/alpha/a/1758/index.mit",
+      "data/works/alpha/a/1758/index.mit",
       '# alpha.a.1758\n\n[metadata]\ntitle = "A"\nbreadcrumb = "A"\n' +
         "imported = true\npublished = [1758]" + section,
     )
     // a non-.mit file inside the work folder (the edition scan ignores it).
-    .file("works/alpha/a/readme.txt", "notes, not an edition")
+    .file("data/works/alpha/a/readme.txt", "notes, not an edition")
     // alpha/b and alpha/c: two works with empty publication lists, so the work
     // sort compares two missing years (and a missing against a present one).
     .file(
-      "works/alpha/b/index.mit",
+      "data/works/alpha/b/index.mit",
       '# alpha.b\n\n[metadata]\ntitle = "B"\nbreadcrumb = "B"\ncanonical = "1700"\n',
     )
     .file(
-      "works/alpha/b/1700.mit",
+      "data/works/alpha/b/1700.mit",
       '# alpha.b.1700\n\n[metadata]\ntitle = "B"\nbreadcrumb = "B"\nimported = true' +
         section,
     )
     .file(
-      "works/alpha/c/index.mit",
+      "data/works/alpha/c/index.mit",
       '# alpha.c\n\n[metadata]\ntitle = "C"\nbreadcrumb = "C"\ncanonical = "1700"\n',
     )
     .file(
-      "works/alpha/c/1700.mit",
+      "data/works/alpha/c/1700.mit",
       '# alpha.c.1700\n\n[metadata]\ntitle = "C"\nbreadcrumb = "C"\nimported = true' +
         section,
     )
     // min/w: index without title/breadcrumb/published; an edition with empty
     // metadata (no title/breadcrumb/imported/published).
-    .file("works/min/w/index.mit", "# min.w\n")
-    .file("works/min/w/1700.mit", "# min.w.1700\n\n[metadata]\n" + section)
+    .file("data/works/min/w/index.mit", "# min.w\n")
+    .file(
+      "data/works/min/w/1700.mit",
+      "# min.w.1700\n\n[metadata]\n" + section,
+    )
     .build();
 };
 
@@ -768,7 +879,7 @@ export const emptyDocCorpus = (): Record<string, string> =>
     })
     // imported (the metadata says so) but with no content blocks at all.
     .file(
-      "works/solid/hollow/1710.mit",
+      "data/works/solid/hollow/1710.mit",
       '# solid.hollow.1710\n\n[metadata]\ntitle = "Hollow"\nbreadcrumb = "Hollow"\n' +
         "imported = true\npublished = [1710]\n",
     )
@@ -946,20 +1057,20 @@ export const sectionSimilarCorpus = (): Record<string, string> => {
     `# ${id}\n\n[metadata]\ntitle = "W"\nbreadcrumb = "W"\npublished = [1700]\ncanonical = "1700"\n`;
   return corpus()
     .author("sec", { forename: "Se", surname: "C", published: 1700 })
-    .file("works/sec/tgt/index.mit", idx("sec.tgt"))
+    .file("data/works/sec/tgt/index.mit", idx("sec.tgt"))
     .file(
-      "works/sec/tgt/1700.mit",
+      "data/works/sec/tgt/1700.mit",
       ed("sec.tgt.1700", 'title = "T"\n', "alpha beta gamma delta epsilon"),
     )
-    .file("works/sec/titled/index.mit", idx("sec.titled"))
+    .file("data/works/sec/titled/index.mit", idx("sec.titled"))
     .file(
-      "works/sec/titled/1700.mit",
+      "data/works/sec/titled/1700.mit",
       ed("sec.titled.1700", 'title = "Titled"\n', "alpha beta gamma zeta"),
     )
-    .file("works/sec/bare/index.mit", idx("sec.bare"))
+    .file("data/works/sec/bare/index.mit", idx("sec.bare"))
     // the section has no title metadata, so a result for it has a null title.
     .file(
-      "works/sec/bare/1700.mit",
+      "data/works/sec/bare/1700.mit",
       ed("sec.bare.1700", "", "alpha beta delta eta"),
     )
     .build();

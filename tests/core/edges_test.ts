@@ -145,10 +145,10 @@ Deno.test("frequency: an author scope excludes other authors' editions", async (
     editions: "all",
   });
   assert(freq.total > 0);
-  assert(freq.results.every((r) => r.author === "a"));
+  assert(freq.results.every((r) => r.authors.includes("a")));
   // sanity: the word is in both authors when unscoped
   const all = await computer.frequency({ q: "virtue", editions: "all" });
-  assert(all.results.some((r) => r.author === "b"));
+  assert(all.results.some((r) => r.authors.includes("b")));
 });
 
 Deno.test("frequency: a work scope excludes the author's other works", async () => {

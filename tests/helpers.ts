@@ -159,7 +159,8 @@ export const unitText = (data: TestData, unitIndex: number): string => {
   const { units, manifest } = data.artefacts;
   const ref = manifest.editions[units.edition[unitIndex]];
   const edition = data.built.editions.find((e) =>
-    e.author === ref.author && e.work === ref.work && e.edition === ref.edition
+    e.authors[0] === ref.authors[0] && e.work === ref.work &&
+    e.edition === ref.edition
   )!;
   return edition.text.slice(
     units.blobOffset[unitIndex],

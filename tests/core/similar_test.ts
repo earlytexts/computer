@@ -63,7 +63,7 @@ Deno.test("the work level compares whole works", async () => {
     assert(r.work !== "tw");
     assertEquals(r.edition, null);
     assertEquals(r.sectionPath, []);
-    works.add(`${r.author}/${r.work}`);
+    works.add(`${r.authors[0]}/${r.work}`);
   }
   assertEquals(works.size, response.results.length);
   assert(works.has("test/solo"));

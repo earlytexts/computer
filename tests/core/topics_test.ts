@@ -83,7 +83,7 @@ Deno.test("computer.topics returns the model: terms and prominent works", async 
     assert(topic.prominent.length <= 3);
     for (const work of topic.prominent) {
       assert(work.weight > 0 && work.weight <= 1);
-      slugs.add(`${work.author}/${work.work}`);
+      slugs.add(`${work.authors[0]}/${work.work}`);
     }
     // Prominent works descend by weight.
     for (let i = 1; i < topic.prominent.length; i++) {

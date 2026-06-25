@@ -141,7 +141,8 @@ Deno.test("cosine similarity scores match their golden values", async () => {
   });
   const scoreAt = (author: string, work: string, path: string): number => {
     const row = section.results.find((r) =>
-      r.author === author && r.work === work && r.sectionPath.join("/") === path
+      r.authors[0] === author && r.work === work &&
+      r.sectionPath.join("/") === path
     );
     assert(row !== undefined, `expected ${author}/${work} section ${path}`);
     return row.score;
@@ -157,7 +158,7 @@ Deno.test("cosine similarity scores match their golden values", async () => {
     level: "work",
   });
   const workScore = (slug: string): number => {
-    const row = work.results.find((r) => `${r.author}/${r.work}` === slug);
+    const row = work.results.find((r) => `${r.authors[0]}/${r.work}` === slug);
     assert(row !== undefined, `expected work ${slug}`);
     return row.score;
   };

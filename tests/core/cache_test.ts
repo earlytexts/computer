@@ -28,7 +28,7 @@ Deno.test("a changed corpus is rebuilt", async () => {
   await openComputer(harness.io, PATHS);
   assertEquals(harness.state.builds, 1);
   // add a corpus file: the scan's file count changes, so the cache is stale
-  harness.files[`${CORPUS_ROOT}/authors/extra.mit`] =
+  harness.files[`${CORPUS_ROOT}/data/authors/extra.mit`] =
     `# extra\n\n[metadata]\nforename = "Ex"\nsurname = "Tra"\npublished = 1700\n`;
   const { computer } = await openComputer(harness.io, PATHS);
   assertEquals(harness.state.builds, 2);

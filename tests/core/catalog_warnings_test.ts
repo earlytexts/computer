@@ -50,8 +50,10 @@ const base = () =>
       '## 1\n\n[metadata]\ntitle = "S"\nbreadcrumb = "S"\n\n{#1}\nA sentence.',
     );
 
-Deno.test("catalog: a scalar children value is read as a one-element list", async () => {
-  // children given as a bare string (not an array): the inline section resolves.
+Deno.test("catalog: inline and borrowed children mix without warning", async () => {
+  // An angle-bracket placeholder (`## <a.w.1700>`, borrowing the work's 1700
+  // text) sits before an ordinary inline section; both are kept, in file order,
+  // and the build raises no complaint about an unresolved child.
   const files = base()
     .edition(
       "a",
@@ -62,19 +64,18 @@ Deno.test("catalog: a scalar children value is read as a one-element list", asyn
         title: "W",
         breadcrumb: "W",
         published: [1710],
-        children: "in", // a scalar, not ["in"]
       },
-      '## In\n\n[metadata]\ntitle = "Inline"\nbreadcrumb = "Inline"\n\n{#1}\nInline text.',
+      "## <a.w.1700>\n\n" +
+        '## In\n\n[metadata]\ntitle = "Inline"\nbreadcrumb = "Inline"\n\n{#1}\nInline text.',
     )
     .build();
   const warnings = await warningsFor(files);
-  // It built without complaint about children.
-  assert(!has(warnings, "unresolved child"));
+  assert(!has(warnings, "unresolved child"), warnings.join("; "));
 });
 
-Deno.test("catalog: a child reference resolves case-insensitively", async () => {
-  // The reference points at ../W/1700 with the work in a different case than on
-  // disk; the case-insensitive walk still finds it.
+Deno.test("catalog: an angle-bracket child resolves case-insensitively", async () => {
+  // The bracketed id is in a different case (A.W.1700) than the files on disk;
+  // the case-insensitive walk still finds data/works/a/w/1700.
   const files = base()
     .edition(
       "a",
@@ -85,9 +86,34 @@ Deno.test("catalog: a child reference resolves case-insensitively", async () => 
         title: "W",
         breadcrumb: "W",
         published: [1710],
-        children: ["../W/1700"],
       },
-      '## Own\n\n[metadata]\ntitle = "Own"\nbreadcrumb = "Own"\n\n{#1}\nOwn text.',
+      "## <A.W.1700>",
+    )
+    .build();
+  const warnings = await warningsFor(files);
+  assert(!has(warnings, "unresolved child"), warnings.join("; "));
+});
+
+Deno.test("catalog: an angle-bracket child resolves a directory-form edition", async () => {
+  // The borrowed edition lives in its directory form (1720/index.mit), so the
+  // resolver falls through from the <edition>.mit candidate to <edition>/index.mit.
+  const files = base()
+    .file(
+      "data/works/a/w/1720/index.mit",
+      '# a.w.1720\n\n[metadata]\ntitle = "W"\nbreadcrumb = "W"\nimported = true\n' +
+        'published = [1720]\n\n## 1\n\n[metadata]\ntitle = "S"\nbreadcrumb = "S"\n\n{#1}\nDir text.',
+    )
+    .edition(
+      "a",
+      "w",
+      "1730",
+      {
+        imported: true,
+        title: "W",
+        breadcrumb: "W",
+        published: [1730],
+      },
+      "## <a.w.1720>",
     )
     .build();
   const warnings = await warningsFor(files);
@@ -95,25 +121,28 @@ Deno.test("catalog: a child reference resolves case-insensitively", async () => 
 });
 
 Deno.test("catalog: a circular child reference is reported and broken", async () => {
+  // Two editions of the same work borrow each other via angle-bracket children.
   const files = base()
     .file(
-      "works/a/loop/index.mit",
+      "data/works/a/loop/index.mit",
       '# a.loop\n\n[metadata]\ntitle = "Loop"\nbreadcrumb = "Loop"\npublished = [1700]\ncanonical = "1700"\n',
     )
     .file(
-      "works/a/loop/1700.mit",
-      '# a.loop.1700\n\n[metadata]\ntitle = "Loop"\nbreadcrumb = "Loop"\npublished = [1700]\nimported = true\nchildren = ["1710"]\n\n## one\n\n{#1}\nfirst.',
+      "data/works/a/loop/1700.mit",
+      '# a.loop.1700\n\n[metadata]\ntitle = "Loop"\nbreadcrumb = "Loop"\npublished = [1700]\nimported = true\n\n## one\n\n{#1}\nfirst.\n\n## <a.loop.1710>',
     )
     .file(
-      "works/a/loop/1710.mit",
-      '# a.loop.1710\n\n[metadata]\ntitle = "Loop"\nbreadcrumb = "Loop"\npublished = [1710]\nimported = true\nchildren = ["1700"]\n\n## two\n\n{#1}\nsecond.',
+      "data/works/a/loop/1710.mit",
+      '# a.loop.1710\n\n[metadata]\ntitle = "Loop"\nbreadcrumb = "Loop"\npublished = [1710]\nimported = true\n\n## two\n\n{#1}\nsecond.\n\n## <a.loop.1700>',
     )
     .build();
   const warnings = await warningsFor(files);
   assert(has(warnings, "circular child reference"), warnings.join("; "));
 });
 
-Deno.test("catalog: an unresolved child reference is reported", async () => {
+Deno.test("catalog: an unresolved or malformed child reference is reported", async () => {
+  // One bracket id names no edition; the other has too few segments to be an
+  // edition id at all. Both are reported and dropped.
   const files = base()
     .edition(
       "a",
@@ -124,40 +153,18 @@ Deno.test("catalog: an unresolved child reference is reported", async () => {
         title: "W",
         breadcrumb: "W",
         published: [1710],
-        children: ["nowhere"],
       },
-      '## Own\n\n[metadata]\ntitle = "Own"\nbreadcrumb = "Own"\n\n{#1}\nOwn text.',
+      "## <a.w.nowhere>\n\n## <foo>",
     )
     .build();
   const warnings = await warningsFor(files);
-  assert(has(warnings, 'unresolved child "nowhere"'), warnings.join("; "));
-});
-
-Deno.test("catalog: inline sections not named in children are kept", async () => {
-  // children names only one of two inline sections; the other is appended.
-  const files = base()
-    .edition(
-      "a",
-      "w",
-      "1710",
-      {
-        imported: true,
-        title: "W",
-        breadcrumb: "W",
-        published: [1710],
-        children: ["named"],
-      },
-      '## named\n\n[metadata]\ntitle = "Named"\nbreadcrumb = "Named"\n\n{#1}\none.\n\n' +
-        '## extra\n\n[metadata]\ntitle = "Extra"\nbreadcrumb = "Extra"\n\n{#1}\ntwo.',
-    )
-    .build();
-  const warnings = await warningsFor(files);
-  assert(!has(warnings, "unresolved child"), warnings.join("; "));
+  assert(has(warnings, 'unresolved child "a.w.nowhere"'), warnings.join("; "));
+  assert(has(warnings, 'unresolved child "foo"'), warnings.join("; "));
 });
 
 Deno.test("catalog: a stray non-directory in a work folder is ignored", async () => {
   const files = base()
-    .file("works/a/notes.txt", "not a work")
+    .file("data/works/a/notes.txt", "not a work")
     .build();
   const warnings = await warningsFor(files);
   // It builds; the stray file produces no work and no crash.
@@ -167,7 +174,7 @@ Deno.test("catalog: a stray non-directory in a work folder is ignored", async ()
 Deno.test("catalog: a work with no editions is reported and dropped", async () => {
   const files = base()
     .file(
-      "works/a/empty/index.mit",
+      "data/works/a/empty/index.mit",
       '# a.empty\n\n[metadata]\ntitle = "Empty"\nbreadcrumb = "Empty"\npublished = [1700]\ncanonical = "1700"\n',
     )
     .build();
@@ -177,7 +184,10 @@ Deno.test("catalog: a work with no editions is reported and dropped", async () =
 
 Deno.test("catalog: a year directory without an index is skipped as an edition", async () => {
   const files = base()
-    .file("works/a/w/1799/notes.txt", "a year-shaped directory with no index")
+    .file(
+      "data/works/a/w/1799/notes.txt",
+      "a year-shaped directory with no index",
+    )
     .build();
   const warnings = await warningsFor(files);
   // The work still builds from its real 1700 edition.
@@ -208,7 +218,7 @@ Deno.test("catalog: a declared canonical that is not an edition is reported", as
 });
 
 Deno.test("catalog: a non-.mit file in the authors folder is ignored", async () => {
-  const files = base().file("authors/README.txt", "notes").build();
+  const files = base().file("data/authors/README.txt", "notes").build();
   const warnings = await warningsFor(files);
   assert(!has(warnings, "no authors directory"), warnings.join("; "));
 });
@@ -232,11 +242,11 @@ Deno.test("catalog: a corpus with no authors directory is reported", async () =>
     .build();
   const warnings = await warningsFor(files);
   assert(has(warnings, "no authors directory"), warnings.join("; "));
-  assert(has(warnings, "has no authors/ghost.mit"), warnings.join("; "));
+  assert(has(warnings, "has no data/authors/ghost.mit"), warnings.join("; "));
 });
 
 Deno.test("catalog: a stray non-directory in the works folder is ignored", async () => {
-  const files = base().file("works/loose.txt", "not an author").build();
+  const files = base().file("data/works/loose.txt", "not an author").build();
   const warnings = await warningsFor(files);
   assert(Array.isArray(warnings));
 });
@@ -272,27 +282,25 @@ Deno.test("catalog: an unreadable but listed file degrades to a null document", 
   assert(Array.isArray(warnings));
 });
 
-Deno.test("catalog: a child path through a file, and one to a directory, are unresolved", async () => {
-  // One reference descends through a file ("1700.mit/x" — readDir throws), the
-  // other resolves to a directory rather than a file; both are reported.
+Deno.test("catalog: an angle-bracket child resolving to a directory, or descending through a file, is unresolved", async () => {
+  // a.w.dir's .mit candidate ends on a directory (and it has no index.mit form);
+  // a.w.foo's index.mit candidate descends through a bare file, so readDir
+  // throws. Both references stay unresolved.
   const files = base()
     .edition("a", "w", "1710", {
       imported: true,
       title: "W",
       breadcrumb: "W",
       published: [1710],
-      children: ["../w/1700.mit/x", "../w/dir"],
-    }, '## Own\n\n[metadata]\ntitle = "Own"\nbreadcrumb = "Own"\n\n{#1}\nOwn.')
-    // A directory named like a child target ("dir.mit"), so the case-insensitive
-    // walk ends on a directory.
-    .file("works/a/w/dir.mit/keep.txt", "makes dir.mit a directory")
+    }, "## <a.w.dir>\n\n## <a.w.foo>")
+    // dir.mit is a directory, so the .mit candidate's walk ends on a directory.
+    .file("data/works/a/w/dir.mit/keep.txt", "makes dir.mit a directory")
+    // foo is a bare file, so descending into it for foo/index.mit throws.
+    .file("data/works/a/w/foo", "a bare file, not a directory")
     .build();
   const warnings = await warningsFor(files);
-  assert(
-    has(warnings, 'unresolved child "../w/1700.mit/x"'),
-    warnings.join("; "),
-  );
-  assert(has(warnings, 'unresolved child "../w/dir"'), warnings.join("; "));
+  assert(has(warnings, 'unresolved child "a.w.dir"'), warnings.join("; "));
+  assert(has(warnings, 'unresolved child "a.w.foo"'), warnings.join("; "));
 });
 
 Deno.test("catalog: a corpus FS whose stat throws still resolves via the walk", async () => {

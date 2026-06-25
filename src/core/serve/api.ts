@@ -8,7 +8,6 @@
 
 import type { Block } from "@earlytexts/markit";
 import {
-  type AuthorEntry,
   type CatalogArtefact,
   type EditionEntry,
   type ServeArtefacts,
@@ -55,6 +54,7 @@ import {
 import { editionFilter, resolveEditions } from "../../scope.ts";
 import type {
   AlignedRow,
+  AuthorMeta,
   CatalogResponse,
   CollocationEntry,
   CollocationsParams,
@@ -102,6 +102,7 @@ const sectionSummary = (section: SkeletonSection): SectionSummary => ({
   title: section.title,
   breadcrumb: section.breadcrumb,
   imported: section.imported,
+  authors: section.authors,
   children: section.children.map(sectionSummary),
 });
 
@@ -115,6 +116,7 @@ const sectionContent = async (
   title: section.title,
   breadcrumb: section.breadcrumb,
   imported: section.imported,
+  authors: section.authors,
   blocks: (await store.blocks(section.units))
     .map((block) => resolveBlock(block, version)),
   children: await Promise.all(
@@ -215,12 +217,12 @@ export const catalogResponse = (catalog: CatalogArtefact): CatalogResponse => ({
 
 export const editionResponse = async (
   store: BlockStore,
-  author: AuthorEntry,
+  authors: AuthorMeta[],
   work: WorkEntry,
   edition: EditionEntry,
   version: Version = "edited",
 ): Promise<EditionResponse> => ({
-  author: author.meta,
+  authors,
   work: work.meta,
   edition: edition.meta,
   version,
@@ -231,12 +233,12 @@ export const editionResponse = async (
 
 export const fullTextResponse = async (
   store: BlockStore,
-  author: AuthorEntry,
+  authors: AuthorMeta[],
   work: WorkEntry,
   edition: EditionEntry,
   version: Version = "edited",
 ): Promise<FullTextResponse> => ({
-  author: author.meta,
+  authors,
   work: work.meta,
   edition: edition.meta,
   version,
@@ -249,7 +251,7 @@ export const fullTextResponse = async (
 
 export const sectionResponse = async (
   store: BlockStore,
-  author: AuthorEntry,
+  authors: AuthorMeta[],
   work: WorkEntry,
   edition: EditionEntry,
   path: string[],
@@ -260,7 +262,7 @@ export const sectionResponse = async (
 
   const { ancestors, prev, next } = sectionNav(edition, section);
   return {
-    author: author.meta,
+    authors,
     work: work.meta,
     edition: edition.meta,
     version,
@@ -269,6 +271,7 @@ export const sectionResponse = async (
       title: section.title,
       breadcrumb: section.breadcrumb,
       imported: section.imported,
+      authors: section.authors,
       blocks: (await store.blocks(section.units))
         .map((block) => resolveBlock(block, version)),
       children: section.children.map(sectionSummary),
@@ -282,7 +285,7 @@ export const sectionResponse = async (
 
 export const sectionFullTextResponse = async (
   store: BlockStore,
-  author: AuthorEntry,
+  authors: AuthorMeta[],
   work: WorkEntry,
   edition: EditionEntry,
   path: string[],
@@ -293,7 +296,7 @@ export const sectionFullTextResponse = async (
 
   const { ancestors, prev, next } = sectionNav(edition, skeleton);
   return {
-    author: author.meta,
+    authors,
     work: work.meta,
     edition: edition.meta,
     version,
@@ -306,7 +309,7 @@ export const sectionFullTextResponse = async (
 };
 
 export const compareResponse = (
-  author: AuthorEntry,
+  authors: AuthorMeta[],
   work: WorkEntry,
   aSlug: string,
   bSlug: string,
@@ -315,7 +318,7 @@ export const compareResponse = (
   const b = findEditionEntry(work, bSlug);
   if (a === undefined || b === undefined || a === b) return undefined;
   return {
-    author: author.meta,
+    authors,
     work: work.meta,
     a: a.meta,
     b: b.meta,
@@ -325,7 +328,7 @@ export const compareResponse = (
 
 export const compareSectionResponse = async (
   store: BlockStore,
-  author: AuthorEntry,
+  authors: AuthorMeta[],
   work: WorkEntry,
   aSlug: string,
   bSlug: string,
@@ -372,7 +375,7 @@ export const compareSectionResponse = async (
   };
 
   return {
-    author: author.meta,
+    authors,
     work: work.meta,
     a: a.meta,
     b: b.meta,
@@ -475,58 +478,85 @@ export const frequencyResponse = (
     count: number;
     tokens: number;
     label: string;
-    author: string;
+    authors: string[];
     work: string;
     edition: string | null;
   };
   const groups = new Map<string, GroupData>();
 
-  const groupKey = (author: string, work: string, edition: string): string =>
+  // The groups an edition feeds. Grouping by author splits a co-authored edition
+  // across each of its authors (one row apiece); grouping by work/edition keys on
+  // the work's primary author, so the work stays a single row carrying all its
+  // authors.
+  type Contribution = {
+    key: string;
+    label: string;
+    authors: string[];
+    work: string;
+    edition: string | null;
+  };
+  const contributions = (
+    ref: typeof manifest.editions[number],
+  ): Contribution[] =>
     groupBy === "author"
-      ? author
-      : groupBy === "edition"
-      ? `${author}/${work}/${edition}`
-      : `${author}/${work}`;
+      ? ref.authors.map((slug, i) => ({
+        key: slug,
+        label: ref.authorNames[i],
+        authors: [slug],
+        work: ref.work,
+        edition: null,
+      }))
+      : [{
+        key: groupBy === "edition"
+          ? `${ref.authors[0]}/${ref.work}/${ref.edition}`
+          : `${ref.authors[0]}/${ref.work}`,
+        label: groupBy === "edition"
+          ? `${ref.workBreadcrumb} (${ref.edition})`
+          : ref.workBreadcrumb,
+        authors: ref.authors,
+        work: ref.work,
+        edition: groupBy === "edition" ? ref.edition : null,
+      }];
 
   // First pass: count occurrences per group from hits.
   for (const hit of hits) {
     const ref = manifest.editions[units.edition[hit.unitIndex]];
-    const key = groupKey(ref.author, ref.work, ref.edition);
-    if (!groups.has(key)) {
-      const label = groupBy === "author"
-        ? ref.authorName
-        : groupBy === "edition"
-        ? `${ref.workBreadcrumb} (${ref.edition})`
-        : ref.workBreadcrumb;
-      groups.set(key, {
-        count: 0,
-        tokens: 0,
-        label,
-        author: ref.author,
-        work: ref.work,
-        edition: groupBy === "edition" ? ref.edition : null,
-      });
+    const count = Math.round(hit.positions.length / phraseLength);
+    for (const c of contributions(ref)) {
+      if (!groups.has(c.key)) {
+        groups.set(c.key, {
+          count: 0,
+          tokens: 0,
+          label: c.label,
+          authors: c.authors,
+          work: c.work,
+          edition: c.edition,
+        });
+      }
+      groups.get(c.key)!.count += count;
     }
-    groups.get(key)!.count += Math.round(hit.positions.length / phraseLength);
   }
 
   // Second pass: sum in-scope token counts as the relative-frequency denominator.
   // Uses the same edition filter as search() so the scope is consistent.
   for (let i = 0; i < manifest.editions.length; i++) {
     const ref = manifest.editions[i];
-    if (params.author !== undefined && ref.author !== params.author) continue;
+    if (params.author !== undefined && !ref.authors.includes(params.author)) {
+      continue;
+    }
     if (params.work !== undefined && ref.work !== params.work) continue;
     if (!inUniverse(filter, ref.canonical, ref.edition)) continue;
-    const key = groupKey(ref.author, ref.work, ref.edition);
-    const group = groups.get(key);
-    if (group !== undefined) group.tokens += editionTokenCounts[i];
+    for (const c of contributions(ref)) {
+      const group = groups.get(c.key);
+      if (group !== undefined) group.tokens += editionTokenCounts[i];
+    }
   }
 
   const results: FrequencyEntry[] = [...groups.values()]
     .sort((a, b) => b.count - a.count)
     .map((g) => ({
       label: g.label,
-      author: g.author,
+      authors: g.authors,
       work: g.work,
       edition: g.edition,
       count: g.count,
@@ -595,7 +625,7 @@ export const keywordsResponse = (
   const editionClass = manifest.editions.map((ref) => {
     if (!inUniverse(editionScope, ref.canonical, ref.edition)) return 0;
     const isTarget =
-      (params.author === undefined || ref.author === params.author) &&
+      (params.author === undefined || ref.authors.includes(params.author)) &&
       (params.work === undefined || ref.work === params.work);
     return isTarget ? TARGET : REFERENCE;
   });
@@ -685,7 +715,7 @@ export const collocationsResponse = async (
   // named edition slug ("all" for every printing).
   const editionLabel = manifest.editions.map((ref) =>
     inUniverse(editionScope, ref.canonical, ref.edition) &&
-      (params.author === undefined || ref.author === params.author) &&
+      (params.author === undefined || ref.authors.includes(params.author)) &&
       (params.work === undefined || ref.work === params.work)
       ? IN_SCOPE
       : 0
@@ -768,7 +798,7 @@ const resolveTargetEdition = (
 ): { index: number; slug: string } | undefined => {
   const want = level === "work" ? undefined : edition;
   const index = manifest.editions.findIndex((ref) =>
-    ref.author === author && ref.work === work &&
+    ref.authors.includes(author) && ref.work === work &&
     (want === undefined ? ref.canonical : ref.edition === want)
   );
   return index === -1
@@ -870,9 +900,11 @@ export const similarResponse = async (
   for (let d = 0; d < dtm.docs.length; d++) {
     const ref = manifest.editions[dtm.docs[d].edition];
     if (!ref.canonical) continue;
-    if (ref.author === params.author && ref.work === params.work) continue;
+    if (ref.authors.includes(params.author) && ref.work === params.work) {
+      continue;
+    }
     const key = level === "work"
-      ? `${ref.author}/${ref.work}`
+      ? `${ref.authors[0]}/${ref.work}`
       : level === "edition"
       ? `${dtm.docs[d].edition}`
       : `${d}`;
@@ -883,8 +915,8 @@ export const similarResponse = async (
       groupDocs.push([]);
       const docPath = dtm.docs[d].sectionPath;
       labels.push({
-        author: ref.author,
-        authorName: ref.authorName,
+        authors: ref.authors,
+        authorNames: ref.authorNames,
         work: ref.work,
         workBreadcrumb: ref.workBreadcrumb,
         edition: level === "work" ? null : ref.edition,
@@ -971,8 +1003,8 @@ export const topicsResponse = async (
   // groups.
   const groupDocs: number[][] = [];
   const labels: {
-    author: string;
-    authorName: string;
+    authors: string[];
+    authorNames: string[];
     work: string;
     workBreadcrumb: string;
     edition: string;
@@ -981,15 +1013,15 @@ export const topicsResponse = async (
   for (let d = 0; d < model.docs.length; d++) {
     const ref = manifest.editions[model.docs[d].edition];
     if (!ref.canonical) continue;
-    const key = `${ref.author}/${ref.work}`;
+    const key = `${ref.authors[0]}/${ref.work}`;
     let g = groupOf.get(key);
     if (g === undefined) {
       g = groupDocs.length;
       groupOf.set(key, g);
       groupDocs.push([]);
       labels.push({
-        author: ref.author,
-        authorName: ref.authorName,
+        authors: ref.authors,
+        authorNames: ref.authorNames,
         work: ref.work,
         workBreadcrumb: ref.workBreadcrumb,
         edition: ref.edition,
@@ -1141,8 +1173,8 @@ export const searchResponse = async (
       const ref = manifest.editions[units.edition[hit.unitIndex]];
       const sectionPath = units.sectionPath[hit.unitIndex];
       return {
-        author: ref.author,
-        authorName: ref.authorName,
+        authors: ref.authors,
+        authorNames: ref.authorNames,
         work: ref.work,
         workBreadcrumb: ref.workBreadcrumb,
         edition: ref.edition,
@@ -1217,8 +1249,8 @@ export const concordanceResponse = async (
     for (const start of occurrences(hit.positions, phraseLen)) {
       const parts = lineParts(text, spans, start, phraseLen, window);
       built.push({
-        author: ref.author,
-        authorName: ref.authorName,
+        authors: ref.authors,
+        authorNames: ref.authorNames,
         work: ref.work,
         workBreadcrumb: ref.workBreadcrumb,
         edition: ref.edition,

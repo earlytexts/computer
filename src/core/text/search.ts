@@ -304,7 +304,9 @@ export const search = (
     // phraseMatches only records a unit with at least one match, so positions
     // is always non-empty here.
     const ref = manifest.editions[units.edition[unitIndex]];
-    if (filters.author !== undefined && ref.author !== filters.author) continue;
+    if (
+      filters.author !== undefined && !ref.authors.includes(filters.author)
+    ) continue;
     if (filters.work !== undefined && ref.work !== filters.work) continue;
     if (filters.edition === undefined) {
       if (!ref.canonical) continue;
