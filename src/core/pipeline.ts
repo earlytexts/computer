@@ -7,7 +7,7 @@
  *           on-disk artefacts are stale or missing (loadForServing)
  *
  * Both take an Io adapter: all filesystem effects go through it, and the steps
- * between (buildCatalog, buildArtefacts, the codec, isFresh) are pure. build.ts
+ * between (loadCatalog, buildArtefacts, the codec, isFresh) are pure. build.ts
  * is the CLI for the build; main.ts and stdio.ts call loadForServing. The
  * freshness-then-rebuild logic lives here only.
  */
@@ -21,7 +21,7 @@ import {
   type ServeArtefacts,
 } from "./artefacts.ts";
 import { buildArtefacts } from "./build/builder.ts";
-import { buildCatalog } from "./build/catalog.ts";
+import { loadCatalog } from "./build/catalog.ts";
 import type { Io } from "./io.ts";
 
 /**
@@ -35,7 +35,7 @@ export const buildArtefactsToDisk = async (
   artefactsDir: string,
   scan?: CorpusScan,
 ): Promise<Artefacts> => {
-  const { catalog, warnings } = await buildCatalog(io.corpus, corpusDir);
+  const { catalog, warnings } = await loadCatalog(io, corpusDir);
   const corpusScan = scan ?? await io.scanCorpus(corpusDir);
   const artefacts = buildArtefacts(catalog, warnings, corpusScan);
   await io.writeArtefacts(artefactsDir, serializeArtefacts(artefacts));

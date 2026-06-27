@@ -26,10 +26,18 @@ import {
 } from "../src/core/serve/store.ts";
 import { buildArtefactsToDisk, loadForServing } from "../src/core/pipeline.ts";
 import { type Io, openComputer } from "../src/core/mod.ts";
+import type { CatalogueFile, RawDoc } from "../src/core/build/catalog.ts";
 import type { Computer } from "../src/types.ts";
-import { CORPUS_ROOT, countMit, memoryCorpus, testCorpus } from "./corpus.ts";
+import { buildDist, CORPUS_ROOT, type Dist, testCorpus } from "./corpus.ts";
 
 const decoder = new TextDecoder();
+
+/** A cheap content hash, so an edited corpus map looks stale to the freshness probe. */
+const hash = (text: string): number => {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = (h * 33 + text.charCodeAt(i)) | 0;
+  return h;
+};
 
 /**
  * An `Io` over an in-memory corpus and an in-memory artefact store: a faithful
@@ -49,12 +57,28 @@ export type MemoryHarness = {
 export const memoryHarness = (
   files: Record<string, string> = testCorpus(),
 ): MemoryHarness => {
-  const corpus = memoryCorpus(files);
   let store: ArtefactFiles = new Map();
   const state = { builds: 0 };
+  // Compile the corpus map to its `dist/` output, rebuilt when `files` changes
+  // (cache_test mutates the map to simulate an edited corpus).
+  let cache: { sig: string; dist: Dist } | undefined;
+  const dist = async (): Promise<Dist> => {
+    const sig = JSON.stringify(files);
+    if (cache?.sig !== sig) cache = { sig, dist: await buildDist(files) };
+    return cache.dist;
+  };
   const io: Io = {
-    corpus,
-    scanCorpus: () => Promise.resolve({ files: countMit(files), modified: 0 }),
+    readCatalogue: async () =>
+      JSON.parse((await dist()).catalogue) as CatalogueFile,
+    readDocument: async (_corpusDir, docKey) => {
+      const json = (await dist()).documents.get(docKey);
+      return json === undefined ? null : JSON.parse(json) as RawDoc;
+    },
+    // Fingerprint the compiled catalogue, as the disk adapter does.
+    scanCorpus: async () => {
+      const { catalogue } = await dist();
+      return { files: catalogue.length, modified: hash(catalogue) };
+    },
     readManifest: () => {
       const bytes = store.get(ARTEFACT_FILES.manifest);
       return Promise.resolve(

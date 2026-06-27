@@ -1,15 +1,22 @@
 /**
  * The imperative shell: the one module that touches the filesystem. Everything
  * below it is either pure (buildArtefacts, the codec in artefacts.ts, isFresh)
- * or reaches the disk only through a port defined here — a CorpusFs for the
- * corpus scan (whose file set is discovered by parsing) and a BlockReader for
- * lazy per-request block reads. The entry points construct `denoIo` and pass it
- * to the pipeline; tests pass an in-memory equivalent.
+ * or reaches the disk only through a port defined here — a CatalogueReader for
+ * the corpus's compiled output and a BlockReader for lazy per-request block
+ * reads. The entry points construct `denoIo` and pass it to the pipeline; tests
+ * pass an in-memory equivalent.
+ *
+ * The corpus is consumed as the compiled `dist/` the corpus build produces
+ * (catalogue.json + per-edition documents), never by scanning `.mit` directly.
  *
  * Invariant: this is the only file in src/ that calls Deno's filesystem APIs.
  */
 
-import type { CorpusFs } from "./build/catalog.ts";
+import type {
+  CatalogueFile,
+  CatalogueReader,
+  RawDoc,
+} from "./build/catalog.ts";
 import type { BlockReader } from "./serve/store.ts";
 import {
   ARTEFACT_FILES,
@@ -19,10 +26,8 @@ import {
 } from "./artefacts.ts";
 
 /** The filesystem capabilities the build and serve pipelines need. */
-export interface Io {
-  /** Corpus access for the catalog scan. */
-  corpus: CorpusFs;
-  /** Fingerprint the corpus: .mit file count and latest modification time. */
+export interface Io extends CatalogueReader {
+  /** Fingerprint the compiled catalogue (its size and modification time). */
   scanCorpus(corpusDir: string): Promise<CorpusScan>;
   /** The artefacts' manifest, or null when absent (the freshness probe). */
   readManifest(dir: string): Promise<Manifest | null>;
@@ -34,47 +39,28 @@ export interface Io {
   blockReader(dir: string): BlockReader;
 }
 
-const denoCorpusFs: CorpusFs = {
-  readFile: async (path) => {
-    try {
-      return await Deno.readTextFile(path);
-    } catch {
-      return null;
-    }
-  },
-  readDir: async (path) => {
-    const out: Deno.DirEntry[] = [];
-    for await (const entry of Deno.readDir(path)) out.push(entry);
-    return out;
-  },
-  realPath: (path) => Deno.realPath(path),
-  stat: async (path) => {
-    try {
-      return { isFile: (await Deno.stat(path)).isFile };
-    } catch {
-      return null;
-    }
-  },
+const readJson = async <T>(path: string): Promise<T | null> => {
+  try {
+    return JSON.parse(await Deno.readTextFile(path)) as T;
+  } catch {
+    return null;
+  }
 };
 
+/**
+ * Fingerprint the compiled catalogue by its `catalogue.json` (the corpus build
+ * rewrites the whole `dist/` each run, so this file's size and mtime change
+ * whenever anything in the corpus does). Absent when the corpus was never built.
+ */
 const scanCorpus = async (corpusDir: string): Promise<CorpusScan> => {
-  let files = 0;
-  let modified = 0;
-  const walk = async (dir: string): Promise<void> => {
-    for await (const entry of Deno.readDir(dir)) {
-      const path = `${dir}/${entry.name}`;
-      if (entry.isDirectory) await walk(path);
-      else if (entry.isFile && entry.name.endsWith(".mit")) {
-        files++;
-        const info = await Deno.stat(path);
-        // mtime is always available for a regular file on the platforms this
-        // runs on (macOS/Linux); it is only null where the OS cannot report it.
-        modified = Math.max(modified, info.mtime!.getTime());
-      }
-    }
-  };
-  await walk(corpusDir);
-  return { files, modified };
+  try {
+    const info = await Deno.stat(`${corpusDir}/dist/catalogue.json`);
+    // mtime is always available for a regular file on the platforms this runs
+    // on (macOS/Linux); it is only null where the OS cannot report it.
+    return { files: info.size, modified: info.mtime!.getTime() };
+  } catch {
+    return { files: 0, modified: 0 };
+  }
 };
 
 const readManifest = async (dir: string): Promise<Manifest | null> => {
@@ -168,7 +154,10 @@ const blockReader = (dir: string): BlockReader => ({
 
 /** The production io adapter, backed by Deno's filesystem. */
 export const denoIo: Io = {
-  corpus: denoCorpusFs,
+  readCatalogue: (corpusDir) =>
+    readJson<CatalogueFile>(`${corpusDir}/dist/catalogue.json`),
+  readDocument: (corpusDir, docKey) =>
+    readJson<RawDoc>(`${corpusDir}/dist/documents/${docKey}.json`),
   scanCorpus,
   readManifest,
   readArtefacts,

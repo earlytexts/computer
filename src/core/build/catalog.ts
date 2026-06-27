@@ -1,42 +1,19 @@
 /**
- * The catalog scans the corpus, compiles every Markit file, and organises the
- * results into authors, works, and editions.
+ * The catalog is built by the corpus, not the computer. The corpus's build task
+ * scans, compiles, and composes the corpus into `dist/` (catalogue.json plus one
+ * document per edition); this module loads that compiled output back into the
+ * in-memory `Catalog` the builder consumes — parsing the documents and splicing
+ * borrowed children by reference, so the shared object graph the build relies on
+ * (one instance per edition document, shared blocks) is recreated faithfully.
  *
- * Corpus layout (see corpus/README.md):
- *  - `data/authors/<author>.mit` holds an author's metadata (no text).
- *  - `data/works/<author>/<work>/` is a work. Its `index.mit` is a metadata-only
- *    stub: the work's edition-independent identity (title, breadcrumb,
- *    published) plus a `canonical` key naming the default edition. The texts
- *    are year-named editions — sibling entries whose names look like years
- *    (`1757.mit`, `1742a.mit`, or directories `1758/index.mit`). A `main.mit`
- *    sibling (the retained old reading text) is kept but never exposed.
- *  - A document's children are its inline `##` sections, in file order. A
- *    section whose id is wrapped in angle brackets — e.g. `## <Hume.EHU.1750>`
- *    — is a borrowed child: a placeholder naming another edition by id, which
- *    is loaded recursively and spliced in at that point. Inline and borrowed
- *    children mix freely, letting composite works (collections like ETSS, FD,
- *    HE) interleave their own sections with text shared from other works.
- *  - Cascading metadata (imported, published, copytext, sourceUrl,
- *    sourceDesc) flows down the composed tree: a section without the key
- *    takes the nearest ancestor's value.
+ * The section-tree projection (`sectionTree`, `childSlug`, `lastSegment`) lives
+ * here because it is a build-time concern over already-loaded documents, used by
+ * builder.ts and (lastSegment) diff.ts — not part of scanning the corpus.
  */
 
-import { compile, type MarkitDocument } from "@earlytexts/markit";
+import type { Block, MarkitDocument } from "@earlytexts/markit";
 
-/**
- * The filesystem capability the catalog scan needs. The corpus file set is
- * discovered by parsing (children references, case-insensitive lookups), so the
- * I/O cannot be hoisted ahead of the walk — it is injected as this port instead.
- * The io adapter supplies the Deno-backed implementation; tests an in-memory one.
- * `readFile` and `stat` return null when the path is absent; `readDir` throws
- * (as Deno.readDir does) so a missing corpus directory surfaces.
- */
-export interface CorpusFs {
-  readFile(path: string): Promise<string | null>;
-  readDir(path: string): Promise<Deno.DirEntry[]>;
-  realPath(path: string): Promise<string>;
-  stat(path: string): Promise<{ isFile: boolean } | null>;
-}
+/* ------------------------------ catalog ------------------------------ */
 
 export type Author = {
   slug: string;
@@ -70,7 +47,7 @@ export type Work = {
   /**
    * Author slugs, in title order. [0] is the host — the directory the work
    * lives in and the primary author used for the artefact path and identity.
-   * A co-authored work is registered under every slug here (see buildCatalog).
+   * A co-authored work is registered under every slug here.
    */
   authorSlugs: string[];
   slug: string;
@@ -81,20 +58,18 @@ export type Work = {
   canonicalSlug: string; // slug of the canonical (default) edition
   /**
    * Whether the work appears as its own text in UI indexes. A work borrowed
-   * into a collection (its editions spliced in as borrowed children) is also a
-   * standalone directory, so it lists independently by default. Setting
-   * `standalone = false` on the work's `index.mit` keeps it out of the indexes,
-   * leaving it reachable only through the collection(s) that borrow it.
+   * into a collection lists independently by default; `standalone = false` keeps
+   * it out of the indexes, reachable only through the collection(s) that borrow it.
    */
   standalone: boolean;
-  dir: string; // absolute directory owning this work's files
+  dir: string; // directory owning this work's files (relative to the corpus root)
   editions: Edition[]; // dated editions, ascending by year
 };
 
 export type Catalog = {
   authors: Author[]; // ascending by year of first publication
   byAuthor: Map<string, Author>;
-  /** Source file path for every separately-loaded document root. */
+  /** Source file path (relative to the corpus root) for every loaded edition. */
   sources: WeakMap<MarkitDocument, string>;
 };
 
@@ -110,7 +85,198 @@ export type Section = {
   children: Section[];
 };
 
-const EDITION_RE = /^\d{4}[a-z]?$/;
+/* --------------------- compiled catalogue (wire) --------------------- */
+
+/**
+ * The shape of the corpus's compiled output (corpus/src/serialize.ts). These
+ * mirror the corpus's serialised contract — the consumer's copy of the wire
+ * format. The corpus is the authoritative source of the schema; the computer
+ * only reads.
+ */
+export type DocRefNode = { __ref: string };
+
+/** A serialised document: a Markit document whose borrowed kids are refs. */
+export type RawDoc = {
+  id: string;
+  metadata?: MarkitDocument["metadata"];
+  blocks: Block[];
+  children: (RawDoc | DocRefNode)[];
+};
+
+export type CatalogueEdition = {
+  authorSlugs: string[];
+  workSlug: string;
+  slug: string;
+  title: string;
+  breadcrumb: string;
+  imported: boolean;
+  published: number[];
+  copytext: string[];
+  sourceUrl?: string;
+  sourceDesc?: string;
+  docKey: string;
+  source: string;
+};
+
+export type CatalogueWork = {
+  authorSlugs: string[];
+  slug: string;
+  title: string;
+  breadcrumb: string;
+  imported: boolean;
+  published: number[];
+  canonicalSlug: string;
+  standalone: boolean;
+  dir: string;
+  editions: CatalogueEdition[];
+};
+
+export type CatalogueAuthor = {
+  slug: string;
+  forename: string;
+  surname: string;
+  title?: string;
+  birth?: number;
+  death?: number;
+  published?: number;
+  nationality?: string;
+  sex?: string;
+  works: string[];
+};
+
+export type CatalogueFile = {
+  authors: CatalogueAuthor[];
+  works: Record<string, CatalogueWork>;
+  warnings: string[];
+};
+
+/**
+ * The reader the load needs: the compiled catalogue, and each edition's document
+ * by key. The io adapter supplies the Deno-backed implementation; tests an
+ * in-memory one. Both return null when absent (a corpus that was never built).
+ */
+export interface CatalogueReader {
+  readCatalogue(corpusDir: string): Promise<CatalogueFile | null>;
+  readDocument(corpusDir: string, docKey: string): Promise<RawDoc | null>;
+}
+
+/* ------------------------------ loading ------------------------------ */
+
+const isRef = (node: RawDoc | DocRefNode): node is DocRefNode =>
+  "__ref" in node;
+
+/**
+ * Load the compiled catalogue into the in-memory `Catalog`. Reads every
+ * edition's document, then composes each lazily — splicing a borrowed child as
+ * the single shared instance of the edition it names, so a text borrowed into
+ * several collections is one object (the build dedupes its blocks by identity).
+ */
+export const loadCatalog = async (
+  reader: CatalogueReader,
+  corpusDir: string,
+): Promise<{ catalog: Catalog; warnings: string[] }> => {
+  const file = await reader.readCatalogue(corpusDir);
+  if (file === null) {
+    throw new Error(
+      `no compiled catalogue at ${corpusDir}/dist; run the corpus build`,
+    );
+  }
+
+  // Read every edition's raw (uncomposed) document up front, keyed by docKey.
+  // The corpus build writes one document per edition, so each read hits.
+  const raw = new Map<string, RawDoc>();
+  for (const work of Object.values(file.works)) {
+    for (const edition of work.editions) {
+      raw.set(
+        edition.docKey,
+        (await reader.readDocument(
+          corpusDir,
+          edition.docKey,
+        ))!,
+      );
+    }
+  }
+
+  // Compose a document by reference: each `{ __ref }` child becomes the shared
+  // composed instance of that edition. Memoised, so every borrow of an edition
+  // resolves to one object (no cycles — the corpus drops them at build time).
+  const composed = new Map<string, MarkitDocument>();
+  const build = (node: RawDoc): MarkitDocument =>
+    ({
+      id: node.id,
+      ...(node.metadata !== undefined ? { metadata: node.metadata } : {}),
+      blocks: node.blocks,
+      children: node.children.map((child) =>
+        isRef(child) ? compose(child.__ref) : build(child)
+      ),
+    }) as MarkitDocument;
+  const compose = (docKey: string): MarkitDocument => {
+    const cached = composed.get(docKey);
+    if (cached !== undefined) return cached;
+    const doc = build(raw.get(docKey)!);
+    composed.set(docKey, doc);
+    return doc;
+  };
+
+  const sources = new WeakMap<MarkitDocument, string>();
+  const byAuthor = new Map<string, Author>();
+
+  // Rebuild each work once (shared across the authors that list it), then point
+  // every author at its works by key — recreating the co-authored sharing.
+  const works = new Map<string, Work>();
+  for (const [key, w] of Object.entries(file.works)) {
+    const editions = w.editions.map((e): Edition => {
+      const document = compose(e.docKey);
+      sources.set(document, e.source);
+      return {
+        authorSlugs: e.authorSlugs,
+        workSlug: e.workSlug,
+        slug: e.slug,
+        title: e.title,
+        breadcrumb: e.breadcrumb,
+        imported: e.imported,
+        published: e.published,
+        copytext: e.copytext,
+        sourceUrl: e.sourceUrl,
+        sourceDesc: e.sourceDesc,
+        document,
+      };
+    });
+    works.set(key, {
+      authorSlugs: w.authorSlugs,
+      slug: w.slug,
+      title: w.title,
+      breadcrumb: w.breadcrumb,
+      imported: w.imported,
+      published: w.published,
+      canonicalSlug: w.canonicalSlug,
+      standalone: w.standalone,
+      dir: w.dir,
+      editions,
+    });
+  }
+
+  const authors = file.authors.map((a): Author => {
+    const author: Author = {
+      slug: a.slug,
+      forename: a.forename,
+      surname: a.surname,
+      title: a.title,
+      birth: a.birth,
+      death: a.death,
+      published: a.published,
+      nationality: a.nationality,
+      sex: a.sex,
+      works: a.works.map((key) => works.get(key)!),
+    };
+    byAuthor.set(a.slug, author);
+    return author;
+  });
+
+  return { catalog: { authors, byAuthor, sources }, warnings: file.warnings };
+};
+
+/* -------------------- section-tree projection ------------------------ */
 
 export const lastSegment = (id: string): string => {
   const parts = id.split(/[./]/);
@@ -122,396 +288,16 @@ const metaString = (doc: MarkitDocument, key: string): string | undefined => {
   return typeof value === "string" ? value : undefined;
 };
 
-const metaNumber = (doc: MarkitDocument, key: string): number | undefined => {
-  const value = doc.metadata?.[key];
-  return typeof value === "number" ? value : undefined;
-};
-
 const metaBoolean = (doc: MarkitDocument, key: string): boolean | undefined => {
   const value = doc.metadata?.[key];
   return typeof value === "boolean" ? value : undefined;
 };
 
-const metaArray = (doc: MarkitDocument, key: string): (string | number)[] => {
-  const value = doc.metadata?.[key];
-  if (Array.isArray(value)) return value as (string | number)[];
-  if (typeof value === "string" || typeof value === "number") return [value];
-  return [];
-};
-
-/**
- * The author slugs a text declares with the cascading `authors` key (lowercased),
- * or undefined when it sets none — so a caller can fall back to the inherited
- * value. A bare string is treated as a one-element list.
- */
 const metaAuthors = (doc: MarkitDocument): string[] | undefined => {
   const value = doc.metadata?.authors;
-  if (Array.isArray(value)) {
-    return value.map((s) => String(s).toLowerCase());
-  }
+  if (Array.isArray(value)) return value.map((s) => String(s).toLowerCase());
   if (typeof value === "string") return [value.toLowerCase()];
   return undefined;
-};
-
-/**
- * Normalise an absolute path textually, collapsing empty and "." segments.
- * Every path here is built from the corpus dir (which buildCatalog absolutises
- * via realPath) and id segments, so it never contains a ".." and is always
- * absolute.
- */
-const normalizePath = (path: string): string => {
-  const out: string[] = [];
-  for (const part of path.split("/")) {
-    if (part === "" || part === ".") continue;
-    out.push(part);
-  }
-  return "/" + out.join("/");
-};
-
-/**
- * Resolve a path case-insensitively against the real file system, so that
- * references like "../NHR/1757" work on case-sensitive systems too.
- * Returns the actual path if found, otherwise undefined.
- */
-const findFile = async (
-  fs: CorpusFs,
-  path: string,
-): Promise<string | undefined> => {
-  try {
-    // realPath canonicalises letter case, so that "../NHR/1757" and
-    // "../nhr/1757" cache and attribute identically.
-    if ((await fs.stat(path))?.isFile) return await fs.realPath(path);
-  } catch {
-    // fall through to the case-insensitive walk
-  }
-  const parts = normalizePath(path).split("/").filter((p) => p !== "");
-  let current = ""; // paths here are always absolute (see normalizePath)
-  for (const part of parts) {
-    let matched: string | undefined;
-    try {
-      for (const entry of await fs.readDir(current === "" ? "/" : current)) {
-        if (entry.name.toLowerCase() === part.toLowerCase()) {
-          matched = entry.name;
-          break;
-        }
-      }
-    } catch {
-      return undefined;
-    }
-    if (matched === undefined) return undefined;
-    current = `${current}/${matched}`;
-  }
-  try {
-    if ((await fs.stat(current))?.isFile) return await fs.realPath(current);
-  } catch {
-    return undefined;
-  }
-  return undefined;
-};
-
-type LoadContext = {
-  fs: CorpusFs;
-  cache: Map<string, MarkitDocument | null>;
-  stack: Set<string>;
-  sources: WeakMap<MarkitDocument, string>;
-  warnings: string[];
-  /** Absolute path of the corpus's `data/works`, where borrowed children live. */
-  worksDir: string;
-};
-
-/**
- * Load and compile a Markit file, recursively resolving `children` metadata.
- * Returns null (and records a warning) if the file cannot be read.
- */
-const loadDocument = async (
-  path: string,
-  ctx: LoadContext,
-): Promise<MarkitDocument | null> => {
-  const key = normalizePath(path);
-  const cached = ctx.cache.get(key);
-  if (cached !== undefined) return cached;
-  if (ctx.stack.has(key)) {
-    ctx.warnings.push(`circular child reference involving ${key}`);
-    return null;
-  }
-  const text = await ctx.fs.readFile(key);
-  if (text === null) {
-    ctx.cache.set(key, null);
-    return null;
-  }
-  ctx.stack.add(key);
-  const [doc] = compile(text);
-  ctx.sources.set(doc, key);
-  await resolveChildren(doc, key, ctx);
-  ctx.stack.delete(key);
-  ctx.cache.set(key, doc);
-  return doc;
-};
-
-/** A borrowed-child placeholder's id ends with the bracketed edition id. */
-const BORROWED_RE = /<([^<>]+)>$/;
-
-/**
- * The corpus file for an edition named by a borrowed-child id `Author.Work.
- * Edition`: `data/works/<author>/<work>/<edition>.mit`, or its directory form
- * `<edition>/index.mit`. Returns undefined when the id has too few segments to
- * name an edition, or no such file exists. Resolution is case-insensitive (the
- * ids are title-cased, the directories lower-cased), so the id's own case
- * needn't match disk.
- */
-const editionFile = async (
-  id: string,
-  ctx: LoadContext,
-): Promise<string | undefined> => {
-  const parts = id.split(".");
-  if (parts.length < 3) return undefined;
-  const [author, work, ...rest] = parts;
-  const base = `${ctx.worksDir}/${author}/${work}/${rest.join(".")}`;
-  return (await findFile(ctx.fs, `${base}.mit`)) ??
-    (await findFile(ctx.fs, `${base}/index.mit`));
-};
-
-/**
- * Splice borrowed children into doc.children. A section whose id is wrapped in
- * angle brackets — `## <Hume.EHU.1750>` compiles to an id ending in
- * `<Hume.EHU.1750>` — is a placeholder for another edition: it is replaced, in
- * place, by that edition's recursively-loaded document. Ordinary inline sections
- * are left untouched, so the two kinds keep their file order. Unresolvable
- * borrowed references are dropped with a warning.
- */
-const resolveChildren = async (
-  doc: MarkitDocument,
-  path: string,
-  ctx: LoadContext,
-): Promise<void> => {
-  const resolved: MarkitDocument[] = [];
-  for (const child of doc.children) {
-    const ref = BORROWED_RE.exec(child.id)?.[1];
-    if (ref === undefined) {
-      resolved.push(child); // an ordinary inline section
-      continue;
-    }
-    const file = await editionFile(ref, ctx);
-    const borrowed = file === undefined ? null : await loadDocument(file, ctx);
-    if (borrowed !== null) {
-      resolved.push(borrowed);
-    } else {
-      ctx.warnings.push(`unresolved child "${ref}" in ${path}`);
-    }
-  }
-  doc.children = resolved;
-};
-
-const makeEdition = (
-  workAuthorSlugs: string[],
-  workSlug: string,
-  slug: string,
-  document: MarkitDocument,
-): Edition => ({
-  // An edition usually inherits the work's authors; it may name its own with
-  // an `authors` key (e.g. a co-authored edition's root lists both).
-  authorSlugs: metaAuthors(document) ?? workAuthorSlugs,
-  workSlug,
-  slug,
-  title: metaString(document, "title") ?? document.id,
-  breadcrumb: metaString(document, "breadcrumb") ??
-    metaString(document, "title") ?? document.id,
-  // Texts are assumed present unless the corpus says otherwise; only files
-  // with broken metadata lack the key entirely.
-  imported: metaBoolean(document, "imported") ?? true,
-  published: metaArray(document, "published").map(Number).filter((n) =>
-    !Number.isNaN(n)
-  ),
-  copytext: metaArray(document, "copytext").map(String),
-  sourceUrl: metaString(document, "sourceUrl"),
-  sourceDesc: metaString(document, "sourceDesc"),
-  document,
-});
-
-/**
- * Load one work. Every work is a directory `<author>/<work>/` whose
- * `index.mit` is a metadata-only stub (work identity + a `canonical` pointer);
- * the texts live in year-named editions (`1757.mit` or `1758/index.mit`). The
- * stub and the retained, unexposed reading text (`main.mit`) are never
- * editions — only year slugs are.
- */
-const loadWork = async (
-  authorSlug: string,
-  entry: Deno.DirEntry,
-  authorDir: string,
-  ctx: LoadContext,
-): Promise<Work | undefined> => {
-  if (!entry.isDirectory) return undefined;
-  const dir = `${authorDir}/${entry.name}`;
-  const indexPath = await findFile(ctx.fs, `${dir}/index.mit`);
-  if (indexPath === undefined) return undefined; // not a work
-  const slug = entry.name.toLowerCase();
-  const stub = await loadDocument(indexPath, ctx);
-  if (stub === null) return undefined;
-
-  // The work's authors: the stub's `authors`, with the host (directory) author
-  // first so authorSlugs[0] is always the primary used for the artefact path.
-  // A work with no declared authors (test fixtures) is the directory author's.
-  const declaredAuthors = metaAuthors(stub) ?? [];
-  const authorSlugs = [
-    authorSlug,
-    ...declaredAuthors.filter((s) => s !== authorSlug),
-  ];
-
-  const editionSlugs: string[] = [];
-  for (const sub of await ctx.fs.readDir(dir)) {
-    const name = sub.isFile && sub.name.endsWith(".mit")
-      ? sub.name.slice(0, -4)
-      : sub.isDirectory
-      ? sub.name
-      : undefined;
-    if (name !== undefined && EDITION_RE.test(name)) {
-      editionSlugs.push(name);
-    }
-  }
-  editionSlugs.sort();
-  const editions: Edition[] = [];
-  for (const editionSlug of editionSlugs) {
-    const file = (await findFile(ctx.fs, `${dir}/${editionSlug}.mit`)) ??
-      (await findFile(ctx.fs, `${dir}/${editionSlug}/index.mit`));
-    const doc = file === undefined ? null : await loadDocument(file, ctx);
-    if (doc !== null) {
-      editions.push(makeEdition(authorSlugs, slug, editionSlug, doc));
-    }
-  }
-  if (editions.length === 0) {
-    ctx.warnings.push(`data/works/${authorSlug}/${slug}: no editions`);
-    return undefined;
-  }
-
-  // Canonical edition: the stub's `canonical` key, else the latest edition.
-  const declared = metaString(stub, "canonical")?.toLowerCase();
-  const canonical = editions.find((e) => e.slug === declared) ??
-    editions[editions.length - 1];
-  if (declared !== undefined && canonical.slug !== declared) {
-    ctx.warnings.push(
-      `data/works/${authorSlug}/${slug}: canonical "${declared}" is not an edition`,
-    );
-  }
-
-  const title = metaString(stub, "title") ?? stub.id;
-  const published = metaArray(stub, "published").map(Number).filter((n) =>
-    !Number.isNaN(n)
-  );
-  return {
-    authorSlugs,
-    slug,
-    title,
-    breadcrumb: metaString(stub, "breadcrumb") ?? title,
-    imported: canonical.imported,
-    published: published.length > 0 ? published : canonical.published,
-    canonicalSlug: canonical.slug,
-    // Works list independently unless the stub opts out (collection-only subworks).
-    standalone: metaBoolean(stub, "standalone") ?? true,
-    dir,
-    editions,
-  };
-};
-
-const makeAuthor = (slug: string, doc: MarkitDocument | null): Author => ({
-  slug,
-  forename: doc === null ? "" : metaString(doc, "forename") ?? "",
-  surname: doc === null ? slug : metaString(doc, "surname") ?? slug,
-  title: doc === null ? undefined : metaString(doc, "title"),
-  birth: doc === null ? undefined : metaNumber(doc, "birth"),
-  death: doc === null ? undefined : metaNumber(doc, "death"),
-  published: doc === null ? undefined : metaNumber(doc, "published"),
-  nationality: doc === null ? undefined : metaString(doc, "nationality"),
-  sex: doc === null ? undefined : metaString(doc, "sex"),
-  works: [],
-});
-
-export const buildCatalog = async (
-  fs: CorpusFs,
-  corpusDir: string,
-): Promise<{ catalog: Catalog; warnings: string[] }> => {
-  // Canonicalise so that work directories and child-reference paths agree.
-  corpusDir = await fs.realPath(corpusDir);
-  const dataDir = `${corpusDir}/data`;
-  const ctx: LoadContext = {
-    fs,
-    cache: new Map(),
-    stack: new Set(),
-    sources: new WeakMap(),
-    warnings: [],
-    worksDir: `${dataDir}/works`,
-  };
-  const byAuthor = new Map<string, Author>();
-
-  try {
-    for (const entry of await fs.readDir(`${dataDir}/authors`)) {
-      if (!entry.isFile || !entry.name.endsWith(".mit")) continue;
-      const slug = entry.name.slice(0, -4).toLowerCase();
-      const doc = await loadDocument(`${dataDir}/authors/${entry.name}`, ctx);
-      byAuthor.set(slug, makeAuthor(slug, doc));
-    }
-  } catch {
-    ctx.warnings.push(`no authors directory in ${dataDir}`);
-  }
-
-  // Load every work under its host directory, collecting them so co-authored
-  // works can be registered under their other authors in a second pass.
-  const loaded: Work[] = [];
-  for (const entry of await fs.readDir(`${dataDir}/works`)) {
-    if (!entry.isDirectory) continue;
-    const authorSlug = entry.name.toLowerCase();
-    let author = byAuthor.get(authorSlug);
-    if (author === undefined) {
-      ctx.warnings.push(
-        `data/works/${entry.name} has no data/authors/${entry.name}.mit`,
-      );
-      author = makeAuthor(authorSlug, null);
-      byAuthor.set(authorSlug, author);
-    }
-    const authorDir = `${dataDir}/works/${entry.name}`;
-    for (const sub of await fs.readDir(authorDir)) {
-      const work = await loadWork(authorSlug, sub, authorDir, ctx);
-      if (work !== undefined) {
-        author.works.push(work);
-        loaded.push(work);
-      }
-    }
-  }
-
-  // A co-authored work lives once on disk (under its host author) but appears in
-  // the catalog under every author it names, so both authors' pages list it. The
-  // host (authorSlugs[0]) already holds it from the load above; add the rest.
-  for (const work of loaded) {
-    for (const slug of work.authorSlugs.slice(1)) {
-      let coAuthor = byAuthor.get(slug);
-      if (coAuthor === undefined) {
-        ctx.warnings.push(
-          `data/works/${work.authorSlugs[0]}/${work.slug} names co-author ` +
-            `"${slug}" with no data/authors/${slug}.mit`,
-        );
-        coAuthor = makeAuthor(slug, null);
-        byAuthor.set(slug, coAuthor);
-      }
-      if (!coAuthor.works.includes(work)) coAuthor.works.push(work);
-    }
-  }
-
-  for (const author of byAuthor.values()) {
-    author.works.sort((a, b) =>
-      (a.published[0] ?? Infinity) - (b.published[0] ?? Infinity) ||
-      a.slug.localeCompare(b.slug)
-    );
-  }
-
-  const authors = [...byAuthor.values()].sort((a, b) =>
-    (a.published ?? Infinity) - (b.published ?? Infinity) ||
-    a.surname.localeCompare(b.surname)
-  );
-
-  return {
-    catalog: { authors, byAuthor, sources: ctx.sources },
-    warnings: ctx.warnings,
-  };
 };
 
 /**

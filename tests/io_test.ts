@@ -43,9 +43,14 @@ Deno.test("readManifest returns null when the directory is absent", async () => 
   assertEquals(await denoIo.readManifest("/no/such/computer-dir"), null);
 });
 
-Deno.test("the corpus FS returns null for a missing file and a missing stat", async () => {
-  assertEquals(await denoIo.corpus.readFile("/no/such/file.mit"), null);
-  assertEquals(await denoIo.corpus.stat("/no/such/path"), null);
+Deno.test("the catalogue reader returns null when the corpus was not built", async () => {
+  assertEquals(await denoIo.readCatalogue("/no/such/corpus"), null);
+  assertEquals(await denoIo.readDocument("/no/such/corpus", "a/w/1700"), null);
+  // The freshness probe degrades to an empty fingerprint rather than throwing.
+  assertEquals(await denoIo.scanCorpus("/no/such/corpus"), {
+    files: 0,
+    modified: 0,
+  });
 });
 
 Deno.test("writeArtefacts creates a fresh directory that does not yet exist", async () => {

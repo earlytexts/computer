@@ -1,10 +1,11 @@
 /**
- * In-memory corpora for the tests. The computer reads the corpus through a
- * `CorpusFs` port (src/core/build/catalog.ts), so a corpus is just a map of
- * paths to `.mit` text — no fixture files on disk. `corpus()` is a small builder
- * for authoring one ergonomically; `memoryCorpus` turns a file map into the
- * `CorpusFs` the catalog scan walks; `materializeCorpus` writes a map to a real
- * directory for the few tests that spawn a process (e2e).
+ * In-memory corpora for the tests. A corpus is authored as a map of paths to
+ * `.mit` text — no fixture files on disk. `corpus()` is a small builder for
+ * authoring one ergonomically; `memoryCorpus` turns a file map into the
+ * `CorpusFs` the corpus's catalogue build walks; `buildDist` compiles a map into
+ * the corpus's `dist/` output (catalogue.json + documents) the computer reads;
+ * `materializeCorpus` writes that compiled output to a real directory for the few
+ * tests that spawn a process (e2e).
  *
  * `testCorpus()` is the shared corpus the behavioural suite runs against — two
  * authors with a single-file work, a three-edition work with textual variants
@@ -13,151 +14,56 @@
  * grouping, diffing and version handling stay observable in real output.
  */
 
-import type { CorpusFs } from "../src/core/build/catalog.ts";
+import { buildCatalog } from "../../corpus/src/catalogue.ts";
+import { serializeCatalogue } from "../../corpus/src/serialize.ts";
+import {
+  corpus,
+  CORPUS_ROOT,
+  CorpusBuilder,
+  memoryCorpus,
+  type Meta,
+} from "../../corpus/tests/harness.ts";
 
-/** The root every corpus path hangs off (an arbitrary absolute prefix). */
-export const CORPUS_ROOT = "/corpus";
+// The generic corpus-authoring harness lives with the corpus (which owns the
+// catalogue build); re-export it so the computer's tests keep importing it here.
+export { corpus, CORPUS_ROOT, CorpusBuilder, memoryCorpus };
+export type { Meta };
+
+export type Dist = { catalogue: string; documents: Map<string, string> };
 
 /**
- * Collapse a path's empty and "." segments. Every path reaching this in-memory
- * FS descends from the absolute corpus root, so the result is always absolute.
+ * Compile a corpus map into the corpus's `dist/` output — the same step
+ * `corpus/scripts/build.ts` runs — so the computer's tests consume exactly what
+ * it reads in production. Returns the catalogue.json text and the document files.
  */
-const normalizePath = (path: string): string => {
-  const out: string[] = [];
-  for (const part of path.split("/")) {
-    if (part === "" || part === ".") continue;
-    out.push(part);
-  }
-  return "/" + out.join("/");
+export const buildDist = async (
+  files: Record<string, string>,
+): Promise<Dist> => {
+  const fs = memoryCorpus(files);
+  const root = await fs.realPath(CORPUS_ROOT);
+  const { catalog, warnings } = await buildCatalog(fs, CORPUS_ROOT);
+  const { catalogue, documents } = serializeCatalogue(catalog, warnings, root);
+  return { catalogue: JSON.stringify(catalogue), documents };
 };
 
-/* ------------------------------ corpus FS ----------------------------- */
-
-/** A `CorpusFs` over a (possibly mutable) map of normalised path → file text. */
-export const memoryCorpus = (files: Record<string, string>): CorpusFs => ({
-  readFile: (path) => Promise.resolve(files[normalizePath(path)] ?? null),
-  readDir: (path) => {
-    const normalized = normalizePath(path);
-    const prefix = normalized === "/" ? "/" : normalized + "/";
-    const children = new Map<string, boolean>(); // name → isFile
-    for (const key of Object.keys(files)) {
-      if (!key.startsWith(prefix)) continue;
-      const rest = key.slice(prefix.length);
-      const slash = rest.indexOf("/");
-      if (slash === -1) children.set(rest, true);
-      else children.set(rest.slice(0, slash), false);
-    }
-    if (children.size === 0) throw new Error(`no such directory: ${path}`);
-    return Promise.resolve(
-      [...children].map(([name, isFile]) => ({
-        name,
-        isFile,
-        isDirectory: !isFile,
-        isSymlink: false,
-      })),
-    );
-  },
-  realPath: (path) => Promise.resolve(normalizePath(path)),
-  stat: (path) => {
-    const key = normalizePath(path);
-    if (files[key] !== undefined) return Promise.resolve({ isFile: true });
-    const prefix = key + "/";
-    return Promise.resolve(
-      Object.keys(files).some((k) => k.startsWith(prefix))
-        ? { isFile: false }
-        : null,
-    );
-  },
-});
-
-/** Count the `.mit` files in a corpus map (the corpus scan's file count). */
-export const countMit = (files: Record<string, string>): number =>
-  Object.keys(files).filter((k) => k.endsWith(".mit")).length;
-
-/** Write a corpus map to a fresh temp directory; returns the dir to clean up. */
+/**
+ * Compile a corpus map and write its `dist/` to a fresh temp directory (the
+ * computer reads the compiled output, not `.mit`); returns the dir to clean up.
+ */
 export const materializeCorpus = async (
   files: Record<string, string>,
 ): Promise<string> => {
   const dir = await Deno.makeTempDir({ prefix: "computer-corpus-" });
-  for (const [key, content] of Object.entries(files)) {
-    const rel = key.slice(CORPUS_ROOT.length + 1); // strip "/corpus/"
-    const path = `${dir}/${rel}`;
+  const { catalogue, documents } = await buildDist(files);
+  await Deno.mkdir(`${dir}/dist/documents`, { recursive: true });
+  await Deno.writeTextFile(`${dir}/dist/catalogue.json`, catalogue);
+  for (const [docKey, json] of documents) {
+    const path = `${dir}/dist/documents/${docKey}.json`;
     await Deno.mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true });
-    await Deno.writeTextFile(path, content);
+    await Deno.writeTextFile(path, json);
   }
   return dir;
 };
-
-/* ------------------------------- builder ------------------------------ */
-
-type Scalar = string | number | boolean;
-/** A `.mit` `[metadata]` block, as a record (arrays become inline TOML arrays). */
-export type Meta = Record<string, Scalar | Scalar[]>;
-
-const tomlValue = (value: Scalar | Scalar[]): string =>
-  Array.isArray(value)
-    ? `[${value.map(tomlValue).join(", ")}]`
-    : typeof value === "string"
-    ? JSON.stringify(value)
-    : String(value);
-
-const toml = (meta: Meta): string =>
-  Object.entries(meta).map(([k, v]) => `${k} = ${tomlValue(v)}`).join("\n");
-
-const doc = (heading: string, meta: Meta, body = ""): string =>
-  `${heading}\n\n[metadata]\n${toml(meta)}\n${body ? `\n${body}\n` : ""}`;
-
-/** A fluent builder for a corpus map: author/work/edition files under the root. */
-export class CorpusBuilder {
-  private files: Record<string, string> = {};
-
-  /** `data/authors/<slug>.mit`: the author's metadata (no text). */
-  author(slug: string, meta: Meta): this {
-    this.files[`${CORPUS_ROOT}/data/authors/${slug}.mit`] = doc(
-      `# ${slug}`,
-      meta,
-    );
-    return this;
-  }
-
-  /** `data/works/<author>/<work>/index.mit`: the work's edition-independent identity. */
-  work(author: string, work: string, meta: Meta): this {
-    this.files[`${CORPUS_ROOT}/data/works/${author}/${work}/index.mit`] = doc(
-      `# ${author}.${work}`,
-      meta,
-    );
-    return this;
-  }
-
-  /** `data/works/<author>/<work>/<slug>.mit`: a year-named edition with its text. */
-  edition(
-    author: string,
-    work: string,
-    slug: string,
-    meta: Meta,
-    body = "",
-  ): this {
-    this.files[`${CORPUS_ROOT}/data/works/${author}/${work}/${slug}.mit`] = doc(
-      `# ${author}.${work}.${slug}`,
-      meta,
-      body,
-    );
-    return this;
-  }
-
-  /** Escape hatch: write a raw file at a root-relative path. */
-  file(relPath: string, content: string): this {
-    this.files[`${CORPUS_ROOT}/${relPath}`] = content;
-    return this;
-  }
-
-  /** The corpus map (a fresh copy). */
-  build(): Record<string, string> {
-    return { ...this.files };
-  }
-}
-
-export const corpus = (): CorpusBuilder => new CorpusBuilder();
 
 /* --------------------------- the shared corpus ------------------------ */
 

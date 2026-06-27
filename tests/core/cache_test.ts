@@ -7,12 +7,76 @@
  * never sees an artefact.
  */
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { openComputer } from "../../src/core/mod.ts";
+import { loadCatalog } from "../../src/core/build/catalog.ts";
 import { memoryHarness } from "../helpers.ts";
 import { CORPUS_ROOT, testCorpus } from "../corpus.ts";
 
 const PATHS = { corpusDir: CORPUS_ROOT, artefactsDir: "memory" };
+
+Deno.test("loadCatalog fails clearly when the corpus was not built", async () => {
+  const reader = {
+    readCatalogue: () => Promise.resolve(null),
+    readDocument: () => Promise.resolve(null),
+  };
+  await assertRejects(
+    () => loadCatalog(reader, "/no/such/corpus"),
+    Error,
+    "run the corpus build",
+  );
+});
+
+Deno.test("loadCatalog reconstructs the catalog, incl. metadata-less docs", async () => {
+  // A minimal compiled catalogue with one author, work, and edition whose
+  // document carries no metadata (the branch the shared fixture never exercises).
+  const reader = {
+    readCatalogue: () =>
+      Promise.resolve({
+        authors: [{ slug: "a", forename: "A", surname: "Aa", works: ["a/w"] }],
+        works: {
+          "a/w": {
+            authorSlugs: ["a"],
+            slug: "w",
+            title: "W",
+            breadcrumb: "W",
+            imported: true,
+            published: [1700],
+            canonicalSlug: "1700",
+            standalone: true,
+            dir: "data/works/a/w",
+            editions: [{
+              authorSlugs: ["a"],
+              workSlug: "w",
+              slug: "1700",
+              title: "W",
+              breadcrumb: "W",
+              imported: true,
+              published: [1700],
+              copytext: [],
+              docKey: "a/w/1700",
+              source: "data/works/a/w/1700.mit",
+            }],
+          },
+        },
+        warnings: [],
+      }),
+    readDocument: () =>
+      Promise.resolve({
+        id: "A.W.1700",
+        blocks: [],
+        children: [{ id: "A.W.1700.1", blocks: [], children: [] }],
+      }),
+  };
+  const { catalog, warnings } = await loadCatalog(reader, "/corpus");
+  assertEquals(warnings, []);
+  const work = catalog.byAuthor.get("a")!.works[0];
+  assertEquals(work.editions[0].document.children[0].id, "A.W.1700.1");
+  assertEquals(
+    catalog.sources.get(work.editions[0].document),
+    "data/works/a/w/1700.mit",
+  );
+});
 
 Deno.test("the first open builds the cache, a second reuses it", async () => {
   const harness = memoryHarness();
