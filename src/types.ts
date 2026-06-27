@@ -59,6 +59,13 @@ export type WorkMeta = {
   published: number[];
   /** Slug of the canonical edition (the default when none is specified). */
   canonicalSlug: string;
+  /**
+   * Whether the work lists as its own text in indexes. False for a subwork
+   * meant to surface only inside the collection(s) that borrow it; true (the
+   * default) otherwise. The work is in the catalog either way — this only
+   * governs whether index listings show it on its own.
+   */
+  standalone: boolean;
   editions: EditionMeta[]; // dated editions, ascending by year
 };
 

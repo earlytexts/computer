@@ -79,6 +79,14 @@ export type Work = {
   imported: boolean;
   published: number[];
   canonicalSlug: string; // slug of the canonical (default) edition
+  /**
+   * Whether the work appears as its own text in UI indexes. A work borrowed
+   * into a collection (its editions spliced in as borrowed children) is also a
+   * standalone directory, so it lists independently by default. Setting
+   * `standalone = false` on the work's `index.mit` keeps it out of the indexes,
+   * leaving it reachable only through the collection(s) that borrow it.
+   */
+  standalone: boolean;
   dir: string; // absolute directory owning this work's files
   editions: Edition[]; // dated editions, ascending by year
 };
@@ -398,6 +406,8 @@ const loadWork = async (
     imported: canonical.imported,
     published: published.length > 0 ? published : canonical.published,
     canonicalSlug: canonical.slug,
+    // Works list independently unless the stub opts out (collection-only subworks).
+    standalone: metaBoolean(stub, "standalone") ?? true,
     dir,
     editions,
   };

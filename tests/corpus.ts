@@ -324,6 +324,9 @@ export const testCorpus = (): Record<string, string> =>
       breadcrumb: "Test Work",
       published: [1750, 1760],
       canonical: "1760",
+      // tw is borrowed by the comp collection; it opts out of listing on its
+      // own so it surfaces only within that collection (see catalog_test).
+      standalone: false,
     })
     .edition("test", "tw", "1750", {
       imported: true,

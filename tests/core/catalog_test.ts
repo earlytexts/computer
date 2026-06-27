@@ -34,6 +34,16 @@ Deno.test("an edition's metadata carries its slugs and canonical default", async
   assert(tw.imported);
 });
 
+Deno.test("a work lists independently by default but can opt out", async () => {
+  const computer = await testComputer();
+  const works =
+    (await computer.catalog()).authors.find((a) => a.slug === "test")!.works;
+  // comp is an ordinary collection: it lists on its own.
+  assert(works.find((w) => w.slug === "comp")!.standalone);
+  // tw is borrowed by comp and opts out, so it surfaces only within it.
+  assertEquals(works.find((w) => w.slug === "tw")!.standalone, false);
+});
+
 Deno.test("an unimported work is flagged as a stub", async () => {
   const computer = await testComputer();
   const catalog = await computer.catalog();

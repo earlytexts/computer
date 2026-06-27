@@ -140,6 +140,7 @@ const workMeta = (work: Work): WorkMeta => ({
   imported: work.imported,
   published: work.published,
   canonicalSlug: work.canonicalSlug,
+  standalone: work.standalone,
   editions: work.editions.map(editionMeta),
 });
 
