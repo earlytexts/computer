@@ -147,6 +147,56 @@ const perPageProperty = {
   type: "number" as const,
   description: "Results per page, 1–100; defaults to 20.",
 };
+const pageProperty = {
+  type: "number" as const,
+  description: "Result page, starting at 1; defaults to 1.",
+};
+const caseSensitiveProperty = {
+  type: "boolean" as const,
+  description:
+    "Require each word's initial capitalisation to agree with the text. Defaults to false (case is ignored).",
+};
+// The term-grouping knob shared by keywords and collocations; `what` names the
+// thing grouped ("terms" / "collocates") — the only wording that differs.
+const byProperty = (what: string) => ({
+  type: "string" as const,
+  enum: ["lemma", "form", "exact"],
+  description:
+    `How to group ${what}. "lemma" (default): citation forms (causes/caused → ` +
+    `cause). "form": unite spelling variants and inflections. "exact": the ` +
+    `spellings exactly as written.`,
+});
+
+/**
+ * The shared input schema of the two target-shaped tools, similar and topic_mix:
+ * an author/work target, optionally narrowed to an edition, a section path, and
+ * a level, capped by limit. Only the wording of the author/path/level/limit
+ * descriptions differs between the two, so those are passed in.
+ */
+const targetSchema = (descriptions: {
+  author: string;
+  path: string;
+  level: string;
+  limit: string;
+}): Record<string, unknown> => ({
+  type: "object",
+  properties: {
+    author: { ...authorProperty, description: descriptions.author },
+    work: workProperty,
+    edition: slugProperty(
+      'Target edition (a year slug like "1751"). Omit for the work\'s canonical edition. Ignored at the "work" level.',
+    ),
+    path: { ...pathProperty, description: descriptions.path },
+    level: {
+      type: "string" as const,
+      enum: ["section", "edition", "work"],
+      description: descriptions.level,
+    },
+    limit: { type: "number" as const, description: descriptions.limit },
+  },
+  required: ["author", "work"],
+  additionalProperties: false,
+});
 
 export const createTools = (computer: Computer): ToolSet => {
   const definitions: ToolSpec[] = [
@@ -180,20 +230,13 @@ export const createTools = (computer: Computer): ToolSet => {
         properties: {
           q: { type: "string", description: "The phrase to search for." },
           match: matchProperty,
-          caseSensitive: {
-            type: "boolean",
-            description:
-              "Require each word's initial capitalisation to agree with the text. Defaults to false (case is ignored).",
-          },
+          caseSensitive: caseSensitiveProperty,
           version: versionProperty,
           author: authorProperty,
           work: workProperty,
           editions: editionsProperty,
           edition: scopeEditionProperty,
-          page: {
-            type: "number",
-            description: "Result page, starting at 1; defaults to 1.",
-          },
+          page: pageProperty,
           perPage: perPageProperty,
         },
         required: ["q"],
@@ -215,11 +258,7 @@ export const createTools = (computer: Computer): ToolSet => {
               'Group occurrences by "author", "work", or "edition". Defaults to "work".',
           },
           match: matchProperty,
-          caseSensitive: {
-            type: "boolean",
-            description:
-              "Require each word's initial capitalisation to agree with the text. Defaults to false (case is ignored).",
-          },
+          caseSensitive: caseSensitiveProperty,
           version: versionProperty,
           author: authorProperty,
           work: workProperty,
@@ -250,20 +289,13 @@ export const createTools = (computer: Computer): ToolSet => {
               'Line order: "position" (corpus order, the default), or by the words nearest the keyword on the "left" or "right".',
           },
           match: matchProperty,
-          caseSensitive: {
-            type: "boolean",
-            description:
-              "Require each word's initial capitalisation to agree with the text. Defaults to false (case is ignored).",
-          },
+          caseSensitive: caseSensitiveProperty,
           version: versionProperty,
           author: authorProperty,
           work: workProperty,
           editions: editionsProperty,
           edition: scopeEditionProperty,
-          page: {
-            type: "number",
-            description: "Result page, starting at 1; defaults to 1.",
-          },
+          page: pageProperty,
           perPage: perPageProperty,
         },
         required: ["q"],
@@ -294,12 +326,7 @@ export const createTools = (computer: Computer): ToolSet => {
           },
           edition: scopeEditionProperty,
           version: versionProperty,
-          by: {
-            type: "string",
-            enum: ["lemma", "form", "exact"],
-            description:
-              'How to group terms. "lemma" (default): citation forms (causes/caused → cause). "form": unite spelling variants and inflections. "exact": the spellings exactly as written.',
-          },
+          by: byProperty("terms"),
           min: {
             type: "number",
             description:
@@ -325,12 +352,7 @@ export const createTools = (computer: Computer): ToolSet => {
             type: "string",
             description: "The node word whose collocates you want.",
           },
-          by: {
-            type: "string",
-            enum: ["lemma", "form", "exact"],
-            description:
-              'How to group collocates. "lemma" (default): citation forms (causes/caused → cause). "form": unite spelling variants and inflections. "exact": the spellings exactly as written.',
-          },
+          by: byProperty("collocates"),
           match: matchProperty,
           window: {
             type: "number",
@@ -359,37 +381,15 @@ export const createTools = (computer: Computer): ToolSet => {
       name: "similar",
       description:
         'Find the corpus items most lexically similar to a target — what else reads like it. Name a target author and work (and optionally a specific edition, or a section path) and it returns the items whose vocabulary most resembles the target, by cosine similarity over TF-IDF vectors, with an opaque 0–1 score (higher is more alike). The level sets the granularity of both the target and the results: "section" compares one section against every other section, "edition" a whole edition against others, "work" a whole work against others. It defaults to "section" when a path is given, otherwise "edition". The target\'s own work is always excluded, and results are drawn from each work\'s canonical edition. Use it for discovery — "what other passages treat this subject", "which works most resemble this one" — where keywords and collocations characterise a text, this finds its neighbours.',
-      inputSchema: {
-        type: "object",
-        properties: {
-          author: {
-            ...authorProperty,
-            description:
-              'Target author slug, e.g. "hume" — the item to find lookalikes for lives here.',
-          },
-          work: workProperty,
-          edition: slugProperty(
-            'Target edition (a year slug like "1751"). Omit for the work\'s canonical edition. Ignored at the "work" level.',
-          ),
-          path: {
-            ...pathProperty,
-            description:
-              "Target section path (slugs from the edition root). Give it to compare one section; omit it to compare a whole edition or work.",
-          },
-          level: {
-            type: "string",
-            enum: ["section", "edition", "work"],
-            description:
-              'Granularity of the target and the results. "section": a single section. "edition": a whole edition. "work": a whole work. Defaults to "section" when a path is given, else "edition".',
-          },
-          limit: {
-            type: "number",
-            description: "Maximum items to return (default 20, max 200).",
-          },
-        },
-        required: ["author", "work"],
-        additionalProperties: false,
-      },
+      inputSchema: targetSchema({
+        author:
+          'Target author slug, e.g. "hume" — the item to find lookalikes for lives here.',
+        path:
+          "Target section path (slugs from the edition root). Give it to compare one section; omit it to compare a whole edition or work.",
+        level:
+          'Granularity of the target and the results. "section": a single section. "edition": a whole edition. "work": a whole work. Defaults to "section" when a path is given, else "edition".',
+        limit: "Maximum items to return (default 20, max 200).",
+      }),
     },
     {
       name: "topics",
@@ -415,38 +415,15 @@ export const createTools = (computer: Computer): ToolSet => {
       name: "topic_mix",
       description:
         'Show what a particular text is about, as a mix over the corpus\'s topics. Name a target author and work (and optionally a specific edition, or a section path) and it returns the topics the target draws on most, each with its share of the text (0–1) and its top terms. The level sets the granularity: "section" a single section, "edition" a whole edition, "work" a whole work; it defaults to "section" when a path is given, otherwise "edition". Use it to characterise a text thematically — "what is this work mainly about", "which themes run through this section" — and pair it with the topics tool (which defines the topics and shows where each is prominent across the corpus).',
-      inputSchema: {
-        type: "object",
-        properties: {
-          author: {
-            ...authorProperty,
-            description:
-              'Target author slug, e.g. "hume" — the text whose topic mix you want lives here.',
-          },
-          work: workProperty,
-          edition: slugProperty(
-            'Target edition (a year slug like "1751"). Omit for the work\'s canonical edition. Ignored at the "work" level.',
-          ),
-          path: {
-            ...pathProperty,
-            description:
-              "Target section path (slugs from the edition root). Give it for one section's mix; omit it for a whole edition or work.",
-          },
-          level: {
-            type: "string",
-            enum: ["section", "edition", "work"],
-            description:
-              'Granularity of the target. "section": a single section. "edition": a whole edition. "work": a whole work. Defaults to "section" when a path is given, else "edition".',
-          },
-          limit: {
-            type: "number",
-            description:
-              "Maximum topics to return, by descending share (default 10).",
-          },
-        },
-        required: ["author", "work"],
-        additionalProperties: false,
-      },
+      inputSchema: targetSchema({
+        author:
+          'Target author slug, e.g. "hume" — the text whose topic mix you want lives here.',
+        path:
+          "Target section path (slugs from the edition root). Give it for one section's mix; omit it for a whole edition or work.",
+        level:
+          'Granularity of the target. "section": a single section. "edition": a whole edition. "work": a whole work. Defaults to "section" when a path is given, else "edition".',
+        limit: "Maximum topics to return, by descending share (default 10).",
+      }),
     },
     {
       name: "get_edition",

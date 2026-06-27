@@ -444,6 +444,41 @@ const labelUnits = (
 
 const MAX_PER_PAGE = 100;
 
+/**
+ * The citation fields shared by a search result and a concordance line: who
+ * wrote the matched block and where it sits. Read from the edition manifest and
+ * the unit tables by the hit's unit index.
+ */
+const citation = (artefacts: ServeArtefacts, unitIndex: number) => {
+  const { units, manifest } = artefacts;
+  const ref = manifest.editions[units.edition[unitIndex]];
+  const sectionPath = units.sectionPath[unitIndex];
+  return {
+    authors: ref.authors,
+    authorNames: ref.authorNames,
+    work: ref.work,
+    workBreadcrumb: ref.workBreadcrumb,
+    edition: ref.edition,
+    sectionPath: sectionPath === "" ? [] : sectionPath.split("/"),
+    sectionTitle: units.sectionTitle[unitIndex],
+    blockId: units.blockId[unitIndex],
+  };
+};
+
+/**
+ * Slice a ranked list to one page: the page's items, the page number, and the
+ * total page count (at least 1). Shared by search and concordance.
+ */
+const paginate = <T>(
+  items: T[],
+  page: number,
+  perPage: number,
+): { items: T[]; page: number; pages: number } => ({
+  items: items.slice((page - 1) * perPage, page * perPage),
+  page,
+  pages: Math.max(1, Math.ceil(items.length / perPage)),
+});
+
 export const frequencyResponse = (
   artefacts: ServeArtefacts,
   params: FrequencyParams,
@@ -1154,9 +1189,7 @@ export const searchResponse = async (
     options,
     version,
   );
-  const pages = Math.max(1, Math.ceil(hits.length / perPage));
-  const pageHits = hits.slice((page - 1) * perPage, page * perPage);
-  const { units, manifest } = artefacts;
+  const { items: pageHits, pages } = paginate(hits, page, perPage);
   return {
     q,
     match: options.match,
@@ -1170,17 +1203,8 @@ export const searchResponse = async (
       // resolves the block to that version and injects the marks in one walk.
       const block: Block = await store.unitBlock(hit.unitIndex);
       const ranges = matchRanges(blockText(block, version), hit.positions);
-      const ref = manifest.editions[units.edition[hit.unitIndex]];
-      const sectionPath = units.sectionPath[hit.unitIndex];
       return {
-        authors: ref.authors,
-        authorNames: ref.authorNames,
-        work: ref.work,
-        workBreadcrumb: ref.workBreadcrumb,
-        edition: ref.edition,
-        sectionPath: sectionPath === "" ? [] : sectionPath.split("/"),
-        sectionTitle: units.sectionTitle[hit.unitIndex],
-        blockId: units.blockId[hit.unitIndex],
+        ...citation(artefacts, hit.unitIndex),
         score: hit.score,
         block: highlightBlock(block, ranges, version),
       };
@@ -1230,7 +1254,6 @@ export const concordanceResponse = async (
     version,
   );
 
-  const { units, manifest } = artefacts;
   // Carry the sort keys and corpus position alongside each line, then strip
   // them off after ordering and paginating.
   type Built = ConcordanceLine & {
@@ -1244,19 +1267,11 @@ export const concordanceResponse = async (
     const block = await store.unitBlock(hit.unitIndex);
     const text = blockText(block, version);
     const spans = tokenize(text);
-    const ref = manifest.editions[units.edition[hit.unitIndex]];
-    const sectionPath = units.sectionPath[hit.unitIndex];
+    const cite = citation(artefacts, hit.unitIndex);
     for (const start of occurrences(hit.positions, phraseLen)) {
       const parts = lineParts(text, spans, start, phraseLen, window);
       built.push({
-        authors: ref.authors,
-        authorNames: ref.authorNames,
-        work: ref.work,
-        workBreadcrumb: ref.workBreadcrumb,
-        edition: ref.edition,
-        sectionPath: sectionPath === "" ? [] : sectionPath.split("/"),
-        sectionTitle: units.sectionTitle[hit.unitIndex],
-        blockId: units.blockId[hit.unitIndex],
+        ...cite,
         left: parts.left,
         keyword: parts.keyword,
         right: parts.right,
@@ -1271,8 +1286,8 @@ export const concordanceResponse = async (
   }
 
   built.sort(compareLines(sort));
-  const pages = Math.max(1, Math.ceil(built.length / perPage));
-  const lines = built.slice((page - 1) * perPage, page * perPage).map(
+  const { items: pageBuilt, pages } = paginate(built, page, perPage);
+  const lines = pageBuilt.map(
     ({ unitIndex: _u, start: _s, leftWords: _l, rightWords: _r, ...line }) =>
       line,
   );
