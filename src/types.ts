@@ -28,7 +28,9 @@ export type AuthorMeta = {
   title?: string; // honorific, e.g. "Lord Kames"
   birth?: number;
   death?: number;
-  published?: number; // year of first publication; authors are ordered by it
+  /** Earliest `firstPublished` across the author's works (derived by the
+   * corpus); undefined if they have none. Authors are ordered by it. */
+  firstPublished?: number;
   nationality?: string;
   sex?: string;
 };
@@ -43,20 +45,23 @@ export type EditionMeta = {
   /** Whether the text itself is present in the corpus (else a stub). */
   imported: boolean;
   published: number[];
-  copytext: string[];
   sourceUrl?: string;
   sourceDesc?: string;
 };
 
 export type WorkMeta = {
-  /** Author slugs, in title order; [0] is the primary (host) author. A
-   * co-authored work appears under each of these in the catalog. */
+  /** Author slugs, in title order — the people who wrote it. A co-authored work
+   * appears under each of these in the catalog. */
   authorSlugs: string[];
+  /** Identity slug for the work's id, paths, and URL: a single author's slug, or
+   * a joint slug ("astell-norris") for a co-authored work. Not itself an author. */
+  hostSlug: string;
   slug: string;
   title: string;
   breadcrumb: string;
   imported: boolean;
-  published: number[];
+  /** Earliest publication year across all editions (derived by the corpus). */
+  firstPublished: number;
   /** Slug of the canonical edition (the default when none is specified). */
   canonicalSlug: string;
   /**
@@ -257,6 +262,7 @@ export type MatchLevel = "exact" | "spelling" | "form";
 export type SearchResult = {
   authors: string[]; // author slugs, in title order
   authorNames: string[]; // surnames, parallel to authors, for display
+  hostSlug: string; // the work's identity slug for paths/URLs (joint if co-authored)
   work: string;
   workBreadcrumb: string;
   edition: string; // a year slug
@@ -296,6 +302,9 @@ export type SearchResponse = {
 export type FrequencyEntry = {
   label: string;
   authors: string[];
+  /** The work's identity slug for paths/URLs (joint if co-authored); null for
+   * the author grouping, where no single work is named. */
+  hostSlug: string | null;
   work: string;
   edition: string | null; // null unless by="edition"
   count: number; // phrase occurrences in this group
@@ -316,6 +325,7 @@ export type FrequencyResponse = {
 export type ConcordanceLine = {
   authors: string[]; // author slugs, in title order
   authorNames: string[]; // surnames, parallel to authors, for display
+  hostSlug: string; // the work's identity slug for paths/URLs (joint if co-authored)
   work: string;
   workBreadcrumb: string;
   edition: string; // a year slug
@@ -469,6 +479,7 @@ export type SimilarLevel = "section" | "edition" | "work";
 export type SimilarItem = {
   authors: string[]; // author slugs, in title order
   authorNames: string[]; // surnames, parallel to authors, for display
+  hostSlug: string; // the work's identity slug for paths/URLs (joint if co-authored)
   work: string;
   workBreadcrumb: string;
   /** The edition (a year slug) for section/edition levels; null for work level. */
@@ -526,6 +537,7 @@ export type TopicTermWeight = {
 export type TopicProminentItem = {
   authors: string[]; // author slugs, in title order
   authorNames: string[]; // surnames, parallel to authors, for display
+  hostSlug: string; // the work's identity slug for paths/URLs (joint if co-authored)
   work: string;
   workBreadcrumb: string;
   /** The work's canonical edition (a year slug). */

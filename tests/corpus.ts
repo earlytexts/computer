@@ -199,7 +199,6 @@ export const testCorpus = (): Record<string, string> =>
       surname: "Test",
       birth: 1700,
       death: 1780,
-      published: 1740,
       nationality: "English",
       sex: "Male",
     })
@@ -209,14 +208,12 @@ export const testCorpus = (): Record<string, string> =>
       title: "Lady Other",
       birth: 1690,
       death: 1770,
-      published: 1730,
       nationality: "Scottish",
       sex: "Female",
     })
     .work("test", "solo", {
       title: "A Solitary Treatise",
       breadcrumb: "Solo Treatise",
-      published: [1740],
       canonical: "1740",
     })
     .edition("test", "solo", "1740", {
@@ -228,7 +225,6 @@ export const testCorpus = (): Record<string, string> =>
     .work("test", "tw", {
       title: "A Test Work",
       breadcrumb: "Test Work",
-      published: [1750, 1760],
       canonical: "1760",
       // tw is borrowed by the comp collection; it opts out of listing on its
       // own so it surfaces only within that collection (see catalog_test).
@@ -251,28 +247,24 @@ export const testCorpus = (): Record<string, string> =>
       title: "A Test Work",
       breadcrumb: "Test Work",
       published: [1750, 1760],
-      copytext: ["1760"],
       sourceDesc: "A fixture text for the computer's tests.",
     }, TW_1760)
     .work("test", "comp", {
       title: "A Composite Collection",
       breadcrumb: "Composite",
-      published: [1755],
       canonical: "1755",
     })
     .edition("test", "comp", "1755", {
       imported: true,
       title: "A Composite Collection",
       breadcrumb: "Composite",
-      published: [1755],
-      // a scalar copytext (not an array): the loader coerces it to a one-element
-      // list, exercising the metadata-array helper's scalar arm.
-      copytext: "1750",
+      // a scalar published year (not an array): the loader coerces it to a
+      // one-element list, exercising the metadata-array helper's scalar arm.
+      published: 1755,
     }, COMP_1755)
     .work("other", "stub", {
       title: "A Stub Treatise, Not Yet Transcribed",
       breadcrumb: "Stub Treatise",
-      published: [1730],
       canonical: "1730",
     })
     .edition("other", "stub", "1730", {
@@ -321,16 +313,17 @@ Madam, liberty and passion alike move the soul.`;
  */
 export const coauthorCorpus = (): Record<string, string> =>
   corpus()
-    .author("bell", { forename: "Anna", surname: "Bell", published: 1700 })
-    .author("dee", { forename: "Carl", surname: "Dee", published: 1705 })
-    .work("bell", "corr", {
+    .author("bell", { forename: "Anna", surname: "Bell" })
+    .author("dee", { forename: "Carl", surname: "Dee" })
+    // A co-authored work lives under a joint host directory ("bell-dee"), not
+    // under either author: that joint slug is its single identity and URL.
+    .work("bell-dee", "corr", {
       title: "A Correspondence",
       breadcrumb: "Correspondence",
       authors: ["bell", "dee"],
-      published: [1700],
       canonical: "1700",
     })
-    .edition("bell", "corr", "1700", {
+    .edition("bell-dee", "corr", "1700", {
       imported: true,
       title: "A Correspondence",
       breadcrumb: "Correspondence",
@@ -341,7 +334,6 @@ export const coauthorCorpus = (): Record<string, string> =>
       title: "A Solo Work",
       breadcrumb: "Solo",
       authors: ["bell"],
-      published: [1702],
       canonical: "1702",
     })
     .edition(
@@ -362,7 +354,6 @@ export const coauthorCorpus = (): Record<string, string> =>
       title: "A Ghost-written Work",
       breadcrumb: "Ghost",
       authors: ["bell", "zz"],
-      published: [1703],
       canonical: "1703",
     })
     .edition(
@@ -541,14 +532,12 @@ export const richCorpus = (): Record<string, string> =>
       surname: "Rich",
       birth: 1690,
       death: 1760,
-      published: 1700,
       nationality: "English",
       sex: "Female",
     })
     .work("rich", "anth", {
       title: "An Anthology",
       breadcrumb: "Anthology",
-      published: [1700, 1710],
       canonical: "1710",
     })
     .edition("rich", "anth", "1700", {
@@ -580,7 +569,6 @@ export const bigDiffCorpus = (): Record<string, string> =>
     .work("big", "tome", {
       title: "A Tome",
       breadcrumb: "Tome",
-      published: [1700, 1710],
       canonical: "1710",
     })
     .edition(
@@ -619,12 +607,11 @@ export const openableTwoAuthor = (): Record<string, string> => {
   const body = (line: string) =>
     `## 1\n\n[metadata]\ntitle = "S"\nbreadcrumb = "S"\n\n{#1}\n${line}`;
   return corpus()
-    .author("a", { forename: "Ann", surname: "Aa", published: 1700 })
-    .author("b", { forename: "Ben", surname: "Bb", published: 1710 })
+    .author("a", { forename: "Ann", surname: "Aa" })
+    .author("b", { forename: "Ben", surname: "Bb" })
     .work("a", "w", {
       title: "Wa",
       breadcrumb: "Wa",
-      published: [1700],
       canonical: "1700",
     })
     .edition("a", "w", "1700", {
@@ -636,7 +623,6 @@ export const openableTwoAuthor = (): Record<string, string> => {
     .work("b", "x", {
       title: "Xb",
       breadcrumb: "Xb",
-      published: [1710],
       canonical: "1710",
     })
     .edition("b", "x", "1710", {
@@ -655,7 +641,6 @@ export const emptyCorpus = (): Record<string, string> =>
     .work("void", "stub", {
       title: "An Untranscribed Work",
       breadcrumb: "Untranscribed",
-      published: [1700],
       canonical: "1700",
     })
     .edition("void", "stub", "1700", {
@@ -670,35 +655,36 @@ export const emptyCorpus = (): Record<string, string> =>
 
 /**
  * Sparse and irregular metadata, to drive the catalog's and renderer's
- * fallback branches: an author with a birth but no death and a single work; an
- * author with no metadata at all; a work whose index omits title/breadcrumb/
- * published; an edition with empty metadata; a year-named directory edition; a
- * work whose publication list is empty.
+ * fallback branches: an author with a birth but no death; an author with no
+ * metadata and no works (so no derived first-publication year); a work whose
+ * index omits title/breadcrumb; an edition whose metadata omits
+ * title/breadcrumb/imported; and a year-named directory edition.
  */
 export const metadataCorpus = (): Record<string, string> => {
   const section = '\n\n## 1\n\n[metadata]\ntitle = "S"\nbreadcrumb = "S"\n\n' +
     "{#1}\nA short sentence of text.";
   return corpus()
-    // birth but no death; nationality/sex/published set; a single work.
+    // birth but no death; nationality/sex set; a single work (so its derived
+    // first-publication year is 1700).
     .file(
       "data/authors/alpha.mit",
       '# alpha\n\n[metadata]\nforename = "Al"\nsurname = "Pha"\nbirth = 1700\n' +
-        'published = 1700\nnationality = "English"\nsex = "Male"\n',
+        'nationality = "English"\nsex = "Male"\n',
     )
-    // no metadata at all: forename/surname/published all absent.
+    // no metadata at all: forename/surname absent, and no works (so no derived
+    // first-publication year).
     .file("data/authors/min.mit", "# min\n")
-    // a death but no birth (the other side of the date-span fallback).
-    // published year ties with alpha, so the author sort falls to its slug
-    // tiebreak; the death-without-birth feeds the other date-span fallback.
+    // a death but no birth (the other side of the date-span fallback). Its work's
+    // year ties with alpha's, so the author sort falls to its slug tiebreak; the
+    // death-without-birth feeds the other date-span fallback.
     .file(
       "data/authors/gamma.mit",
-      '# gamma\n\n[metadata]\nforename = "Ga"\nsurname = "Mma"\ndeath = 1799\n' +
-        "published = 1700\n",
+      '# gamma\n\n[metadata]\nforename = "Ga"\nsurname = "Mma"\ndeath = 1799\n',
     )
     .file(
       "data/works/gamma/g/index.mit",
       '# gamma.g\n\n[metadata]\ntitle = "G"\nbreadcrumb = "G"\n' +
-        'published = [1700]\ncanonical = "1700"\n',
+        'canonical = "1700"\n',
     )
     .file(
       "data/works/gamma/g/1700.mit",
@@ -709,7 +695,7 @@ export const metadataCorpus = (): Record<string, string> => {
     .file(
       "data/works/alpha/a/index.mit",
       '# alpha.a\n\n[metadata]\ntitle = "A"\nbreadcrumb = "A"\n' +
-        'published = [1700]\ncanonical = "1700"\n',
+        'canonical = "1700"\n',
     )
     .file(
       "data/works/alpha/a/1700.mit",
@@ -723,32 +709,15 @@ export const metadataCorpus = (): Record<string, string> => {
     )
     // a non-.mit file inside the work folder (the edition scan ignores it).
     .file("data/works/alpha/a/readme.txt", "notes, not an edition")
-    // alpha/b and alpha/c: two works with empty publication lists, so the work
-    // sort compares two missing years (and a missing against a present one).
-    .file(
-      "data/works/alpha/b/index.mit",
-      '# alpha.b\n\n[metadata]\ntitle = "B"\nbreadcrumb = "B"\ncanonical = "1700"\n',
-    )
+    // alpha/b: an index that omits title/breadcrumb (the work-title fallback to
+    // its id), with an edition whose metadata omits title/breadcrumb/imported
+    // (those fallbacks too). Its year ties with alpha/a, so the work sort falls
+    // to the slug tiebreak. (min, by contrast, has no works at all — so the
+    // author keeps no derived first-publication year.)
+    .file("data/works/alpha/b/index.mit", "# alpha.b\n")
     .file(
       "data/works/alpha/b/1700.mit",
-      '# alpha.b.1700\n\n[metadata]\ntitle = "B"\nbreadcrumb = "B"\nimported = true' +
-        section,
-    )
-    .file(
-      "data/works/alpha/c/index.mit",
-      '# alpha.c\n\n[metadata]\ntitle = "C"\nbreadcrumb = "C"\ncanonical = "1700"\n',
-    )
-    .file(
-      "data/works/alpha/c/1700.mit",
-      '# alpha.c.1700\n\n[metadata]\ntitle = "C"\nbreadcrumb = "C"\nimported = true' +
-        section,
-    )
-    // min/w: index without title/breadcrumb/published; an edition with empty
-    // metadata (no title/breadcrumb/imported/published).
-    .file("data/works/min/w/index.mit", "# min.w\n")
-    .file(
-      "data/works/min/w/1700.mit",
-      "# min.w.1700\n\n[metadata]\n" + section,
+      "# alpha.b.1700\n\n[metadata]\npublished = [1700]" + section,
     )
     .build();
 };
@@ -761,11 +730,10 @@ export const metadataCorpus = (): Record<string, string> => {
  */
 export const emptyDocCorpus = (): Record<string, string> =>
   corpus()
-    .author("solid", { forename: "Sol", surname: "Id", published: 1700 })
+    .author("solid", { forename: "Sol", surname: "Id" })
     .work("solid", "real", {
       title: "Real",
       breadcrumb: "Real",
-      published: [1700],
       canonical: "1700",
     })
     .edition(
@@ -783,7 +751,6 @@ export const emptyDocCorpus = (): Record<string, string> =>
     .work("solid", "hollow", {
       title: "Hollow",
       breadcrumb: "Hollow",
-      published: [1710],
       canonical: "1710",
     })
     // imported (the metadata says so) but with no content blocks at all.
@@ -804,11 +771,10 @@ export const subsectionCompareCorpus = (): Record<string, string> => {
     `## 1\n\n[metadata]\ntitle = "One"\nbreadcrumb = "One"\n\n{#1}\nShared opening ${extra}.\n\n` +
     `### a\n\n[metadata]\ntitle = "Sub A"\nbreadcrumb = "Sub A"\n\n{#1}\nSubsection ${extra} text.`;
   return corpus()
-    .author("pair", { forename: "Pa", surname: "Ir", published: 1700 })
+    .author("pair", { forename: "Pa", surname: "Ir" })
     .work("pair", "w", {
       title: "Paired",
       breadcrumb: "Paired",
-      published: [1700, 1710],
       canonical: "1710",
     })
     .edition("pair", "w", "1700", {
@@ -837,11 +803,10 @@ export const vectorCorpus = (): Record<string, string> => {
   const sec = (words: string) =>
     `## 1\n\n[metadata]\ntitle = "S"\nbreadcrumb = "S"\n\n{#1}\n${words}`;
   return corpus()
-    .author("vec", { forename: "Vee", surname: "Ctor", published: 1700 })
+    .author("vec", { forename: "Vee", surname: "Ctor" })
     .work("vec", "target", {
       title: "T",
       breadcrumb: "T",
-      published: [1700],
       canonical: "1700",
     })
     .edition(
@@ -856,7 +821,6 @@ export const vectorCorpus = (): Record<string, string> => {
     .work("vec", "disjoint", {
       title: "D",
       breadcrumb: "D",
-      published: [1700],
       canonical: "1700",
     })
     .edition("vec", "disjoint", "1700", {
@@ -868,7 +832,6 @@ export const vectorCorpus = (): Record<string, string> => {
     .work("vec", "hollow", {
       title: "H",
       breadcrumb: "H",
-      published: [1700],
       canonical: "1700",
     })
     .edition("vec", "hollow", "1700", {
@@ -880,7 +843,6 @@ export const vectorCorpus = (): Record<string, string> => {
     .work("vec", "twinA", {
       title: "TA",
       breadcrumb: "TA",
-      published: [1700],
       canonical: "1700",
     })
     .edition("vec", "twinA", "1700", {
@@ -892,7 +854,6 @@ export const vectorCorpus = (): Record<string, string> => {
     .work("vec", "twinB", {
       title: "TB",
       breadcrumb: "TB",
-      published: [1700],
       canonical: "1700",
     })
     .edition("vec", "twinB", "1700", {
@@ -913,11 +874,10 @@ export const oneTopicCorpus = (): Record<string, string> => {
   const one =
     '## 1\n\n[metadata]\ntitle = "S"\nbreadcrumb = "S"\n\n{#1}\nphilosophy philosophy philosophy.';
   return corpus()
-    .author("one", { forename: "On", surname: "E", published: 1700 })
+    .author("one", { forename: "On", surname: "E" })
     .work("one", "a", {
       title: "A",
       breadcrumb: "A",
-      published: [1700],
       canonical: "1700",
     })
     .edition("one", "a", "1700", {
@@ -929,7 +889,6 @@ export const oneTopicCorpus = (): Record<string, string> => {
     .work("one", "b", {
       title: "B",
       breadcrumb: "B",
-      published: [1700],
       canonical: "1700",
     })
     .edition("one", "b", "1700", {
@@ -941,7 +900,6 @@ export const oneTopicCorpus = (): Record<string, string> => {
     .work("one", "c", {
       title: "C",
       breadcrumb: "C",
-      published: [1700],
       canonical: "1700",
     })
     .edition("one", "c", "1700", {
@@ -963,9 +921,9 @@ export const sectionSimilarCorpus = (): Record<string, string> => {
     `# ${id}\n\n[metadata]\ntitle = "W"\nbreadcrumb = "W"\nimported = true\n` +
     `published = [1700]\n\n## 1\n\n[metadata]\n${title}breadcrumb = "x"\n\n{#1}\n${words}`;
   const idx = (id: string) =>
-    `# ${id}\n\n[metadata]\ntitle = "W"\nbreadcrumb = "W"\npublished = [1700]\ncanonical = "1700"\n`;
+    `# ${id}\n\n[metadata]\ntitle = "W"\nbreadcrumb = "W"\ncanonical = "1700"\n`;
   return corpus()
-    .author("sec", { forename: "Se", surname: "C", published: 1700 })
+    .author("sec", { forename: "Se", surname: "C" })
     .file("data/works/sec/tgt/index.mit", idx("sec.tgt"))
     .file(
       "data/works/sec/tgt/1700.mit",

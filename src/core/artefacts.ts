@@ -137,9 +137,12 @@ export type ArtefactFiles = Map<string, Uint8Array>;
 /* ------------------------------- types ------------------------------- */
 
 export type EditionRef = {
-  /** The work's author slugs, in title order; [0] is the primary (host). */
+  /** The work's author slugs, in title order — the people who wrote it. */
   authors: string[];
   authorNames: string[]; // surnames, parallel to `authors`, for display
+  /** The work's identity slug for paths/URLs (joint, e.g. "astell-norris", for
+   * a co-authored work). Not itself an author. */
+  hostSlug: string;
   work: string;
   workBreadcrumb: string;
   edition: string; // a year slug

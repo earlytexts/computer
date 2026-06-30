@@ -114,7 +114,7 @@ const authorMeta = (author: Author): AuthorMeta => ({
   title: author.title,
   birth: author.birth,
   death: author.death,
-  published: author.published,
+  firstPublished: author.firstPublished,
   nationality: author.nationality,
   sex: author.sex,
 });
@@ -127,18 +127,18 @@ const editionMeta = (edition: Edition): EditionMeta => ({
   breadcrumb: edition.breadcrumb,
   imported: edition.imported,
   published: edition.published,
-  copytext: edition.copytext,
   sourceUrl: edition.sourceUrl,
   sourceDesc: edition.sourceDesc,
 });
 
 const workMeta = (work: Work): WorkMeta => ({
   authorSlugs: work.authorSlugs,
+  hostSlug: work.hostSlug,
   slug: work.slug,
   title: work.title,
   breadcrumb: work.breadcrumb,
   imported: work.imported,
-  published: work.published,
+  firstPublished: work.firstPublished,
   canonicalSlug: work.canonicalSlug,
   standalone: work.standalone,
   editions: work.editions.map(editionMeta),
@@ -529,12 +529,13 @@ export const buildArtefacts = (
       seenWorks.add(work);
       for (const edition of work.editions) {
         editionIndex.set(
-          `${work.authorSlugs[0]}/${work.slug}/${edition.slug}`,
+          `${work.hostSlug}/${work.slug}/${edition.slug}`,
           editionRefs.length,
         );
         editionRefs.push({
           authors: work.authorSlugs,
           authorNames: work.authorSlugs.map((s) => surnameOf.get(s)!),
+          hostSlug: work.hostSlug,
           work: work.slug,
           workBreadcrumb: work.breadcrumb,
           edition: edition.slug,
@@ -621,7 +622,7 @@ export const buildArtefacts = (
 
   eachUnit(catalog, (work, edition, sectionPath, sectionTitle, block) => {
     const editionIdx = editionIndex.get(
-      `${work.authorSlugs[0]}/${work.slug}/${edition.slug}`,
+      `${work.hostSlug}/${work.slug}/${edition.slug}`,
     )!;
     let acc = accumulators.get(editionIdx);
     if (acc === undefined) {

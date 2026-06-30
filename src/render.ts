@@ -142,9 +142,9 @@ export const renderAuthors = (authors: CatalogAuthor[]): string =>
     const facts = [
       author.nationality,
       author.sex,
-      author.published === undefined
+      author.firstPublished === undefined
         ? undefined
-        : `first published ${author.published}`,
+        : `first published ${author.firstPublished}`,
       `${author.works.length} work${author.works.length === 1 ? "" : "s"}`,
     ].filter((part) => part !== undefined).join(", ");
     // facts always carries at least the work count, so it is never empty.
@@ -158,7 +158,7 @@ const renderEditionMeta = (edition: EditionMeta, canonical: string): string =>
   `${edition.imported ? "" : " [stub]"}`;
 
 const renderWorkMeta = (work: WorkMeta): string =>
-  `${work.slug} — ${work.title} (${work.published.join(", ")})` +
+  `${work.slug} — ${work.title} (${work.firstPublished})` +
   `${work.imported ? "" : " [stub]"}\n` +
   `  editions: ${
     work.editions.map((e) => renderEditionMeta(e, work.canonicalSlug)).join(
@@ -199,8 +199,7 @@ const editionHeader = (
   `${response.edition.imported ? "" : " [stub]"}`;
 
 export const renderEdition = (response: EditionResponse): string =>
-  `${editionHeader(response)}\n` +
-  `Copytext: ${response.edition.copytext.join("; ") || "n/a"}\n\n` +
+  `${editionHeader(response)}\n\n` +
   (response.blocks.length === 0 ? "" : `${renderBlocks(response.blocks)}\n\n`) +
   `Sections (path — title):\n${renderToc(response.sections, 0)}`;
 
@@ -259,8 +258,7 @@ const renderSectionContent = (section: SectionContent): string => {
 };
 
 export const renderFullText = (response: FullTextResponse): string =>
-  `${editionHeader(response)}\n` +
-  `Copytext: ${response.edition.copytext.join("; ") || "n/a"}\n\n` +
+  `${editionHeader(response)}\n\n` +
   (response.blocks.length === 0 ? "" : `${renderBlocks(response.blocks)}\n\n`) +
   response.sections.map(renderSectionContent).join("\n\n");
 

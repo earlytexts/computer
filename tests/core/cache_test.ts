@@ -37,11 +37,12 @@ Deno.test("loadCatalog reconstructs the catalog, incl. metadata-less docs", asyn
         works: {
           "a/w": {
             authorSlugs: ["a"],
+            hostSlug: "a",
             slug: "w",
             title: "W",
             breadcrumb: "W",
             imported: true,
-            published: [1700],
+            firstPublished: 1700,
             canonicalSlug: "1700",
             standalone: true,
             dir: "data/works/a/w",
@@ -53,7 +54,6 @@ Deno.test("loadCatalog reconstructs the catalog, incl. metadata-less docs", asyn
               breadcrumb: "W",
               imported: true,
               published: [1700],
-              copytext: [],
               docKey: "a/w/1700",
               source: "data/works/a/w/1700.mit",
             }],
@@ -93,7 +93,7 @@ Deno.test("a changed corpus is rebuilt", async () => {
   assertEquals(harness.state.builds, 1);
   // add a corpus file: the scan's file count changes, so the cache is stale
   harness.files[`${CORPUS_ROOT}/data/authors/extra.mit`] =
-    `# extra\n\n[metadata]\nforename = "Ex"\nsurname = "Tra"\npublished = 1700\n`;
+    `# extra\n\n[metadata]\nforename = "Ex"\nsurname = "Tra"\n`;
   const { computer } = await openComputer(harness.io, PATHS);
   assertEquals(harness.state.builds, 2);
   // the rebuild used the fresh corpus

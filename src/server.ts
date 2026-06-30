@@ -25,7 +25,11 @@
  *
  * After the work, a year-shaped segment (four digits, optional letter, e.g.
  * `1772` or `1742a`) names a specific edition; without one the path addresses
- * the work's canonical edition. Everything else is a section path. On the
+ * the work's canonical edition. Everything else is a section path. Inside a
+ * collection edition a borrowed work is a section like any other, addressed by
+ * its work slug (`/authors/hume/etss/1777/empl1/dt/...`), so the borrowed text
+ * is readable in its collection context — with that collection's navigation —
+ * as well as on its own at `/authors/hume/empl1/...`. On the
  * universe-filter routes (search, frequency, concordance, keywords,
  * collocations) the edition scope is two orthogonal params: `editions`
  * (canonical, the default, or `all`) chooses the universe across works, while

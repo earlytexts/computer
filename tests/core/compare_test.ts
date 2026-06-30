@@ -1,7 +1,7 @@
 /**
  * computer.compare / computer.compareSection — aligning two editions' section
- * lists, and the word-level Markit diff of one section (deletions for text only
- * in A, insertions for text only in B), plus not-found.
+ * lists, and the word-level Markit diff of one section (insertions for text only
+ * in A, deletions for text only in B), plus not-found.
  */
 
 import { assert, assertEquals } from "@std/assert";
@@ -31,20 +31,20 @@ Deno.test("compare of a section is a word-level Markit diff", async () => {
   assertEquals(compared?.version, "edited");
   assertEquals(compared?.aPath, ["1"]);
   assertEquals(compared?.bPath, ["1"]);
-  // a→1750, b→1760: words only in 1750 are deletions, those only in 1760 are
-  // insertions.
+  // a→1750, b→1760: A is the primary edition, so words only in 1750 are
+  // insertions and those only in 1760 are deletions.
   const deletions = (compared?.blocks ?? []).flatMap((b) =>
     ofType(b.content, "deletion")
   );
   const insertions = (compared?.blocks ?? []).flatMap((b) =>
     ofType(b.content, "insertion")
   );
-  assert(deletions.some((t) => t.includes("betwixt")));
-  assert(insertions.some((t) => t.includes("between")));
-  assert(deletions.some((t) => t.includes("encrease")));
-  assert(insertions.some((t) => t.includes("increase")));
-  // a paragraph only in 1750 is wrapped whole as a deletion
-  assert(deletions.some((t) => t.includes("only in the seventeen-fifty")));
+  assert(insertions.some((t) => t.includes("betwixt")));
+  assert(deletions.some((t) => t.includes("between")));
+  assert(insertions.some((t) => t.includes("encrease")));
+  assert(deletions.some((t) => t.includes("increase")));
+  // a paragraph only in 1750 is wrapped whole as an insertion
+  assert(insertions.some((t) => t.includes("only in the seventeen-fifty")));
 });
 
 Deno.test("comparing an edition with itself resolves to undefined", async () => {

@@ -68,7 +68,7 @@ export { aggregateMix } from "./topics.ts";
 
 /* diff, edition comparison, concordance */
 export { diffBlocks, diffToBlocks } from "./diff.ts";
-export { alignSections, findSectionByKey, pathKey } from "./compare.ts";
+export { alignSections, findSectionByKey } from "./compare.ts";
 export type { AlignedSection, SectionNode } from "./compare.ts";
 export { compareLines, lineParts } from "./concordance.ts";
 export type { Sort } from "./concordance.ts";

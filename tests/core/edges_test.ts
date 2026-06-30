@@ -102,11 +102,10 @@ Deno.test("topicMix: a stub target within a real model aggregates an empty mix",
   const body = (line: string) =>
     `## 1\n\n[metadata]\ntitle = "S"\nbreadcrumb = "S"\n\n{#1}\n${line}`;
   const mixed = corpus()
-    .author("m", { forename: "Mae", surname: "Mm", published: 1700 })
+    .author("m", { forename: "Mae", surname: "Mm" })
     .work("m", "real", {
       title: "R",
       breadcrumb: "R",
-      published: [1700],
       canonical: "1700",
     })
     .edition("m", "real", "1700", {
@@ -118,7 +117,6 @@ Deno.test("topicMix: a stub target within a real model aggregates an empty mix",
     .work("m", "ghost", {
       title: "G",
       breadcrumb: "G",
-      published: [1700],
       canonical: "1700",
     })
     .edition("m", "ghost", "1700", {

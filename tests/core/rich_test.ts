@@ -46,13 +46,14 @@ Deno.test("rich: a section comparison diffs one changed paragraph and marks whol
     ["1"],
   );
   assert(diff !== undefined);
-  // The changed paragraph: ALPHA only in A (deletion), OMEGA only in B.
+  // The changed paragraph: ALPHA only in A (insertion), OMEGA only in B
+  // (deletion) — A is the primary edition, so its text is the insertion side.
   assertEquals(
-    ofType(diff.blocks, "deletion").join(" ").includes("ALPHA"),
+    ofType(diff.blocks, "insertion").join(" ").includes("ALPHA"),
     true,
   );
   assertEquals(
-    ofType(diff.blocks, "insertion").join(" ").includes("OMEGA"),
+    ofType(diff.blocks, "deletion").join(" ").includes("OMEGA"),
     true,
   );
   // The equal run kept its inline formatting (emphasis, strong, foreign run).
@@ -61,8 +62,8 @@ Deno.test("rich: a section comparison diffs one changed paragraph and marks whol
   assert(equalText.includes("ipsa loquitur"));
   // The whole block present in only one edition is wrapped end to end —
   // including its list and table cells (the A-only block, the B-only block).
-  assert(ofType(diff.blocks, "deletion").some((t) => t.includes("alpha")));
-  assert(ofType(diff.blocks, "insertion").some((t) => t.includes("Apple")));
+  assert(ofType(diff.blocks, "insertion").some((t) => t.includes("alpha")));
+  assert(ofType(diff.blocks, "deletion").some((t) => t.includes("Apple")));
 
   // A section has a neighbour present in both editions (prev/next can't 404).
   assert(diff.next !== undefined || diff.prev !== undefined);
@@ -80,11 +81,13 @@ Deno.test("rich: a section comparison word-diffs paragraphs with edits and inser
   assert(diff !== undefined);
   const deleted = ofType(diff.blocks, "deletion").join(" ");
   const inserted = ofType(diff.blocks, "insertion").join(" ");
-  // {#myers}: common subsequence with edits on both sides.
-  assert(deleted.includes("beta"));
-  assert(inserted.includes("zeta"));
-  // {#ins}: a word inserted in the middle (the second edition's "two").
-  assert(inserted.includes("two"));
+  // {#myers}: common subsequence with edits on both sides. A is the primary
+  // edition (insertion side), so its "beta" is an insertion and B's "zeta" a
+  // deletion.
+  assert(inserted.includes("beta"));
+  assert(deleted.includes("zeta"));
+  // {#ins}: a word only in the second edition ("two") shows as a deletion.
+  assert(deleted.includes("two"));
   // The unchanged lemma paragraph survives whole (an equal block).
   assert(textOf(diff.blocks).includes("running"));
 });
@@ -155,8 +158,10 @@ Deno.test("big diff: a wholly disjoint block falls back to delete-all/insert-all
     "1",
   ]);
   assert(diff !== undefined);
-  assert(ofType(diff.blocks, "deletion").some((t) => t.includes("alpha0")));
-  assert(ofType(diff.blocks, "insertion").some((t) => t.includes("omega0")));
+  // A (1700, "alpha") is the primary edition, so its text is the insertion side
+  // and B (1710, "omega") the deletion side.
+  assert(ofType(diff.blocks, "insertion").some((t) => t.includes("alpha0")));
+  assert(ofType(diff.blocks, "deletion").some((t) => t.includes("omega0")));
 });
 
 /** Every block under a section content node, depth-first. */

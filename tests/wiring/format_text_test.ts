@@ -71,8 +71,9 @@ Deno.test("text: a comparison renders the diff and the section alignment", async
   const text = await richText();
   const section = await text("/authors/rich/anth/compare/1700/1710/1");
   assertStringIncludes(section, 'edition "1700" vs edition "1710"');
-  assertStringIncludes(section, "[- ALPHA-]");
-  assertStringIncludes(section, "{+ OMEGA+}");
+  // 1700 is the primary edition (insertion side); 1710 the deletion side.
+  assertStringIncludes(section, "{+ ALPHA+}");
+  assertStringIncludes(section, "[- OMEGA-]");
   const work = await text("/authors/rich/anth/compare/1700/1710");
   assertStringIncludes(work, "aligned with edition");
   assertStringIncludes(work, "ONLY IN");

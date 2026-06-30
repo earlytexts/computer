@@ -33,7 +33,6 @@ import {
   matchRanges,
   occurrences,
   parseQuery,
-  pathKey,
   REFERENCE,
   resolveBlock,
   search,
@@ -164,12 +163,12 @@ const alignedRow = (row: AlignedSection): AlignedRow => ({
 const matchingEditions = (
   work: WorkEntry,
   exclude: EditionEntry[],
-  keys: string[],
+  path: string[],
 ): EditionSection[] =>
   work.editions
     .filter((other) => !exclude.includes(other))
     .flatMap((other) => {
-      const match = findSectionByKey(other.sections, keys);
+      const match = findSectionByKey(other.sections, path);
       return match === undefined
         ? []
         : [{ slug: other.meta.slug, path: match.path }];
@@ -279,7 +278,7 @@ export const sectionResponse = async (
     ancestors,
     prev,
     next,
-    compareEditions: matchingEditions(work, [edition], pathKey(section.path)),
+    compareEditions: matchingEditions(work, [edition], section.path),
   };
 };
 
@@ -304,7 +303,7 @@ export const sectionFullTextResponse = async (
     ancestors,
     prev,
     next,
-    compareEditions: matchingEditions(work, [edition], pathKey(skeleton.path)),
+    compareEditions: matchingEditions(work, [edition], skeleton.path),
   };
 };
 
@@ -338,9 +337,8 @@ export const compareSectionResponse = async (
   const a = findEditionEntry(work, aSlug);
   const b = findEditionEntry(work, bSlug);
   if (a === undefined || b === undefined || a === b) return undefined;
-  const keys = pathKey(path);
-  const sectionA = findSectionByKey(a.sections, keys);
-  const sectionB = findSectionByKey(b.sections, keys);
+  const sectionA = findSectionByKey(a.sections, path);
+  const sectionB = findSectionByKey(b.sections, path);
   if (sectionA === undefined || sectionB === undefined) return undefined;
   const [blocksA, blocksB] = await Promise.all([
     store.blocks(sectionA.units),
@@ -348,15 +346,18 @@ export const compareSectionResponse = async (
   ]);
   // Resolve each edition to the chosen version first, then diff: the markup
   // in the result expresses the A↔B difference, not either edition's own
-  // corrections (which the resolution has already applied).
+  // corrections (which the resolution has already applied). A is the primary
+  // edition being viewed, so it takes the insertion side (and B the deletion
+  // side): diffBlocks marks text only in its first argument as deletions, so B
+  // goes first and A second.
   const diffs = diffBlocks(
-    blocksA.map((block) => resolveBlock(block, version)),
     blocksB.map((block) => resolveBlock(block, version)),
+    blocksA.map((block) => resolveBlock(block, version)),
   );
 
   // Other editions of the work that also contain this section, for switching
   // either side of the comparison.
-  const compareEditions = matchingEditions(work, [a, b], keys);
+  const compareEditions = matchingEditions(work, [a, b], path);
 
   // Step through edition A's reading order to the nearest neighbour that also
   // exists in edition B, so the next/prev comparison can never 404.
@@ -367,7 +368,7 @@ export const compareSectionResponse = async (
   const neighbourInBoth = (step: number): SectionRef | undefined => {
     for (let i = index + step; i >= 0 && i < flatA.length; i += step) {
       const candidate = flatA[i];
-      if (findSectionByKey(b.sections, pathKey(candidate.path)) !== undefined) {
+      if (findSectionByKey(b.sections, candidate.path) !== undefined) {
         return sectionRef(candidate);
       }
     }
@@ -456,6 +457,7 @@ const citation = (artefacts: ServeArtefacts, unitIndex: number) => {
   return {
     authors: ref.authors,
     authorNames: ref.authorNames,
+    hostSlug: ref.hostSlug,
     work: ref.work,
     workBreadcrumb: ref.workBreadcrumb,
     edition: ref.edition,
@@ -514,19 +516,21 @@ export const frequencyResponse = (
     tokens: number;
     label: string;
     authors: string[];
+    hostSlug: string | null;
     work: string;
     edition: string | null;
   };
   const groups = new Map<string, GroupData>();
 
   // The groups an edition feeds. Grouping by author splits a co-authored edition
-  // across each of its authors (one row apiece); grouping by work/edition keys on
-  // the work's primary author, so the work stays a single row carrying all its
-  // authors.
+  // across each of its authors (one row apiece, no single work named); grouping
+  // by work/edition keys on the work's host slug, so the work stays a single row
+  // carrying all its authors.
   type Contribution = {
     key: string;
     label: string;
     authors: string[];
+    hostSlug: string | null;
     work: string;
     edition: string | null;
   };
@@ -538,17 +542,19 @@ export const frequencyResponse = (
         key: slug,
         label: ref.authorNames[i],
         authors: [slug],
+        hostSlug: null,
         work: ref.work,
         edition: null,
       }))
       : [{
         key: groupBy === "edition"
-          ? `${ref.authors[0]}/${ref.work}/${ref.edition}`
-          : `${ref.authors[0]}/${ref.work}`,
+          ? `${ref.hostSlug}/${ref.work}/${ref.edition}`
+          : `${ref.hostSlug}/${ref.work}`,
         label: groupBy === "edition"
           ? `${ref.workBreadcrumb} (${ref.edition})`
           : ref.workBreadcrumb,
         authors: ref.authors,
+        hostSlug: ref.hostSlug,
         work: ref.work,
         edition: groupBy === "edition" ? ref.edition : null,
       }];
@@ -564,6 +570,7 @@ export const frequencyResponse = (
           tokens: 0,
           label: c.label,
           authors: c.authors,
+          hostSlug: c.hostSlug,
           work: c.work,
           edition: c.edition,
         });
@@ -592,6 +599,7 @@ export const frequencyResponse = (
     .map((g) => ({
       label: g.label,
       authors: g.authors,
+      hostSlug: g.hostSlug,
       work: g.work,
       edition: g.edition,
       count: g.count,
@@ -939,7 +947,7 @@ export const similarResponse = async (
       continue;
     }
     const key = level === "work"
-      ? `${ref.authors[0]}/${ref.work}`
+      ? `${ref.hostSlug}/${ref.work}`
       : level === "edition"
       ? `${dtm.docs[d].edition}`
       : `${d}`;
@@ -952,6 +960,7 @@ export const similarResponse = async (
       labels.push({
         authors: ref.authors,
         authorNames: ref.authorNames,
+        hostSlug: ref.hostSlug,
         work: ref.work,
         workBreadcrumb: ref.workBreadcrumb,
         edition: level === "work" ? null : ref.edition,
@@ -1040,6 +1049,7 @@ export const topicsResponse = async (
   const labels: {
     authors: string[];
     authorNames: string[];
+    hostSlug: string;
     work: string;
     workBreadcrumb: string;
     edition: string;
@@ -1048,7 +1058,7 @@ export const topicsResponse = async (
   for (let d = 0; d < model.docs.length; d++) {
     const ref = manifest.editions[model.docs[d].edition];
     if (!ref.canonical) continue;
-    const key = `${ref.authors[0]}/${ref.work}`;
+    const key = `${ref.hostSlug}/${ref.work}`;
     let g = groupOf.get(key);
     if (g === undefined) {
       g = groupDocs.length;
@@ -1057,6 +1067,7 @@ export const topicsResponse = async (
       labels.push({
         authors: ref.authors,
         authorNames: ref.authorNames,
+        hostSlug: ref.hostSlug,
         work: ref.work,
         workBreadcrumb: ref.workBreadcrumb,
         edition: ref.edition,

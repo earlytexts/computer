@@ -1,7 +1,10 @@
 /**
  * Helpers for comparing two editions of a work: matching up their section
- * trees so that e.g. section "dt" of EMPL1 1741 pairs with "dt" of 1777,
- * and (in composite editions) "empl1-1758" pairs with "empl1-1777".
+ * trees so that e.g. section "dt" of EMPL1 1741 pairs with "dt" of 1777, and a
+ * borrowed work pairs with itself across collection printings. Section slugs are
+ * edition-independent by construction — inline sections keep their position slug
+ * and a borrowed work keeps its work slug (see `childSlug`) — so a section's slug
+ * path is its cross-edition key directly, with no normalisation needed.
  */
 
 import { diffTokens } from "./diff.ts";
@@ -18,21 +21,15 @@ export type SectionNode = {
   children: SectionNode[];
 };
 
-/** Key used to match sections across editions of the same work. */
-export const sectionKey = (slug: string): string =>
-  slug.replace(/-\d{4}[a-z]?$/, "");
-
-export const pathKey = (path: string[]): string[] => path.map(sectionKey);
-
-/** Find a section by a key path (edition-independent path). */
+/** Find a section by its slug path (the same path identifies it in any edition). */
 export const findSectionByKey = <T extends SectionNode>(
   sections: T[],
-  keyPath: string[],
+  path: string[],
 ): T | undefined => {
   let current = sections;
   let found: T | undefined;
-  for (const key of keyPath) {
-    found = current.find((s) => sectionKey(s.slug) === key);
+  for (const slug of path) {
+    found = current.find((s) => s.slug === slug);
     if (found === undefined) return undefined;
     current = found.children as T[];
   }
@@ -56,7 +53,7 @@ export const alignSections = (
   b: SectionNode[],
 ): AlignedSection[] => {
   const keys = (sections: SectionNode[]) =>
-    sections.map((s) => ({ text: sectionKey(s.slug), spaced: false }));
+    sections.map((s) => ({ text: s.slug, spaced: false }));
   const aligned: AlignedSection[] = [];
   let ai = 0;
   let bi = 0;
@@ -66,7 +63,7 @@ export const alignSections = (
         const sa = a[ai++];
         const sb = b[bi++];
         aligned.push({
-          key: sectionKey(sb.slug),
+          key: sb.slug,
           title: sb.title,
           a: sa,
           b: sb,
@@ -75,7 +72,7 @@ export const alignSections = (
       } else if (op.type === "delete") {
         const sa = a[ai++];
         aligned.push({
-          key: sectionKey(sa.slug),
+          key: sa.slug,
           title: sa.title,
           a: sa,
           children: alignSections(sa.children, []),
@@ -83,7 +80,7 @@ export const alignSections = (
       } else {
         const sb = b[bi++];
         aligned.push({
-          key: sectionKey(sb.slug),
+          key: sb.slug,
           title: sb.title,
           b: sb,
           children: alignSections([], sb.children),

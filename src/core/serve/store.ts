@@ -267,11 +267,6 @@ export const findAuthorEntry = (
 ): AuthorEntry | undefined =>
   catalog.authors.find((a) => a.meta.slug === authorSlug);
 
-export const findWorkEntry = (
-  author: AuthorEntry,
-  workSlug: string,
-): WorkEntry | undefined => author.works.find((w) => w.meta.slug === workSlug);
-
 export const findEditionEntry = (
   work: WorkEntry,
   editionSlug: string,

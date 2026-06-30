@@ -27,11 +27,12 @@ Deno.test("an explicit edition slug overrides the canonical default", async () =
 Deno.test("a composite edition resolves cross-work children in order", async () => {
   const computer = await testComputer();
   // comp borrows tw's 1750 text via an angle-bracket placeholder, then adds its
-  // own inline section — the two mix in file order.
+  // own inline section — the two mix in file order. A borrowed work is slugged by
+  // its work slug ("tw"), not its full edition id.
   const edition = await computer.edition("test", "comp");
-  assertEquals(edition?.sections.map((s) => s.slug), ["test-tw-1750", "in"]);
-  // its scalar copytext was coerced to a one-element list.
-  assertEquals(edition?.edition.copytext, ["1750"]);
+  assertEquals(edition?.sections.map((s) => s.slug), ["tw", "in"]);
+  // its scalar published year was coerced to a one-element list.
+  assertEquals(edition?.edition.published, [1755]);
 });
 
 Deno.test("full text includes every section's blocks", async () => {

@@ -35,11 +35,12 @@ Deno.test("a stub section reports imported = false", async () => {
 
 Deno.test("borrowed section text is reachable through the composite", async () => {
   const computer = await testComputer();
+  // The borrowed work is addressed by its work slug within the collection.
   const borrowed = await computer.sectionFullText(
     "test",
     "comp",
     undefined,
-    ["test-tw-1750"],
+    ["tw"],
   );
   assert((borrowed?.section.blocks.length ?? 0) > 0);
 });

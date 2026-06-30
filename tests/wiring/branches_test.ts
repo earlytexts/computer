@@ -50,10 +50,10 @@ Deno.test("text: sparse author/work/edition metadata renders with fallbacks", as
   const works = await text("/authors/alpha/a");
   assertStringIncludes(works, "edition");
 
-  // The catalog resolved the work whose index omits title/breadcrumb/published,
-  // and the edition with empty metadata, without crashing.
-  const minWorks = await text("/authors/min/w");
-  assert(minWorks.length > 0);
+  // The catalog resolved the work whose index omits title/breadcrumb, and the
+  // edition whose metadata omits title/breadcrumb/imported, without crashing.
+  const sparseWork = await text("/authors/alpha/b");
+  assert(sparseWork.length > 0);
 
   // An edition with no edition-level blocks (text lives in its sections only):
   // both the edition view and the full-text view skip the empty block region.

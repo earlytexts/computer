@@ -8,9 +8,11 @@
  * word-diffed individually.
  *
  * The diff is an internal representation. `diffToBlocks` turns it into a
- * regular Markit document — words and whole blocks only in edition A wrapped
- * in `deletion`, those only in B in `insertion` — so the API serves a diff
- * as ordinary blocks and clients render it with no diff-specific logic.
+ * regular Markit document — words and whole blocks only in the first argument
+ * wrapped in `deletion`, those only in the second in `insertion` — so the API
+ * serves a diff as ordinary blocks and clients render it with no diff-specific
+ * logic. (compareSection passes the primary edition second so its text is the
+ * insertion side; see api.ts.)
  */
 
 import type {

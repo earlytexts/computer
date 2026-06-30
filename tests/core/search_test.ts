@@ -188,7 +188,6 @@ Deno.test("BM25 ranking saturates term frequency and normalises by length", asyn
   const meta = (slug: string) => ({
     title: slug,
     breadcrumb: slug,
-    published: [1700],
     canonical: "1700",
   });
   const ed = (slug: string) => ({
@@ -198,7 +197,7 @@ Deno.test("BM25 ranking saturates term frequency and normalises by length", asyn
     published: [1700],
   });
   const files = corpus()
-    .author("z", { forename: "Z", surname: "Zed", published: 1700 })
+    .author("z", { forename: "Z", surname: "Zed" })
     .work("z", "sparse", meta("sparse"))
     .edition(
       "z",

@@ -27,27 +27,26 @@ Deno.test("a co-authored work is listed under each of its authors", async () => 
   assertEquals(dee.works.map((w) => w.slug), ["corr"]);
 });
 
-Deno.test("a co-authored work resolves under either author", async () => {
+Deno.test("a co-authored work resolves under its joint host, not under either author", async () => {
   const { computer } = await coComputer();
-  const viaBell = await computer.edition("bell", "corr");
-  const viaDee = await computer.edition("dee", "corr");
-  assert(viaBell !== undefined);
-  assert(viaDee !== undefined);
-  // Both views carry both authors, in title order, with their metadata.
-  for (const edition of [viaBell, viaDee]) {
-    assertEquals(edition!.authors.map((a) => a.slug), ["bell", "dee"]);
-    assertEquals(edition!.authors.map((a) => a.surname), ["Bell", "Dee"]);
-  }
+  // The joint host ("bell-dee") is the work's one identity and URL.
+  const viaHost = await computer.edition("bell-dee", "corr");
+  assert(viaHost !== undefined);
+  assertEquals(viaHost!.authors.map((a) => a.slug), ["bell", "dee"]);
+  assertEquals(viaHost!.authors.map((a) => a.surname), ["Bell", "Dee"]);
+  // It is not reachable under either author individually.
+  assertEquals(await computer.edition("bell", "corr"), undefined);
+  assertEquals(await computer.edition("dee", "corr"), undefined);
 });
 
 Deno.test("each letter is attributed to its own author", async () => {
   const { computer } = await coComputer();
-  const edition = await computer.edition("bell", "corr");
+  const edition = await computer.edition("bell-dee", "corr");
   // Section summaries cascade the per-letter `authors` override.
   assertEquals(edition!.sections.map((s) => s.authors), [["bell"], ["dee"]]);
 
-  const letter1 = await computer.section("bell", "corr", undefined, ["1"]);
-  const letter2 = await computer.section("dee", "corr", undefined, ["2"]);
+  const letter1 = await computer.section("bell-dee", "corr", undefined, ["1"]);
+  const letter2 = await computer.section("bell-dee", "corr", undefined, ["2"]);
   assertEquals(letter1!.section.authors, ["bell"]);
   assertEquals(letter2!.section.authors, ["dee"]);
 });
@@ -93,7 +92,7 @@ Deno.test("naming a co-author with no author file warns but still builds", async
   const built = await buildArtefactsToDisk(harness.io, CORPUS_ROOT, "memory");
   assert(
     built.manifest.warnings.some((w) =>
-      w.includes("co-author") && w.includes("zz")
+      w.includes("zz") && w.includes("data/authors/zz.mit")
     ),
     "expected a phantom co-author warning",
   );

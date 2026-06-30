@@ -12,10 +12,10 @@ import {
   type DtmStore,
   findAuthorEntry,
   findEditionEntry,
-  findWorkEntry,
   type TokenStore,
   type TopicsStore,
 } from "./store.ts";
+import type { WorkEntry } from "../artefacts.ts";
 import {
   catalogResponse,
   collocationsResponse,
@@ -45,16 +45,23 @@ export const localComputer = (
   dtm: DtmStore,
   topics: TopicsStore,
 ): Computer => {
-  // Resolve a work entry by any of its authors, and the full list of its authors
-  // (so a co-authored work resolves under either, and every response carries
-  // both). Slugs are lowercased to match the HTTP routes (server.ts lowercases
-  // every path segment).
-  const authorWork = (author: string, work: string) => {
-    const authorEntry = findAuthorEntry(artefacts.catalog, lower(author));
-    const workEntry = authorEntry === undefined
-      ? undefined
-      : findWorkEntry(authorEntry, lower(work));
-    if (authorEntry === undefined || workEntry === undefined) return undefined;
+  // Every work keyed by its host path `<hostSlug>/<workSlug>` — a single author's
+  // slug, or a joint slug ("astell-norris") for a co-authored work. This is the
+  // one URL a work lives at; the co-authored work is reached only by its joint
+  // host, not under either author.
+  const byHost = new Map<string, WorkEntry>();
+  for (const a of artefacts.catalog.authors) {
+    for (const w of a.works) {
+      byHost.set(`${w.meta.hostSlug}/${w.meta.slug}`, w);
+    }
+  }
+
+  // Resolve a work by its host path, and the full list of its authors (so every
+  // response carries them). Slugs are lowercased to match the HTTP routes
+  // (server.ts lowercases every path segment).
+  const authorWork = (host: string, work: string) => {
+    const workEntry = byHost.get(`${lower(host)}/${lower(work)}`);
+    if (workEntry === undefined) return undefined;
     // The work's authors, mapped to their metadata for the response; every slug
     // names a catalog author (the build registered the work under each).
     const authors = workEntry.meta.authorSlugs.map(

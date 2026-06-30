@@ -22,7 +22,9 @@ export type Author = {
   title?: string; // honorific, e.g. "Lord Kames"
   birth?: number;
   death?: number;
-  published?: number; // year of first publication; used for ordering
+  /** Earliest `firstPublished` across the author's works (derived by the
+   * corpus); undefined if they have none. Used for ordering. */
+  firstPublished?: number;
   nationality?: string;
   sex?: string;
   works: Work[]; // ascending by first publication year
@@ -37,7 +39,6 @@ export type Edition = {
   breadcrumb: string;
   imported: boolean;
   published: number[];
-  copytext: string[];
   sourceUrl?: string;
   sourceDesc?: string;
   document: MarkitDocument;
@@ -45,16 +46,22 @@ export type Edition = {
 
 export type Work = {
   /**
-   * Author slugs, in title order. [0] is the host — the directory the work
-   * lives in and the primary author used for the artefact path and identity.
-   * A co-authored work is registered under every slug here.
+   * Author slugs, in title order — the people who wrote it. The work is
+   * registered under every slug here. For its identity/path, see `hostSlug`.
    */
   authorSlugs: string[];
+  /**
+   * Identity slug: the directory the work lives in, used for its artefact path
+   * and URL. A single author's slug, or a joint slug ("astell-norris") for a
+   * co-authored work — which is not itself an author.
+   */
+  hostSlug: string;
   slug: string;
   title: string;
   breadcrumb: string;
   imported: boolean;
-  published: number[];
+  /** Earliest publication year across all editions (derived by the corpus). */
+  firstPublished: number;
   canonicalSlug: string; // slug of the canonical (default) edition
   /**
    * Whether the work appears as its own text in UI indexes. A work borrowed
@@ -111,7 +118,6 @@ export type CatalogueEdition = {
   breadcrumb: string;
   imported: boolean;
   published: number[];
-  copytext: string[];
   sourceUrl?: string;
   sourceDesc?: string;
   docKey: string;
@@ -120,11 +126,12 @@ export type CatalogueEdition = {
 
 export type CatalogueWork = {
   authorSlugs: string[];
+  hostSlug: string;
   slug: string;
   title: string;
   breadcrumb: string;
   imported: boolean;
-  published: number[];
+  firstPublished: number;
   canonicalSlug: string;
   standalone: boolean;
   dir: string;
@@ -138,7 +145,7 @@ export type CatalogueAuthor = {
   title?: string;
   birth?: number;
   death?: number;
-  published?: number;
+  firstPublished?: number;
   nationality?: string;
   sex?: string;
   works: string[];
@@ -236,7 +243,6 @@ export const loadCatalog = async (
         breadcrumb: e.breadcrumb,
         imported: e.imported,
         published: e.published,
-        copytext: e.copytext,
         sourceUrl: e.sourceUrl,
         sourceDesc: e.sourceDesc,
         document,
@@ -244,11 +250,12 @@ export const loadCatalog = async (
     });
     works.set(key, {
       authorSlugs: w.authorSlugs,
+      hostSlug: w.hostSlug,
       slug: w.slug,
       title: w.title,
       breadcrumb: w.breadcrumb,
       imported: w.imported,
-      published: w.published,
+      firstPublished: w.firstPublished,
       canonicalSlug: w.canonicalSlug,
       standalone: w.standalone,
       dir: w.dir,
@@ -264,7 +271,7 @@ export const loadCatalog = async (
       title: a.title,
       birth: a.birth,
       death: a.death,
-      published: a.published,
+      firstPublished: a.firstPublished,
       nationality: a.nationality,
       sex: a.sex,
       works: a.works.map((key) => works.get(key)!),
@@ -281,6 +288,15 @@ export const loadCatalog = async (
 export const lastSegment = (id: string): string => {
   const parts = id.split(/[./]/);
   return parts[parts.length - 1]!; // split always yields at least one part
+};
+
+/**
+ * The work slug of an edition id: the segment before the year
+ * ("Hume.EMPL1.1777" -> "empl1"). Used to slug a borrowed edition by its work.
+ */
+const workSegment = (id: string): string => {
+  const parts = id.split(".");
+  return parts[parts.length - 2]!.toLowerCase(); // a borrowed id is Author.Work.Year
 };
 
 const metaString = (doc: MarkitDocument, key: string): string | undefined => {
@@ -303,9 +319,13 @@ const metaAuthors = (doc: MarkitDocument): string[] | undefined => {
 /**
  * URL slug for a child section. Inline sections have ids nested under the
  * parent's id, so the last segment suffices ("Hume.THN.1.2" -> "2"). A child
- * pulled in from another work (composite editions) keeps its own id; use the
- * whole id with dots dashed ("Hume.EMPL1.1777" -> "hume-empl1-1777") to
- * avoid collisions between e.g. EMPL1.1777 and EMPL2.1777 inside ETSS.
+ * borrowed from another work (composite editions) keeps its own edition id
+ * ("Hume.EMPL1.1777"); slug it by that work's slug — the id segment before the
+ * year ("empl1") — so the path reads cleanly ("etss/1777/empl1/dt/...") and the
+ * borrowed work keeps one slug across every collection and printing that borrows
+ * it (so cross-edition section matching needs no year stripping). Work slugs are
+ * distinct and never year-shaped, so they collide neither with sibling borrows
+ * nor with the edition/section disambiguation the routes rely on.
  */
 export const childSlug = (
   child: MarkitDocument,
@@ -313,7 +333,7 @@ export const childSlug = (
 ): string =>
   child.id.toLowerCase().startsWith(parent.id.toLowerCase() + ".")
     ? lastSegment(child.id).toLowerCase()
-    : child.id.toLowerCase().replace(/\./g, "-");
+    : workSegment(child.id);
 
 /**
  * Build the section tree for an edition's document. `imported` and `authors`

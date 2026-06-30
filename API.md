@@ -124,11 +124,11 @@ printing _b_.
 
 ### A section, word by word — `.../compare/:a/:b/...`
 
-A word-level diff of one section between the two editions. Words present only in
-edition _a_ are marked as deletions, words only in _b_ as insertions — returned
-as ordinary marked-up text, so it renders like any reading page (no special diff
-view needed). `?version=edited|original` picks which text of each edition is
-compared.
+A word-level diff of one section between the two editions. Edition _a_ is the
+primary edition being viewed, so words present only in _a_ are marked as
+insertions, words only in _b_ as deletions — returned as ordinary marked-up
+text, so it renders like any reading page (no special diff view needed).
+`?version=edited|original` picks which text of each edition is compared.
 
 > **📐 The maths behind it** _(skip freely)._ The diff is a Myers
 > shortest-edit-script alignment over words and punctuation, with whole blocks
