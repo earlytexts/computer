@@ -43,6 +43,31 @@ Deno.test("readManifest returns null when the directory is absent", async () => 
   assertEquals(await denoIo.readManifest("/no/such/computer-dir"), null);
 });
 
+Deno.test("the corpus fingerprint tracks content, not mtime", async () => {
+  // The freshness probe must survive a deploy snapshot that does not preserve
+  // mtimes: identical content (touched to a new mtime) stays fresh; changed
+  // content goes stale. So it fingerprints the catalogue's bytes, not its stat.
+  const base = await Deno.makeTempDir({ prefix: "computer-io-" });
+  const dist = `${base}/dist`;
+  const path = `${dist}/catalogue.json`;
+  try {
+    await Deno.mkdir(dist, { recursive: true });
+    await Deno.writeTextFile(path, '{"authors":[]}');
+    const first = await denoIo.scanCorpus(base);
+
+    // Rewrite the same content with a later mtime: the fingerprint is unchanged.
+    await Deno.writeTextFile(path, '{"authors":[]}');
+    await Deno.utime(path, new Date(), new Date(Date.now() + 60_000));
+    assertEquals(await denoIo.scanCorpus(base), first);
+
+    // Different content: the fingerprint changes.
+    await Deno.writeTextFile(path, '{"authors":["hume"]}');
+    assert((await denoIo.scanCorpus(base)).modified !== first.modified);
+  } finally {
+    await Deno.remove(base, { recursive: true });
+  }
+});
+
 Deno.test("the catalogue reader returns null when the corpus was not built", async () => {
   assertEquals(await denoIo.readCatalogue("/no/such/corpus"), null);
   assertEquals(await denoIo.readDocument("/no/such/corpus", "a/w/1700"), null);

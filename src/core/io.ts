@@ -47,17 +47,26 @@ const readJson = async <T>(path: string): Promise<T | null> => {
   }
 };
 
+/** A cheap djb2 content hash, stable across copies of identical content. */
+const hash = (text: string): number => {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = (h * 33 + text.charCodeAt(i)) | 0;
+  return h;
+};
+
 /**
- * Fingerprint the compiled catalogue by its `catalogue.json` (the corpus build
- * rewrites the whole `dist/` each run, so this file's size and mtime change
- * whenever anything in the corpus does). Absent when the corpus was never built.
+ * Fingerprint the compiled catalogue by the *content* of its `catalogue.json`
+ * (the corpus build rewrites the whole `dist/` each run, so this file changes
+ * whenever anything in the corpus does). We hash the content rather than stat
+ * its mtime because mtime is not preserved across a deploy snapshot (e.g. Deno
+ * Deploy), which would make freshly-built artefacts look stale at boot and
+ * trigger a rebuild on a read-only filesystem. Absent when the corpus was never
+ * built.
  */
 const scanCorpus = async (corpusDir: string): Promise<CorpusScan> => {
   try {
-    const info = await Deno.stat(`${corpusDir}/dist/catalogue.json`);
-    // mtime is always available for a regular file on the platforms this runs
-    // on (macOS/Linux); it is only null where the OS cannot report it.
-    return { files: info.size, modified: info.mtime!.getTime() };
+    const text = await Deno.readTextFile(`${corpusDir}/dist/catalogue.json`);
+    return { files: text.length, modified: hash(text) };
   } catch {
     return { files: 0, modified: 0 };
   }
