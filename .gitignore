@@ -2,3 +2,4 @@ node_modules
 artefacts
 dev/state
 coverage
+.corpus
