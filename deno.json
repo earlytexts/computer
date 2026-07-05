@@ -5,17 +5,18 @@
     "dev": "deno run --watch --allow-net --allow-read --allow-write --allow-env src/main.ts",
     "build": "deno run --allow-read --allow-write --allow-env src/build.ts",
     "install": "git clone --depth 1 https://github.com/earlytexts/corpus $CORPUS_DIR",
-    "build:corpus": "cd $CORPUS_DIR && deno task build",
+    "build:corpus": "deno run --allow-read --allow-write --allow-env scripts/build-corpus.ts",
     "build:all": "deno task build:corpus && deno task build",
     "dev:variants": "deno run --allow-read --allow-write --allow-env dev/variants.ts",
     "dev:lemmas": "deno run --allow-read --allow-write --allow-env dev/lemmas.ts",
     "test": "deno test --allow-read --allow-write --allow-env --allow-run --allow-net tests",
-    "test:coverage": "deno test --allow-read --allow-write --allow-env --allow-run --allow-net --coverage tests",
-    "check": "deno check src dev tests && deno lint && deno fmt --check"
+    "test:coverage": "deno test --allow-read --allow-write --allow-env --allow-run --allow-net --coverage --coverage-raw-data-only tests && deno coverage coverage --include=/computer/",
+    "check": "deno check src dev tests scripts && deno lint && deno fmt --check"
   },
   "nodeModulesDir": "auto",
   "imports": {
-    "@earlytexts/markit": "npm:@earlytexts/markit@^3.2.2",
+    "@earlytexts/corpus/wire": "npm:@earlytexts/corpus@^0.4.0/wire",
+    "@earlytexts/markit": "npm:@earlytexts/markit@^3.4.1",
     "@modelcontextprotocol/sdk/": "npm:/@modelcontextprotocol/sdk@1.29.0/",
     "@std/assert": "jsr:@std/assert@^1.0.0"
   },

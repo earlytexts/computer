@@ -549,10 +549,11 @@ export const createTools = (computer: Computer): ToolSet => {
     string,
     (input: Record<string, unknown>) => Promise<string>
   > = {
-    list_authors: async () => renderAuthors((await computer.catalog()).authors),
+    list_authors: async () =>
+      renderAuthors((await computer.catalogue()).authors),
     get_author_works: async (input) => {
       const slug = str(input, "author");
-      const author = (await computer.catalog()).authors.find(
+      const author = (await computer.catalogue()).authors.find(
         (candidate) => candidate.slug === slug,
       );
       return author === undefined

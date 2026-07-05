@@ -11,14 +11,17 @@
  * computer's `/authors/:author/...` routes. A single-author site can wrap this
  * with its own author-scoped facade.
  *
- * The catalog rarely changes (only on a computer redeploy), so it is cached per
+ * The catalogue rarely changes (only on a computer redeploy), so it is cached per
  * base URL for a minute to spare one round-trip per page view.
  */
 
-import type { CatalogResponse, Computer, Version } from "./types.ts";
+import type { CatalogueResponse, Computer, Version } from "./types.ts";
 
 const CATALOG_TTL_MS = 60_000;
-const catalogCache = new Map<string, { at: number; value: CatalogResponse }>();
+const catalogueCache = new Map<
+  string,
+  { at: number; value: CatalogueResponse }
+>();
 
 const segment = (s: string): string => encodeURIComponent(s);
 
@@ -98,13 +101,13 @@ export const computerClient = (
       ? workBase(author, work)
       : `${workBase(author, work)}/${segment(edition)}`;
   return {
-    catalog: async () => {
-      const cached = catalogCache.get(baseUrl);
+    catalogue: async () => {
+      const cached = catalogueCache.get(baseUrl);
       if (cached !== undefined && Date.now() - cached.at < CATALOG_TTL_MS) {
         return cached.value;
       }
-      const value = await must<CatalogResponse>("/catalog");
-      catalogCache.set(baseUrl, { at: Date.now(), value });
+      const value = await must<CatalogueResponse>("/catalogue");
+      catalogueCache.set(baseUrl, { at: Date.now(), value });
       return value;
     },
     edition: (author, work, edition, version) =>

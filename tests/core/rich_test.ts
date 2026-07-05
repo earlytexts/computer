@@ -26,6 +26,11 @@ Deno.test("rich: full text walks every block and inline element type", async () 
   assert(text.includes("ANTHOLOGY"));
   assert(text.includes("Apple"));
   assert(text.includes("alpha"));
+  // Block content nested inside a quotation, a block-level stage direction,
+  // and a raw element's inner text all survive the walk.
+  assert(text.includes("quoted-alpha"));
+  assert(text.includes("He sits"));
+  assert(text.includes("marked pair"));
 });
 
 Deno.test("rich: a search match is highlighted inside its block", async () => {
@@ -56,13 +61,19 @@ Deno.test("rich: a section comparison diffs one changed paragraph and marks whol
     ofType(diff.blocks, "deletion").join(" ").includes("OMEGA"),
     true,
   );
-  // The equal run kept its inline formatting (emphasis, strong, foreign run).
+  // The equal run kept its inline formatting (emphasis, strong, foreign run,
+  // and the raw element — rebuilt as one element around its two tokens).
   const equalText = textOf(diff.blocks);
   assert(equalText.includes("truly"));
   assert(equalText.includes("ipsa loquitur"));
+  // (The group's leading space sits inside the rebuilt wrapper, as it does
+  // for every regrouped wrapper type.)
+  assertEquals(ofType(diff.blocks, "element").join(""), " marked pair");
   // The whole block present in only one edition is wrapped end to end —
-  // including its list and table cells (the A-only block, the B-only block).
+  // including its blockquote's nested list, its stage direction, and its
+  // table cells (the A-only block, the B-only block).
   assert(ofType(diff.blocks, "insertion").some((t) => t.includes("alpha")));
+  assert(ofType(diff.blocks, "insertion").some((t) => t.includes("He sits")));
   assert(ofType(diff.blocks, "deletion").some((t) => t.includes("Apple")));
 
   // A section has a neighbour present in both editions (prev/next can't 404).

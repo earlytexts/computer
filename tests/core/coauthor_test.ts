@@ -1,6 +1,6 @@
 /**
  * Multiple authors per work: a co-authored work appears under each of its
- * authors in the catalog, resolves under either, carries both authors in its
+ * authors in the catalogue, resolves under either, carries both authors in its
  * read responses, and attributes each letter (section) to its writer. Search
  * and frequency treat the author scope as membership, so a co-author's filter
  * finds the shared work. Built over the in-memory co-author corpus.
@@ -15,9 +15,9 @@ const coComputer = () => openTestComputer(coauthorCorpus());
 
 Deno.test("a co-authored work is listed under each of its authors", async () => {
   const { computer } = await coComputer();
-  const catalog = await computer.catalog();
-  const bell = catalog.authors.find((a) => a.slug === "bell")!;
-  const dee = catalog.authors.find((a) => a.slug === "dee")!;
+  const catalogue = await computer.catalogue();
+  const bell = catalogue.authors.find((a) => a.slug === "bell")!;
+  const dee = catalogue.authors.find((a) => a.slug === "dee")!;
   // The work lives once on disk (under bell) but appears under both.
   assert(bell.works.some((w) => w.slug === "corr"));
   assert(dee.works.some((w) => w.slug === "corr"));
@@ -96,10 +96,10 @@ Deno.test("naming a co-author with no author file warns but still builds", async
     ),
     "expected a phantom co-author warning",
   );
-  // The phantom author still appears in the catalog, carrying the ghost work.
+  // The phantom author still appears in the catalogue, carrying the ghost work.
   const { computer } = await openTestComputer(coauthorCorpus());
-  const catalog = await computer.catalog();
-  const zz = catalog.authors.find((a) => a.slug === "zz");
+  const catalogue = await computer.catalogue();
+  const zz = catalogue.authors.find((a) => a.slug === "zz");
   assert(zz !== undefined);
   assert(zz.works.some((w) => w.slug === "ghost"));
 });

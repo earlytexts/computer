@@ -6,7 +6,7 @@
  * method builds is exercised end to end and round-trips real responses. The
  * stubbed-`fetch` cases below pin the transport contract the handler can't show:
  * 404 → undefined, other failures → a "computer unavailable" throw, the
- * forwarded-IP header, and the per-base-URL catalog cache.
+ * forwarded-IP header, and the per-base-URL catalogue cache.
  */
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
@@ -51,9 +51,9 @@ const liveClient = async () => {
 Deno.test("client: reading routes round-trip through the handler", async () => {
   const { client, fetcher } = await liveClient();
   await withFetch(fetcher, async () => {
-    // catalog (a `must` route) and the work/edition reading routes.
-    const catalog = await client.catalog();
-    assertEquals(catalog.authors.length, 2);
+    // catalogue (a `must` route) and the work/edition reading routes.
+    const catalogue = await client.catalogue();
+    assertEquals(catalogue.authors.length, 2);
 
     // editionBase: the canonical edition (no edition segment) and a named one.
     const canonical = await client.edition("test", "tw");
@@ -148,16 +148,16 @@ Deno.test("client: a 404 on a nullable route resolves to undefined", async () =>
 });
 
 Deno.test("client: a 404 on a required route is an error, not undefined", async () => {
-  // `must` routes (here /catalog) treat a 404 as a contract violation.
+  // `must` routes (here /catalogue) treat a 404 as a contract violation.
   const stub =
     (() =>
       Promise.resolve(new Response(null, { status: 404 }))) as typeof fetch;
   const client = computerClient("http://gone.test");
   await withFetch(stub, () =>
     assertRejects(
-      () => client.catalog(),
+      () => client.catalogue(),
       Error,
-      "computer has no /catalog",
+      "computer has no /catalogue",
     ));
 });
 
@@ -169,7 +169,7 @@ Deno.test("client: a non-404 failure throws computer-unavailable", async () => {
       Promise.resolve(new Response("boom", { status: 500 }))) as typeof fetch;
   const serverError = await withFetch(
     fiveHundred,
-    () => assertRejects(() => client.catalog(), Error),
+    () => assertRejects(() => client.catalogue(), Error),
   );
   assert(isComputerUnavailable(serverError));
 
@@ -178,7 +178,7 @@ Deno.test("client: a non-404 failure throws computer-unavailable", async () => {
     (() => Promise.reject(new TypeError("connection refused"))) as typeof fetch;
   const networkError = await withFetch(
     refused,
-    () => assertRejects(() => client.catalog(), Error),
+    () => assertRejects(() => client.catalogue(), Error),
   );
   assert(isComputerUnavailable(networkError));
 
@@ -186,7 +186,7 @@ Deno.test("client: a non-404 failure throws computer-unavailable", async () => {
   const odd = (() => Promise.reject("nope")) as typeof fetch;
   const oddError = await withFetch(
     odd,
-    () => assertRejects(() => client.catalog(), Error),
+    () => assertRejects(() => client.catalogue(), Error),
   );
   assert(isComputerUnavailable(oddError));
 });
@@ -199,14 +199,14 @@ Deno.test("client: the forwarded client IP is sent only when given", async () =>
   }) as typeof fetch;
 
   await withFetch(capture, async () => {
-    await computerClient("http://ip.test/a").catalog();
+    await computerClient("http://ip.test/a").catalogue();
     assertEquals(seen, null); // no IP → no header
-    await computerClient("http://ip.test/b", "203.0.113.7").catalog();
+    await computerClient("http://ip.test/b", "203.0.113.7").catalogue();
     assertEquals(seen, "203.0.113.7");
   });
 });
 
-Deno.test("client: the catalog is cached per base URL until it expires", async () => {
+Deno.test("client: the catalogue is cached per base URL until it expires", async () => {
   let calls = 0;
   const counting = (() => {
     calls++;
@@ -220,11 +220,11 @@ Deno.test("client: the catalog is cached per base URL until it expires", async (
     await withFetch(counting, async () => {
       let clock = 1_000_000;
       Date.now = () => clock;
-      await client.catalog();
-      await client.catalog(); // within the TTL: served from cache
+      await client.catalogue();
+      await client.catalogue(); // within the TTL: served from cache
       assertEquals(calls, 1);
       clock += 60_001; // past the 60s TTL
-      await client.catalog(); // refetched
+      await client.catalogue(); // refetched
       assertEquals(calls, 2);
     });
   } finally {

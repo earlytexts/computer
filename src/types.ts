@@ -19,7 +19,7 @@ import type { Block } from "@earlytexts/markit";
  */
 export type Version = "edited" | "original" | "both";
 
-/* ------------------------------ catalog ------------------------------ */
+/* ------------------------------ catalogue ------------------------------ */
 
 export type AuthorMeta = {
   slug: string;
@@ -51,7 +51,7 @@ export type EditionMeta = {
 
 export type WorkMeta = {
   /** Author slugs, in title order — the people who wrote it. A co-authored work
-   * appears under each of these in the catalog. */
+   * appears under each of these in the catalogue. */
   authorSlugs: string[];
   /** Identity slug for the work's id, paths, and URL: a single author's slug, or
    * a joint slug ("astell-norris") for a co-authored work. Not itself an author. */
@@ -67,20 +67,20 @@ export type WorkMeta = {
   /**
    * Whether the work lists as its own text in indexes. False for a subwork
    * meant to surface only inside the collection(s) that borrow it; true (the
-   * default) otherwise. The work is in the catalog either way — this only
+   * default) otherwise. The work is in the catalogue either way — this only
    * governs whether index listings show it on its own.
    */
   standalone: boolean;
   editions: EditionMeta[]; // dated editions, ascending by year
 };
 
-export type CatalogAuthor = AuthorMeta & {
+export type CatalogueAuthor = AuthorMeta & {
   works: WorkMeta[]; // ascending by first publication year
 };
 
-export type CatalogResponse = {
-  authors: CatalogAuthor[]; // ascending by year of first publication
-  /** Distinct edition slugs across the catalog (for filter UIs). */
+export type CatalogueResponse = {
+  authors: CatalogueAuthor[]; // ascending by year of first publication
+  /** Distinct edition slugs across the catalogue (for filter UIs). */
   editionSlugs: string[];
 };
 
@@ -780,7 +780,7 @@ export type CollocationsParams = EditionScope & {
  *     prebuilt, edited-only index (collocations, similar, topics) omit it.
  */
 export type Computer = {
-  catalog: () => Promise<CatalogResponse>;
+  catalogue: () => Promise<CatalogueResponse>;
   /** Omit `edition` to address the work's canonical edition. */
   edition: (
     author: string,

@@ -35,7 +35,7 @@ missing, so `deno task build` is an optimisation, not a requirement. The corpus
 is compiled into memory only to (re)build the artefacts; once they are fresh the
 server runs entirely from them and boots in well under a second. Every route is
 answered from the artefacts: search from the inverted index and units (~50MB
-heap, ms-fast), the text/compare routes from `catalog.json` (the metadata tree
+heap, ms-fast), the text/compare routes from `catalogue.json` (the metadata tree
 and per-edition section skeletons) plus block content read lazily from each
 edition's `blocks.jsonl` under a small LRU, and collocations from the
 per-edition `tokens.bin` read lazily under its own small LRU.
@@ -76,11 +76,11 @@ For a guide to every route and what it does, written for researchers, see
 
 - `manifest.json` — pipeline version, corpus fingerprint, edition list, stats,
   build warnings.
-- `catalog.json` — the Author → Work → Edition metadata tree, and per edition a
-  section skeleton (the composed section tree, including borrowed children, with
-  titles/breadcrumbs/imported flags) whose nodes carry the unit indices of their
-  blocks rather than the blocks themselves. This serves the text and compare
-  routes; block content is read from `blocks.jsonl` on demand.
+- `catalogue.json` — the Author → Work → Edition metadata tree, and per edition
+  a section skeleton (the composed section tree, including borrowed children,
+  with titles/breadcrumbs/imported flags) whose nodes carry the unit indices of
+  their blocks rather than the blocks themselves. This serves the text and
+  compare routes; block content is read from `blocks.jsonl` on demand.
 - `vocab.json` — the type table: every distinct case-folded spelling (surface
   form) with document/collection frequencies, plus its canonical SPELLING and
   FORM bucket (the spelling- and inflection-tolerant search levels) and a
@@ -190,14 +190,14 @@ Above the core, depending only on the `Computer` interface.
 - `artefacts.ts` — the artefact-format authority: the types, version constants,
   freshness check, and the `serializeArtefacts`/`parseArtefacts` codec the build
   and serve sides share. It does no I/O of its own and imports neither side.
-- `build/` — corpus → in-memory artefacts. `catalog.ts` (scan the corpus through
-  an injected `CorpusFs`, compile Markit, resolve `children` references and
-  cascade metadata — how composite works like ETSS/FD/HE share text) and
+- `build/` — corpus → in-memory artefacts. `catalogue.ts` (scan the corpus
+  through an injected `CorpusFs`, compile Markit, resolve `children` references
+  and cascade metadata — how composite works like ETSS/FD/HE share text) and
   `builder.ts` (fold the corpus into the tables).
 - `serve/` — artefacts → API responses. `store.ts` (lazy block, token-stream,
   DTM, and topic-model reads — the block-store and token-store LRUs and
   byte-range reads and the cached document-term matrix and topic model, over an
-  injected `BlockReader` — and catalog lookups), `api.ts` (pure response
+  injected `BlockReader` — and catalogue lookups), `api.ts` (pure response
   builders), and `localComputer.ts` (the in-process `Computer`, resolving slugs
   and the canonical default over the api builders).
 - `text/` — the pure text/search engine, behind `mod.ts` (its public API; the
@@ -230,14 +230,15 @@ deno task check   # typecheck + lint + format check
 The principle: **one fat behavioural seam, everything else thin wiring.** Every
 read/search/diff/frequency behaviour is pinned once, through the `Computer`
 interface, over a corpus authored in memory — so the entire core beneath it
-(catalog, build, codec, index, serve) is free to be refactored without touching
-a test. The corpus is built in code, not on disk: `tests/corpus.ts` provides a
-`corpus()` builder and `memoryCorpus` (a `CorpusFs` over a path → `.mit` map),
-and `tests/helpers.ts`'s `openTestComputer` opens a `Computer` over it through
-the real `openComputer` (artefacts kept in memory, no temp directory).
+(catalogue, build, codec, index, serve) is free to be refactored without
+touching a test. The corpus is built in code, not on disk: `tests/corpus.ts`
+provides a `corpus()` builder and `memoryCorpus` (a `CorpusFs` over a path →
+`.mit` map), and `tests/helpers.ts`'s `openTestComputer` opens a `Computer` over
+it through the real `openComputer` (artefacts kept in memory, no temp
+directory).
 
 - **`tests/core/`** — the behavioural seam, one file per `Computer` method
-  (`catalog`, `edition`, `section`, `compare`, `search`, `frequency`,
+  (`catalogue`, `edition`, `section`, `compare`, `search`, `frequency`,
   `concordance`), each driving the shared in-memory `Computer`. This is where
   match levels, scoping, pagination, grouping, version handling, highlighting,
   diffs, navigation and not-found are all pinned. `cache_test.ts` is the one

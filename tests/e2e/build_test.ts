@@ -35,7 +35,7 @@ Deno.test("build.ts compiles the corpus and writes artefacts", async () => {
     assertEquals(manifest.stats.works, 4);
     for (
       const name of [
-        "catalog.json",
+        "catalogue.json",
         "vocab.json",
         "units.json",
         "dtm.bin",

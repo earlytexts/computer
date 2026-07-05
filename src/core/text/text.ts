@@ -30,6 +30,7 @@ import type {
   BlockElement,
   InlineElement,
   List,
+  NestableBlockElement,
 } from "@earlytexts/markit";
 import type { Version } from "../../types.ts";
 
@@ -150,30 +151,20 @@ const walkList = (list: List, state: WalkState): List => ({
   }),
 });
 
-const walkElement = (
-  element: BlockElement,
+const walkNestable = (
+  element: NestableBlockElement,
   state: WalkState,
-): BlockElement => {
+): NestableBlockElement => {
   switch (element.type) {
-    case "heading":
-      return {
-        ...element,
-        content: element.content.map((line, i) => {
-          if (i > 0) contribute(state, "\n");
-          return { ...line, content: walkInline(line.content, state) };
-        }),
-      };
     case "paragraph":
       return { ...element, content: walkInline(element.content, state) };
     case "blockquote":
+    case "stageDirection":
       return {
         ...element,
-        content: element.content.map((paragraph, i) => {
+        content: element.content.map((child, i) => {
           if (i > 0) contribute(state, "\n");
-          return {
-            ...paragraph,
-            content: walkInline(paragraph.content, state),
-          };
+          return walkNestable(child, state);
         }),
       };
     case "list":
@@ -194,6 +185,20 @@ const walkElement = (
       };
   }
 };
+
+const walkElement = (
+  element: BlockElement,
+  state: WalkState,
+): BlockElement =>
+  element.type === "heading"
+    ? {
+      ...element,
+      content: element.content.map((line, i) => {
+        if (i > 0) contribute(state, "\n");
+        return { ...line, content: walkInline(line.content, state) };
+      }),
+    }
+    : walkNestable(element, state);
 
 const walkBlock = (block: Block, state: WalkState): Block => ({
   ...block,
@@ -255,28 +260,18 @@ const markList = (list: List, kind: "insertion" | "deletion"): List => ({
   }),
 });
 
-const markElement = (
-  element: BlockElement,
+const markNestable = (
+  element: NestableBlockElement,
   kind: "insertion" | "deletion",
-): BlockElement => {
+): NestableBlockElement => {
   switch (element.type) {
-    case "heading":
-      return {
-        ...element,
-        content: element.content.map((line) => ({
-          ...line,
-          content: wrapInline(line.content, kind),
-        })),
-      };
     case "paragraph":
       return { ...element, content: wrapInline(element.content, kind) };
     case "blockquote":
+    case "stageDirection":
       return {
         ...element,
-        content: element.content.map((paragraph) => ({
-          ...paragraph,
-          content: wrapInline(paragraph.content, kind),
-        })),
+        content: element.content.map((child) => markNestable(child, kind)),
       };
     case "list":
       return markList(element, kind);
@@ -293,6 +288,20 @@ const markElement = (
       };
   }
 };
+
+const markElement = (
+  element: BlockElement,
+  kind: "insertion" | "deletion",
+): BlockElement =>
+  element.type === "heading"
+    ? {
+      ...element,
+      content: element.content.map((line) => ({
+        ...line,
+        content: wrapInline(line.content, kind),
+      })),
+    }
+    : markNestable(element, kind);
 
 /**
  * A copy of the block with all of its inline content wrapped in a single
@@ -319,14 +328,13 @@ export const hasEditorial = (block: Block): boolean => {
       inElements(item.content) ||
       (item.nestedList !== undefined && inList(item.nestedList))
     );
-  return block.content.some((element) => {
+  const inNestable = (element: NestableBlockElement): boolean => {
     switch (element.type) {
-      case "heading":
-        return element.content.some((line) => inElements(line.content));
       case "paragraph":
         return inElements(element.content);
       case "blockquote":
-        return element.content.some((p) => inElements(p.content));
+      case "stageDirection":
+        return element.content.some(inNestable);
       case "list":
         return inList(element);
       case "table":
@@ -334,5 +342,10 @@ export const hasEditorial = (block: Block): boolean => {
           row.cells.some((cell) => inElements(cell.content))
         );
     }
-  });
+  };
+  return block.content.some((element) =>
+    element.type === "heading"
+      ? element.content.some((line) => inElements(line.content))
+      : inNestable(element)
+  );
 };

@@ -57,8 +57,8 @@ Deno.test("main.ts serves the REST API and mounts MCP", async () => {
 
     // REST, through the typed client other repos vendor.
     const computer = computerClient(base);
-    const catalog = await computer.catalog();
-    assertEquals(catalog.authors.map((a) => a.slug), ["other", "test"]);
+    const catalogue = await computer.catalogue();
+    assertEquals(catalogue.authors.map((a) => a.slug), ["other", "test"]);
     const found = await computer.search({ q: "liberty of the press" });
     assert(found.total > 0);
     const section = await computer.section("test", "tw", undefined, ["1"]);

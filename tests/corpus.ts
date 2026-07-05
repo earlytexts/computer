@@ -2,8 +2,8 @@
  * In-memory corpora for the tests. A corpus is authored as a map of paths to
  * `.mit` text — no fixture files on disk. `corpus()` is a small builder for
  * authoring one ergonomically; `memoryCorpus` turns a file map into the
- * `CorpusFs` the corpus's catalogue build walks; `buildDist` compiles a map into
- * the corpus's `dist/` output (catalogue.json + documents) the computer reads;
+ * `CorpusFs` the corpus's catalogue build walks; `buildCatalogueOutput` compiles a
+ * map into the corpus's `catalogue/` output (catalogue.json + documents) the computer reads;
  * `materializeCorpus` writes that compiled output to a real directory for the few
  * tests that spawn a process (e2e).
  *
@@ -14,7 +14,7 @@
  * grouping, diffing and version handling stay observable in real output.
  */
 
-import { buildCatalog } from "../../corpus/src/catalogue.ts";
+import { buildCatalogue } from "../../corpus/src/catalogue.ts";
 import { serializeCatalogue } from "../../corpus/src/serialize.ts";
 import {
   corpus,
@@ -29,36 +29,39 @@ import {
 export { corpus, CORPUS_ROOT, CorpusBuilder, memoryCorpus };
 export type { Meta };
 
-export type Dist = { catalogue: string; documents: Map<string, string> };
+export type CatalogueOutput = {
+  catalogue: string;
+  documents: Map<string, string>;
+};
 
 /**
- * Compile a corpus map into the corpus's `dist/` output — the same step
+ * Compile a corpus map into the corpus's `catalogue/` output — the same step
  * `corpus/scripts/build.ts` runs — so the computer's tests consume exactly what
  * it reads in production. Returns the catalogue.json text and the document files.
  */
-export const buildDist = async (
+export const buildCatalogueOutput = async (
   files: Record<string, string>,
-): Promise<Dist> => {
+): Promise<CatalogueOutput> => {
   const fs = memoryCorpus(files);
   const root = await fs.realPath(CORPUS_ROOT);
-  const { catalog, warnings } = await buildCatalog(fs, CORPUS_ROOT);
-  const { catalogue, documents } = serializeCatalogue(catalog, warnings, root);
+  const { catalogue: built, warnings } = await buildCatalogue(fs, CORPUS_ROOT);
+  const { catalogue, documents } = serializeCatalogue(built, warnings, root);
   return { catalogue: JSON.stringify(catalogue), documents };
 };
 
 /**
- * Compile a corpus map and write its `dist/` to a fresh temp directory (the
+ * Compile a corpus map and write its `catalogue/` to a fresh temp directory (the
  * computer reads the compiled output, not `.mit`); returns the dir to clean up.
  */
 export const materializeCorpus = async (
   files: Record<string, string>,
 ): Promise<string> => {
   const dir = await Deno.makeTempDir({ prefix: "computer-corpus-" });
-  const { catalogue, documents } = await buildDist(files);
-  await Deno.mkdir(`${dir}/dist/documents`, { recursive: true });
-  await Deno.writeTextFile(`${dir}/dist/catalogue.json`, catalogue);
+  const { catalogue, documents } = await buildCatalogueOutput(files);
+  await Deno.mkdir(`${dir}/catalogue/documents`, { recursive: true });
+  await Deno.writeTextFile(`${dir}/catalogue/catalogue.json`, catalogue);
   for (const [docKey, json] of documents) {
-    const path = `${dir}/dist/documents/${docKey}.json`;
+    const path = `${dir}/catalogue/documents/${docKey}.json`;
     await Deno.mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true });
     await Deno.writeTextFile(path, json);
   }
@@ -227,7 +230,7 @@ export const testCorpus = (): Record<string, string> =>
       breadcrumb: "Test Work",
       canonical: "1760",
       // tw is borrowed by the comp collection; it opts out of listing on its
-      // own so it surfaces only within that collection (see catalog_test).
+      // own so it surfaces only within that collection (see catalogue_test).
       standalone: false,
     })
     .edition("test", "tw", "1750", {
@@ -305,7 +308,7 @@ Madam, liberty and passion alike move the soul.`;
 
 /**
  * A genuinely co-authored work: "A Correspondence" lives under its host author
- * (bell, alphabetically first) but names both authors, so the catalog lists it
+ * (bell, alphabetically first) but names both authors, so the catalogue lists it
  * under bell and dee alike, and each letter is attributed to its writer. A
  * second work names a co-author with no author file, to drive the phantom-author
  * warning. Bell also has a solo work, so an author-scoped query has something to
@@ -375,30 +378,41 @@ export const coauthorCorpus = (): Record<string, string> =>
 
 // One paragraph exercising the whole inline vocabulary the extraction and
 // diff walks recognise: every wrapper type, a two-word foreign run (so a
-// diff's equal grouping compares two `language` contexts), the spacing and
-// break leaves (a Markit line break is a backslash before whitespace), a page
-// break, a footnote reference, an illegible gap, and the hyphen edges the
-// tokenizer trims. Only the final word differs between the two editions, so the
-// block diffs as one changed paragraph whose long equal run carries all that
-// formatting.
+// diff's equal grouping compares two `language` contexts), a two-word raw
+// element (so the grouping compares two `element` contexts, tag and
+// attributes included), the spacing and break leaves (a Markit line break is
+// a backslash before whitespace), a page break, a footnote reference, an
+// illegible gap, and the hyphen edges the tokenizer trims. Only the final
+// word differs between the two editions, so the block diffs as one changed
+// paragraph whose long equal run carries all that formatting.
 const richBlock1 = (finalWord: string): string =>
   String
     .raw`Here _truly_ stands *Rome*, with $la:ipsa loquitur$ as a "maxim", ` +
   String.raw`an _em_ *st* pair and $la:una$ $de:zwei$ tongues, ` +
+  String.raw`a raw <<HI REND="italic">>marked pair<</HI>> element, ` +
   String.raw`a school-men compound, a lone - mark, an abrupt- stop, an [...] ` +
   String.raw`gap,~~spaced~tight, a break\ here, a page//9//turn, a note<n1>, ` +
   `then ${finalWord}.`;
 
-// A block of several block-level element types (a blockquote, a nested list,
-// and a table), so rendering it walks every BlockElement arm and — when it is
-// the block present in only one edition — the whole-block editorial marking
+// A block of several block-level element types (a blockquote holding a list
+// between its paragraphs, a two-paragraph stage direction, a nested list, and
+// a table), so rendering it walks every BlockElement arm — including the
+// nestable recursion inside quotations and stage directions — and, when it is
+// the block present in only one edition, the whole-block editorial marking
 // walks them too, and when it differs between editions the diff's span builder
 // walks them as well. The final table cell varies so the block can also serve
 // as a *changed* block.
 const richBlock3 = (lastCell: string): string =>
   `> A quoted line one.
 >
+> - quoted-alpha
+> - quoted-beta
+>
 > A quoted line two.
+
+: Enter the CLERK, carrying papers.
+:
+: He sits.
 
 - alpha
 - beta
@@ -654,7 +668,7 @@ export const emptyCorpus = (): Record<string, string> =>
 /* ---------------------- branch-coverage corpora ---------------------- */
 
 /**
- * Sparse and irregular metadata, to drive the catalog's and renderer's
+ * Sparse and irregular metadata, to drive the catalogue's and renderer's
  * fallback branches: an author with a birth but no death; an author with no
  * metadata and no works (so no derived first-publication year); a work whose
  * index omits title/breadcrumb; an edition whose metadata omits

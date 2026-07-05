@@ -45,7 +45,7 @@ Deno.test("the root reports service health", async () => {
 });
 
 Deno.test("responses are JSON, CORS-open, and cached", async () => {
-  const response = await request("/catalog");
+  const response = await request("/catalogue");
   assertEquals(
     response.headers.get("content-type"),
     "application/json; charset=utf-8",
@@ -73,9 +73,9 @@ Deno.test("?format=text returns the rendered plain text the MCP tools serve", as
   const edition = await request("/authors/test/tw?format=text");
   assertStringIncludes(await edition.text(), 'edition "1760"');
 
-  // The catalog's text rendering lists the authors (as list_authors does).
-  const catalog = await request("/catalog?format=text");
-  assertStringIncludes(await catalog.text(), "test —");
+  // The catalogue's text rendering lists the authors (as list_authors does).
+  const catalogue = await request("/catalogue?format=text");
+  assertStringIncludes(await catalogue.text(), "test —");
 });
 
 Deno.test("?format=text on a missing resource is a plain-text 404", async () => {
@@ -90,7 +90,7 @@ Deno.test("?format=text on a missing resource is a plain-text 404", async () => 
 
 Deno.test("?format defaults to json and rejects any other value", async () => {
   // The default is unchanged JSON.
-  const json = await request("/catalog");
+  const json = await request("/catalogue");
   assertEquals(
     json.headers.get("content-type"),
     "application/json; charset=utf-8",
@@ -344,7 +344,7 @@ Deno.test("the rate limiter evicts refilled buckets once it grows past its cap",
   for (let i = 0; i < 10_050; i++) {
     clock += 1; // 1ms later: a one-request-old bucket has fully refilled
     const response = await limited(
-      new Request("http://localhost/catalog", {
+      new Request("http://localhost/catalogue", {
         headers: { "x-forwarded-for": `198.51.100.${i}` },
       }),
     );
@@ -365,7 +365,7 @@ Deno.test("an unexpected failure inside the computer is a 500", async () => {
   const originalError = console.error;
   console.error = () => {}; // the route logs the failure; keep the test quiet
   try {
-    const response = await handle(new Request("http://localhost/catalog"));
+    const response = await handle(new Request("http://localhost/catalogue"));
     assertEquals(response.status, 500);
     assertEquals((await response.json()).error, "internal error");
   } finally {
@@ -374,7 +374,7 @@ Deno.test("an unexpected failure inside the computer is a 500", async () => {
 });
 
 Deno.test("non-GET methods are rejected", async () => {
-  const response = await request("/catalog", "POST");
+  const response = await request("/catalogue", "POST");
   assertEquals(response.status, 405);
   await response.body?.cancel();
 });
@@ -412,13 +412,13 @@ Deno.test("the rate limiter rejects past the burst and refills over time", async
     now: () => clock,
   });
   const get = async (): Promise<number> => {
-    const response = await limited(new Request("http://localhost/catalog"));
+    const response = await limited(new Request("http://localhost/catalogue"));
     await response.body?.cancel();
     return response.status;
   };
   assertEquals(await get(), 200);
   assertEquals(await get(), 200);
-  const refused = await limited(new Request("http://localhost/catalog"));
+  const refused = await limited(new Request("http://localhost/catalogue"));
   assertEquals(refused.status, 429);
   assertEquals(refused.headers.get("retry-after"), "1");
   await refused.body?.cancel();
@@ -434,7 +434,7 @@ Deno.test("clients are rate-limited independently by their forwarded IP", async 
   });
   const get = async (xff: string): Promise<number> => {
     const response = await limited(
-      new Request("http://localhost/catalog", {
+      new Request("http://localhost/catalogue", {
         headers: { "x-forwarded-for": xff },
       }),
     );
@@ -450,7 +450,7 @@ Deno.test("clients are rate-limited independently by their forwarded IP", async 
 Deno.test("a non-positive rate disables limiting", async () => {
   const limited = await handler({ rateLimit: { ratePerSecond: 0, burst: 1 } });
   for (let i = 0; i < 50; i++) {
-    const response = await limited(new Request("http://localhost/catalog"));
+    const response = await limited(new Request("http://localhost/catalogue"));
     assertEquals(response.status, 200);
     await response.body?.cancel();
   }

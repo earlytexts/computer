@@ -34,23 +34,23 @@ Deno.test("text: sparse author/work/edition metadata renders with fallbacks", as
   const { computer } = await openTestComputer(metadataCorpus());
   const text = textHandlerFor(computer);
 
-  // The catalog lists an author with no metadata (min) and one with a birth but
+  // The catalogue lists an author with no metadata (min) and one with a birth but
   // no death (alpha), exercising the date-span and "first published" fallbacks.
-  const catalog = await text("/catalog");
-  assertStringIncludes(catalog, "min —"); // empty forename, surname = slug
-  assertStringIncludes(catalog, "(1700–?)"); // alpha: birth, no death
+  const catalogue = await text("/catalogue");
+  assertStringIncludes(catalogue, "min —"); // empty forename, surname = slug
+  assertStringIncludes(catalogue, "(1700–?)"); // alpha: birth, no death
 
   // alpha has a single work — "1 work", not "works".
-  assertStringIncludes(catalog, "1 work");
+  assertStringIncludes(catalogue, "1 work");
 
   // gamma has a death but no birth — the span's other "?" side.
-  assertStringIncludes(catalog, "(?–1799)");
+  assertStringIncludes(catalogue, "(?–1799)");
 
   // get_author_works for the metadata-less author shows the fallback work title.
   const works = await text("/authors/alpha/a");
   assertStringIncludes(works, "edition");
 
-  // The catalog resolved the work whose index omits title/breadcrumb, and the
+  // The catalogue resolved the work whose index omits title/breadcrumb, and the
   // edition whose metadata omits title/breadcrumb/imported, without crashing.
   const sparseWork = await text("/authors/alpha/b");
   assert(sparseWork.length > 0);
@@ -86,8 +86,8 @@ Deno.test("text: section-level similarity cites the section title", async () => 
 
 Deno.test("text: a directory-style edition is part of the work", async () => {
   const computer = (await openTestComputer(metadataCorpus())).computer;
-  const catalog = await computer.catalog();
-  const a = catalog.authors.find((au) => au.slug === "alpha")!
+  const catalogue = await computer.catalogue();
+  const a = catalogue.authors.find((au) => au.slug === "alpha")!
     .works.find((w) => w.slug === "a")!;
   // The 1758 edition lives in a directory (1758/index.mit) but is still listed.
   assert(a.editions.some((e) => e.slug === "1758"));
@@ -242,15 +242,24 @@ Deno.test("the handler reads the client address from the connection info", async
       remoteAddr: { transport, hostname: "10.0.0.5", port: 1 },
     }) as Deno.ServeHandlerInfo;
   // A TCP peer with no forwarded-for header is keyed by its connection address.
-  const a = await handle(new Request("http://localhost/catalog"), info("tcp"));
+  const a = await handle(
+    new Request("http://localhost/catalogue"),
+    info("tcp"),
+  );
   assertEquals(a.status, 200);
   await a.body?.cancel();
-  const b = await handle(new Request("http://localhost/catalog"), info("tcp"));
+  const b = await handle(
+    new Request("http://localhost/catalogue"),
+    info("tcp"),
+  );
   assertEquals(b.status, 429); // same peer, burst exhausted
   await b.body?.cancel();
   // A non-TCP transport has no usable address: the connection-address branch is
   // skipped (the request is keyed by the shared fallback instead).
-  const c = await handle(new Request("http://localhost/catalog"), info("unix"));
+  const c = await handle(
+    new Request("http://localhost/catalogue"),
+    info("unix"),
+  );
   assert(c.status === 200 || c.status === 429);
   await c.body?.cancel();
 });

@@ -6,7 +6,7 @@
  * reads. The entry points construct `denoIo` and pass it to the pipeline; tests
  * pass an in-memory equivalent.
  *
- * The corpus is consumed as the compiled `dist/` the corpus build produces
+ * The corpus is consumed as the compiled `catalogue/` the corpus build produces
  * (catalogue.json + per-edition documents), never by scanning `.mit` directly.
  *
  * Invariant: this is the only file in src/ that calls Deno's filesystem APIs.
@@ -16,7 +16,7 @@ import type {
   CatalogueFile,
   CatalogueReader,
   RawDoc,
-} from "./build/catalog.ts";
+} from "./build/catalogue.ts";
 import type { BlockReader } from "./serve/store.ts";
 import {
   ARTEFACT_FILES,
@@ -56,7 +56,7 @@ const hash = (text: string): number => {
 
 /**
  * Fingerprint the compiled catalogue by the *content* of its `catalogue.json`
- * (the corpus build rewrites the whole `dist/` each run, so this file changes
+ * (the corpus build rewrites the whole `catalogue/` each run, so this file changes
  * whenever anything in the corpus does). We hash the content rather than stat
  * its mtime because mtime is not preserved across a deploy snapshot (e.g. Deno
  * Deploy), which would make freshly-built artefacts look stale at boot and
@@ -65,7 +65,9 @@ const hash = (text: string): number => {
  */
 const scanCorpus = async (corpusDir: string): Promise<CorpusScan> => {
   try {
-    const text = await Deno.readTextFile(`${corpusDir}/dist/catalogue.json`);
+    const text = await Deno.readTextFile(
+      `${corpusDir}/catalogue/catalogue.json`,
+    );
     return { files: text.length, modified: hash(text) };
   } catch {
     return { files: 0, modified: 0 };
@@ -164,9 +166,9 @@ const blockReader = (dir: string): BlockReader => ({
 /** The production io adapter, backed by Deno's filesystem. */
 export const denoIo: Io = {
   readCatalogue: (corpusDir) =>
-    readJson<CatalogueFile>(`${corpusDir}/dist/catalogue.json`),
+    readJson<CatalogueFile>(`${corpusDir}/catalogue/catalogue.json`),
   readDocument: (corpusDir, docKey) =>
-    readJson<RawDoc>(`${corpusDir}/dist/documents/${docKey}.json`),
+    readJson<RawDoc>(`${corpusDir}/catalogue/documents/${docKey}.json`),
   scanCorpus,
   readManifest,
   readArtefacts,

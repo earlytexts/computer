@@ -42,7 +42,7 @@ A few terms recur across every route:
 
 - **Author / work / edition.** The corpus is organised as authors → works →
   editions. You name each by its **slug**, a short lowercase label (e.g. author
-  `hume`, edition `1742a`). The catalog route lists them all.
+  `hume`, edition `1742a`). The catalogue route lists them all.
 - **Edition slugs are years** — `1757`, `1742a` (the letter distinguishes two
   printings in one year). A work has one **canonical edition**: its default
   printing. If you don't name an edition, you get the canonical one.
@@ -78,7 +78,7 @@ A few terms recur across every route:
 
 These routes hand back the texts themselves and their structure.
 
-### The catalog — `/catalog`
+### The catalogue — `/catalogue`
 
 The whole table of contents: every author, each of their works, and each work's
 editions, with titles and publication years. Authors are ordered by when they

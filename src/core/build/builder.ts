@@ -13,14 +13,14 @@
 import type { Block, MarkitDocument } from "@earlytexts/markit";
 import {
   type Author,
-  type Catalog,
+  type Catalogue,
   childSlug,
   type Edition,
   lastSegment,
   type Section,
   sectionTree,
   type Work,
-} from "./catalog.ts";
+} from "./catalogue.ts";
 import type { AuthorMeta, EditionMeta, WorkMeta } from "../../types.ts";
 import {
   blockText,
@@ -34,7 +34,7 @@ import {
   type Artefacts,
   type BuiltEdition,
   CAP_BIT,
-  type CatalogArtefact,
+  type CatalogueArtefact,
   type CorpusScan,
   type DocRef,
   type Dtm,
@@ -56,7 +56,7 @@ const isCapital = (first: string): boolean =>
 
 /** Visit every block of every edition, under the work that owns its text. */
 const eachUnit = (
-  catalog: Catalog,
+  catalogue: Catalogue,
   visit: (
     work: Work,
     edition: Edition,
@@ -66,14 +66,14 @@ const eachUnit = (
   ) => void,
 ): void => {
   const owns = (work: Work, doc: MarkitDocument): boolean => {
-    const source = catalog.sources.get(doc);
+    const source = catalogue.sources.get(doc);
     return source === undefined || source.startsWith(work.dir + "/") ||
       source === work.dir;
   };
   // A co-authored work is listed under each of its authors; index its blocks
   // once (under the host author), or its units would be counted twice.
   const seen = new Set<Work>();
-  for (const author of catalog.authors) {
+  for (const author of catalogue.authors) {
     for (const work of author.works) {
       if (seen.has(work)) continue;
       seen.add(work);
@@ -509,21 +509,21 @@ export const buildTopics = (dtm: Dtm): Topics => {
 const round6 = (n: number): number => Math.round(n * 1e6) / 1e6;
 
 export const buildArtefacts = (
-  catalog: Catalog,
+  catalogue: Catalogue,
   warnings: string[],
   corpus: CorpusScan,
 ): Artefacts => {
   const encoder = new TextEncoder();
 
-  // Every edition, in catalog order, with display names denormalised so
+  // Every edition, in catalogue order, with display names denormalised so
   // that search responses need no other source. A co-authored work appears in
   // several authors' lists but is one edition on disk, so it is emitted once
   // (under its host author) and carries all its authors.
-  const surnameOf = new Map(catalog.authors.map((a) => [a.slug, a.surname]));
+  const surnameOf = new Map(catalogue.authors.map((a) => [a.slug, a.surname]));
   const editionRefs: EditionRef[] = [];
   const editionIndex = new Map<string, number>();
   const seenWorks = new Set<Work>();
-  for (const author of catalog.authors) {
+  for (const author of catalogue.authors) {
     for (const work of author.works) {
       if (seenWorks.has(work)) continue;
       seenWorks.add(work);
@@ -620,7 +620,7 @@ export const buildArtefacts = (
   // section's blocks to the unit under the edition that owns their text.
   const blockUnit = new Map<Block, number>();
 
-  eachUnit(catalog, (work, edition, sectionPath, sectionTitle, block) => {
+  eachUnit(catalogue, (work, edition, sectionPath, sectionTitle, block) => {
     const editionIdx = editionIndex.get(
       `${work.hostSlug}/${work.slug}/${edition.slug}`,
     )!;
@@ -759,8 +759,8 @@ export const buildArtefacts = (
   // The metadata tree and per-edition skeletons, built from the composed
   // section trees (which include borrowed children); block content stays in
   // blocks.jsonl and is addressed by the unit indices recorded above.
-  const catalogArtefact: CatalogArtefact = {
-    authors: catalog.authors.map((author) => ({
+  const catalogueArtefact: CatalogueArtefact = {
+    authors: catalogue.authors.map((author) => ({
       meta: authorMeta(author),
       works: author.works.map((work) => ({
         meta: workMeta(work),
@@ -792,7 +792,7 @@ export const buildArtefacts = (
       builtAt: new Date().toISOString(),
       corpus,
       stats: {
-        authors: catalog.authors.length,
+        authors: catalogue.authors.length,
         works,
         editions: editionRefs.length,
         units: units.edition.length,
@@ -801,11 +801,11 @@ export const buildArtefacts = (
         spellings: spellings.length,
         forms: forms.length,
       },
-      editionSlugs: catalogArtefact.editionSlugs,
+      editionSlugs: catalogueArtefact.editionSlugs,
       editions: editionRefs,
       warnings,
     },
-    catalog: catalogArtefact,
+    catalogue: catalogueArtefact,
     vocab,
     units,
     postings,

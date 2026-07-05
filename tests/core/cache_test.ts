@@ -9,25 +9,25 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { openComputer } from "../../src/core/mod.ts";
-import { loadCatalog } from "../../src/core/build/catalog.ts";
+import { loadCatalogue } from "../../src/core/build/catalogue.ts";
 import { memoryHarness } from "../helpers.ts";
 import { CORPUS_ROOT, testCorpus } from "../corpus.ts";
 
 const PATHS = { corpusDir: CORPUS_ROOT, artefactsDir: "memory" };
 
-Deno.test("loadCatalog fails clearly when the corpus was not built", async () => {
+Deno.test("loadCatalogue fails clearly when the corpus was not built", async () => {
   const reader = {
     readCatalogue: () => Promise.resolve(null),
     readDocument: () => Promise.resolve(null),
   };
   await assertRejects(
-    () => loadCatalog(reader, "/no/such/corpus"),
+    () => loadCatalogue(reader, "/no/such/corpus"),
     Error,
     "run the corpus build",
   );
 });
 
-Deno.test("loadCatalog reconstructs the catalog, incl. metadata-less docs", async () => {
+Deno.test("loadCatalogue reconstructs the catalogue, incl. metadata-less docs", async () => {
   // A minimal compiled catalogue with one author, work, and edition whose
   // document carries no metadata (the branch the shared fixture never exercises).
   const reader = {
@@ -68,12 +68,12 @@ Deno.test("loadCatalog reconstructs the catalog, incl. metadata-less docs", asyn
         children: [{ id: "A.W.1700.1", blocks: [], children: [] }],
       }),
   };
-  const { catalog, warnings } = await loadCatalog(reader, "/corpus");
+  const { catalogue, warnings } = await loadCatalogue(reader, "/corpus");
   assertEquals(warnings, []);
-  const work = catalog.byAuthor.get("a")!.works[0];
+  const work = catalogue.byAuthor.get("a")!.works[0];
   assertEquals(work.editions[0].document.children[0].id, "A.W.1700.1");
   assertEquals(
-    catalog.sources.get(work.editions[0].document),
+    catalogue.sources.get(work.editions[0].document),
     "data/works/a/w/1700.mit",
   );
 });
@@ -97,18 +97,18 @@ Deno.test("a changed corpus is rebuilt", async () => {
   const { computer } = await openComputer(harness.io, PATHS);
   assertEquals(harness.state.builds, 2);
   // the rebuild used the fresh corpus
-  const catalog = await computer.catalog();
-  assert(catalog.authors.some((a) => a.slug === "extra"));
+  const catalogue = await computer.catalogue();
+  assert(catalogue.authors.some((a) => a.slug === "extra"));
 });
 
 Deno.test("a reopened computer answers identically (codec round-trips)", async () => {
   const harness = memoryHarness(testCorpus());
   const first = (await openComputer(harness.io, PATHS)).computer;
-  const firstCatalog = await first.catalog();
+  const firstCatalogue = await first.catalogue();
   const firstSearch = await first.search({ q: "liberty of the press" });
   // reopen from the cached artefacts (no rebuild) and compare
   const second = (await openComputer(harness.io, PATHS)).computer;
   assertEquals(harness.state.builds, 1);
-  assertEquals(await second.catalog(), firstCatalog);
+  assertEquals(await second.catalogue(), firstCatalogue);
   assertEquals(await second.search({ q: "liberty of the press" }), firstSearch);
 });

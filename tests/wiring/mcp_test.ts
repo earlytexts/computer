@@ -136,7 +136,7 @@ Deno.test("tool schemas mirror the Computer interface's params", async () => {
   }
 });
 
-Deno.test("list_authors renders the catalog", async () => {
+Deno.test("list_authors renders the catalogue", async () => {
   const { client, close } = await connect();
   try {
     const { text } = await call(client, "list_authors");
@@ -484,7 +484,7 @@ Deno.test("a non-Error thrown below the tool is still wrapped as a tool error", 
   // is not an Error instance.
   const exploding = new Proxy({}, {
     get: () => () => {
-      throw "catalog exploded"; // a bare string, not an Error
+      throw "catalogue exploded"; // a bare string, not an Error
     },
   }) as unknown as Computer;
   const server = createMcpServer(exploding);
@@ -496,7 +496,7 @@ Deno.test("a non-Error thrown below the tool is still wrapped as a tool error", 
   try {
     const { text, isError } = await call(client, "list_authors");
     assert(isError);
-    assertStringIncludes(text, "catalog exploded");
+    assertStringIncludes(text, "catalogue exploded");
   } finally {
     await client.close();
     await server.close();

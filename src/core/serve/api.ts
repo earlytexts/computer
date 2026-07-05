@@ -1,6 +1,6 @@
 /**
  * Pure builders for every API response: each takes the loaded artefacts (the
- * catalog metadata tree and, where block text is needed, a BlockStore that
+ * catalogue metadata tree and, where block text is needed, a BlockStore that
  * reads it from blocks.jsonl) plus request parameters, and returns a
  * serializable value from types.ts, or undefined for "not found". The HTTP
  * server is a thin shell around these.
@@ -8,7 +8,7 @@
 
 import type { Block } from "@earlytexts/markit";
 import {
-  type CatalogArtefact,
+  type CatalogueArtefact,
   type EditionEntry,
   type ServeArtefacts,
   type SkeletonSection,
@@ -54,7 +54,7 @@ import { editionFilter, resolveEditions } from "../../scope.ts";
 import type {
   AlignedRow,
   AuthorMeta,
-  CatalogResponse,
+  CatalogueResponse,
   CollocationEntry,
   CollocationsParams,
   CollocationsResponse,
@@ -206,12 +206,14 @@ const sectionNav = (
 
 /* ------------------------------ builders ----------------------------- */
 
-export const catalogResponse = (catalog: CatalogArtefact): CatalogResponse => ({
-  authors: catalog.authors.map((author) => ({
+export const catalogueResponse = (
+  catalogue: CatalogueArtefact,
+): CatalogueResponse => ({
+  authors: catalogue.authors.map((author) => ({
     ...author.meta,
     works: author.works.map((work) => work.meta),
   })),
-  editionSlugs: catalog.editionSlugs,
+  editionSlugs: catalogue.editionSlugs,
 });
 
 export const editionResponse = async (

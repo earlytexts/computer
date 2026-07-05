@@ -1,7 +1,7 @@
 /**
- * Serve-time block access and catalog lookups. The in-memory tables are parsed
+ * Serve-time block access and catalogue lookups. The in-memory tables are parsed
  * by artefacts.ts (parseArtefacts); this module reads block content lazily
- * through an injected BlockReader and resolves catalog slugs to entries.
+ * through an injected BlockReader and resolves catalogue slugs to entries.
  *
  * Block content is fetched lazily: a single search hit by byte range
  * (BlockStore.unitBlock), and the text/compare routes a whole edition at a time
@@ -12,7 +12,7 @@
 import type { Block } from "@earlytexts/markit";
 import {
   type AuthorEntry,
-  type CatalogArtefact,
+  type CatalogueArtefact,
   type Dtm,
   DTM_BIN,
   DTM_JSON,
@@ -259,13 +259,13 @@ export const createTopicsStore = (reader: BlockReader): TopicsStore => {
   return { model: () => cached ??= load() };
 };
 
-/* --------------------------- catalog lookup -------------------------- */
+/* --------------------------- catalogue lookup -------------------------- */
 
 export const findAuthorEntry = (
-  catalog: CatalogArtefact,
+  catalogue: CatalogueArtefact,
   authorSlug: string,
 ): AuthorEntry | undefined =>
-  catalog.authors.find((a) => a.meta.slug === authorSlug);
+  catalogue.authors.find((a) => a.meta.slug === authorSlug);
 
 export const findEditionEntry = (
   work: WorkEntry,

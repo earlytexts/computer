@@ -10,7 +10,7 @@
 import { diffTokens } from "./diff.ts";
 
 /**
- * The shape both section representations share: the catalog's `Section`
+ * The shape both section representations share: the catalogue's `Section`
  * (build time) and the artefacts' `SkeletonSection` (serve time). These
  * helpers are written against it so either can be aligned and matched.
  */

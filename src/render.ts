@@ -13,11 +13,12 @@ import type {
   BlockElement,
   InlineElement,
   ListItem,
+  NestableBlockElement,
   Paragraph,
 } from "@earlytexts/markit";
 import type {
   AlignedRow,
-  CatalogAuthor,
+  CatalogueAuthor,
   CollocationsResponse,
   CompareResponse,
   CompareSectionResponse,
@@ -84,20 +85,13 @@ const markListItem = (item: ListItem): ListItem => ({
   },
 });
 
-const markBlockElement = (element: BlockElement): BlockElement => {
+const markNestable = (element: NestableBlockElement): NestableBlockElement => {
   switch (element.type) {
     case "paragraph":
       return markParagraph(element);
-    case "heading":
-      return {
-        ...element,
-        content: element.content.map((line) => ({
-          ...line,
-          content: markInline(line.content),
-        })),
-      };
     case "blockquote":
-      return { ...element, content: element.content.map(markParagraph) };
+    case "stageDirection":
+      return { ...element, content: element.content.map(markNestable) };
     case "list":
       return { ...element, items: element.items.map(markListItem) };
     case "table":
@@ -114,6 +108,17 @@ const markBlockElement = (element: BlockElement): BlockElement => {
   }
 };
 
+const markBlockElement = (element: BlockElement): BlockElement =>
+  element.type === "heading"
+    ? {
+      ...element,
+      content: element.content.map((line) => ({
+        ...line,
+        content: markInline(line.content),
+      })),
+    }
+    : markNestable(element);
+
 const markHighlights = (block: Block): Block => ({
   ...block,
   content: block.content.map(markBlockElement),
@@ -128,14 +133,14 @@ export const renderBlocks = (blocks: Block[]): string =>
     [endLine]: 0,
   }).trim();
 
-/* ------------------------------ catalog ------------------------------ */
+/* ------------------------------ catalogue ------------------------------ */
 
 const span = (birth?: number, death?: number): string =>
   birth === undefined && death === undefined
     ? ""
     : ` (${birth ?? "?"}–${death ?? "?"})`;
 
-export const renderAuthors = (authors: CatalogAuthor[]): string =>
+export const renderAuthors = (authors: CatalogueAuthor[]): string =>
   authors.map((author) => {
     const name = [author.title, author.forename, author.surname]
       .filter((part) => part !== undefined).join(" ");
@@ -166,7 +171,7 @@ const renderWorkMeta = (work: WorkMeta): string =>
     )
   }`;
 
-export const renderWorks = (author: CatalogAuthor): string =>
+export const renderWorks = (author: CatalogueAuthor): string =>
   `Works of ${author.forename} ${author.surname} (${author.slug}), ` +
   `with edition slugs ("(canonical)" marks each work's default edition; ` +
   `[stub] means the text is not in the corpus):\n\n` +

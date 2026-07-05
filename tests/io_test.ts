@@ -48,10 +48,10 @@ Deno.test("the corpus fingerprint tracks content, not mtime", async () => {
   // mtimes: identical content (touched to a new mtime) stays fresh; changed
   // content goes stale. So it fingerprints the catalogue's bytes, not its stat.
   const base = await Deno.makeTempDir({ prefix: "computer-io-" });
-  const dist = `${base}/dist`;
-  const path = `${dist}/catalogue.json`;
+  const catalogueDir = `${base}/catalogue`;
+  const path = `${catalogueDir}/catalogue.json`;
   try {
-    await Deno.mkdir(dist, { recursive: true });
+    await Deno.mkdir(catalogueDir, { recursive: true });
     await Deno.writeTextFile(path, '{"authors":[]}');
     const first = await denoIo.scanCorpus(base);
 

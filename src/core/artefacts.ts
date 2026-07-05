@@ -11,7 +11,7 @@
  *
  *   manifest.json    pipeline version, corpus fingerprint, edition list,
  *                    stats, build warnings
- *   catalog.json     the Author -> Work -> Edition metadata tree, and per
+ *   catalogue.json     the Author -> Work -> Edition metadata tree, and per
  *                    edition a section skeleton (the composed section tree
  *                    with titles/breadcrumbs/imported flags) whose nodes carry
  *                    the unit indices of their blocks, not the blocks; this is
@@ -60,7 +60,7 @@
  * points into it. The pipeline version (extraction + tokenizer) is stamped
  * into the manifest; artefacts from another version are never served.
  *
- * parseArtefacts reads only the manifest, catalog, vocab, units, and postings
+ * parseArtefacts reads only the manifest, catalogue, vocab, units, and postings
  * (tens of MB) into the in-memory ServeArtefacts; block content is fetched from
  * blocks.jsonl on demand through a BlockReader (by byte range per search hit,
  * or a whole edition at a time, cached, for the text and compare routes), and
@@ -105,7 +105,7 @@ export const editionDir = (ref: EditionRef): string =>
  */
 export const ARTEFACT_FILES = {
   manifest: "manifest.json",
-  catalog: "catalog.json",
+  catalogue: "catalogue.json",
   vocab: "vocab.json",
   units: "units.json",
   postings: "postings.bin",
@@ -171,14 +171,14 @@ export type Manifest = {
     spellings: number;
     forms: number;
   };
-  /** Distinct edition slugs across the catalog (for filter UIs). */
+  /** Distinct edition slugs across the catalogue (for filter UIs). */
   editionSlugs: string[];
-  /** Every edition, in catalog order; units.edition indexes into this. */
+  /** Every edition, in catalogue order; units.edition indexes into this. */
   editions: EditionRef[];
   warnings: string[];
 };
 
-/* ------------------------------ catalog ------------------------------ */
+/* ------------------------------ catalogue ------------------------------ */
 
 /**
  * One node of an edition's section skeleton: a section's place and metadata,
@@ -219,9 +219,9 @@ export type AuthorEntry = {
 };
 
 /** The metadata tree and per-edition skeletons; serves text and compare. */
-export type CatalogArtefact = {
+export type CatalogueArtefact = {
   authors: AuthorEntry[];
-  /** Distinct edition slugs across the catalog (for filter UIs). */
+  /** Distinct edition slugs across the catalogue (for filter UIs). */
   editionSlugs: string[];
 };
 
@@ -359,7 +359,7 @@ export type BuiltEdition = EditionRef & {
 
 export type Artefacts = {
   manifest: Manifest;
-  catalog: CatalogArtefact;
+  catalogue: CatalogueArtefact;
   vocab: Vocab;
   units: UnitTable;
   postings: Postings;
@@ -377,7 +377,7 @@ export type Artefacts = {
 /** Everything the server holds in memory to answer requests. */
 export type ServeArtefacts = {
   manifest: Manifest;
-  catalog: CatalogArtefact;
+  catalogue: CatalogueArtefact;
   vocab: Vocab;
   units: UnitTable;
   postings: Postings;
@@ -466,7 +466,7 @@ export const serializeArtefacts = (artefacts: Artefacts): ArtefactFiles => {
     ARTEFACT_FILES.overlay,
     json({ affectedUnits: artefacts.affectedUnits }),
   );
-  files.set(ARTEFACT_FILES.catalog, json(artefacts.catalog));
+  files.set(ARTEFACT_FILES.catalogue, json(artefacts.catalogue));
   files.set(ARTEFACT_FILES.vocab, json(artefacts.vocab));
   files.set(ARTEFACT_FILES.units, json(artefacts.units));
   files.set(ARTEFACT_FILES.manifest, json(artefacts.manifest, true));
@@ -497,7 +497,9 @@ export const parseArtefacts = (files: ArtefactFiles): ServeArtefacts => {
         `this is ${PIPELINE_VERSION}`,
     );
   }
-  const catalog = JSON.parse(text(ARTEFACT_FILES.catalog)) as CatalogArtefact;
+  const catalogue = JSON.parse(
+    text(ARTEFACT_FILES.catalogue),
+  ) as CatalogueArtefact;
   const vocab = JSON.parse(text(ARTEFACT_FILES.vocab)) as Vocab;
   const units = JSON.parse(text(ARTEFACT_FILES.units)) as UnitTable;
   const split = vocab.surfaces.length + 1;
@@ -525,7 +527,7 @@ export const parseArtefacts = (files: ArtefactFiles): ServeArtefacts => {
   }
   return {
     manifest,
-    catalog,
+    catalogue,
     vocab,
     units,
     postings,

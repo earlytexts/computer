@@ -7,7 +7,7 @@
  *
  * Routes (all GET):
  *   /                                                          health/info
- *   /catalog                                                   all authors, works, and editions
+ *   /catalogue                                                   all authors, works, and editions
  *   /authors/:author/:work                                     canonical edition: title blocks + section tree
  *   /authors/:author/:work/full                                canonical edition with text
  *   /authors/:author/:work/*                                   one canonical-edition section + navigation
@@ -267,20 +267,20 @@ const route = async (computer: Computer, url: URL): Promise<Response> => {
   const p = url.searchParams;
 
   if (segments.length === 0) {
-    const catalog = await computer.catalog();
+    const catalogue = await computer.catalogue();
     return json({
       service: "computer",
-      authors: catalog.authors.length,
-      works: catalog.authors.reduce((n, a) => n + a.works.length, 0),
+      authors: catalogue.authors.length,
+      works: catalogue.authors.reduce((n, a) => n + a.works.length, 0),
     });
   }
-  if (segments[0] === "catalog" && segments.length === 1) {
+  if (segments[0] === "catalogue" && segments.length === 1) {
     // The plain-text rendering lists the authors (as the MCP's list_authors
-    // does); the JSON keeps the full nested catalog.
+    // does); the JSON keeps the full nested catalogue.
     return respond(
       p,
-      await computer.catalog(),
-      (catalog) => renderAuthors(catalog.authors),
+      await computer.catalogue(),
+      (catalogue) => renderAuthors(catalogue.authors),
     );
   }
   if (segments[0] === "search" && segments.length === 1) {

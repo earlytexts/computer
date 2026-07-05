@@ -17,7 +17,7 @@ import {
 } from "./store.ts";
 import type { WorkEntry } from "../artefacts.ts";
 import {
-  catalogResponse,
+  catalogueResponse,
   collocationsResponse,
   compareResponse,
   compareSectionResponse,
@@ -50,7 +50,7 @@ export const localComputer = (
   // one URL a work lives at; the co-authored work is reached only by its joint
   // host, not under either author.
   const byHost = new Map<string, WorkEntry>();
-  for (const a of artefacts.catalog.authors) {
+  for (const a of artefacts.catalogue.authors) {
     for (const w of a.works) {
       byHost.set(`${w.meta.hostSlug}/${w.meta.slug}`, w);
     }
@@ -63,9 +63,9 @@ export const localComputer = (
     const workEntry = byHost.get(`${lower(host)}/${lower(work)}`);
     if (workEntry === undefined) return undefined;
     // The work's authors, mapped to their metadata for the response; every slug
-    // names a catalog author (the build registered the work under each).
+    // names a catalogue author (the build registered the work under each).
     const authors = workEntry.meta.authorSlugs.map(
-      (slug) => findAuthorEntry(artefacts.catalog, slug)!.meta,
+      (slug) => findAuthorEntry(artefacts.catalogue, slug)!.meta,
     );
     return { authors, work: workEntry };
   };
@@ -85,7 +85,7 @@ export const localComputer = (
   };
 
   return {
-    catalog: () => Promise.resolve(catalogResponse(artefacts.catalog)),
+    catalogue: () => Promise.resolve(catalogueResponse(artefacts.catalogue)),
     edition: (author, work, edition, version) => {
       const found = resolve(author, work, edition);
       return found === undefined ? Promise.resolve(undefined) : editionResponse(

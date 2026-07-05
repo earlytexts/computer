@@ -17,17 +17,20 @@
 
 import type {
   Block,
+  ElementAttribute,
   InlineElement,
   List,
+  NestableBlockElement,
   WrapperType,
 } from "@earlytexts/markit";
 import { blockText, markBlock } from "./text.ts";
-import { lastSegment } from "../build/catalog.ts";
+import { lastSegment } from "../build/catalogue.ts";
 
 /** A wrapper inline element enclosing a token, minus its content. */
 type ContextFrame =
   | { type: WrapperType }
   | { type: "language"; lang?: string }
+  | { type: "element"; tag: string; attributes: ElementAttribute[] }
   | { type: "highlight" };
 
 export type Token = {
@@ -201,8 +204,13 @@ const buildSpans = (block: Block): { text: string; spans: TextSpan[] } => {
         add("[...]", ctx);
       } else if (el.type === "language") {
         inlineCtx(el.content, [...ctx, { type: "language", lang: el.lang }]);
+      } else if (el.type === "element") {
+        inlineCtx(el.content, [
+          ...ctx,
+          { type: "element", tag: el.tag, attributes: el.attributes },
+        ]);
       } else if ("content" in el) {
-        // Wrapper: el is narrowed to Wrapper, el.type is WrapperType
+        // Wrapper or Highlight: el.type is a WrapperType or "highlight"
         inlineCtx(el.content, [...ctx, { type: el.type }]);
       }
       // pageBreak, footnoteReference: contribute nothing
@@ -220,22 +228,16 @@ const buildSpans = (block: Block): { text: string; spans: TextSpan[] } => {
     });
   };
 
-  block.content.forEach((el, i) => {
-    if (i > 0) add("\n", []);
+  const nestableBlock = (el: NestableBlockElement): void => {
     switch (el.type) {
       case "paragraph":
         inlineCtx(el.content, []);
         break;
-      case "heading":
-        el.content.forEach((line, j) => {
-          if (j > 0) add("\n", []);
-          inlineCtx(line.content, []);
-        });
-        break;
       case "blockquote":
-        el.content.forEach((para, j) => {
+      case "stageDirection":
+        el.content.forEach((child, j) => {
           if (j > 0) add("\n", []);
-          inlineCtx(para.content, []);
+          nestableBlock(child);
         });
         break;
       case "list":
@@ -251,6 +253,16 @@ const buildSpans = (block: Block): { text: string; spans: TextSpan[] } => {
         });
         break;
     }
+  };
+
+  block.content.forEach((el, i) => {
+    if (i > 0) add("\n", []);
+    if (el.type === "heading") {
+      el.content.forEach((line, j) => {
+        if (j > 0) add("\n", []);
+        inlineCtx(line.content, []);
+      });
+    } else nestableBlock(el);
   });
 
   return { text, spans };
@@ -334,19 +346,13 @@ export const diffBlocks = (a: Block[], b: Block[]): BlockDiff[] => {
 const opText = (tokens: Token[]): string =>
   tokens.map((token) => (token.spaced ? " " : "") + token.text).join("");
 
-/** Two context stacks are equal when the same wrappers appear in the same order. */
-const contextsEqual = (a: ContextFrame[], b: ContextFrame[]): boolean => {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i].type !== b[i].type) return false;
-    if (a[i].type === "language") {
-      const al = (a[i] as { lang?: string }).lang;
-      const bl = (b[i] as { lang?: string }).lang;
-      if (al !== bl) return false;
-    }
-  }
-  return true;
-};
+/** Two context stacks are equal when the same wrappers appear in the same
+ * order, with the same details (a language frame's lang, an element frame's
+ * tag and attributes). Frames are built by one code path (inlineCtx), so their
+ * key order is deterministic and JSON comparison is structural comparison. */
+const contextsEqual = (a: ContextFrame[], b: ContextFrame[]): boolean =>
+  a.length === b.length &&
+  a.every((frame, i) => JSON.stringify(frame) === JSON.stringify(b[i]));
 
 /** A changed block's ops as inline content: equal runs preserve their inline
  * formatting (emphasis, strong, quote, language, etc.) by grouping tokens that
