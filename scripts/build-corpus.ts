@@ -4,17 +4,21 @@
  * corpus's build functions are runtime-neutral (all I/O goes through an
  * injected `CorpusFs`), and `nodeCorpusFs` is `node:fs`-backed (which Deno
  * provides natively), so this wrapper simply drives them against the configured
- * corpus directory. Markit resolves via this project's import map (deno.json),
- * exactly as the computer already imports the corpus's `wire` types — so the
- * corpus checkout needs no `npm install` here.
+ * corpus directory. They come from the corpus's published `build` subpath —
+ * the one build-time seam that touches the compiler — resolved via this
+ * project's import map (deno.json), exactly as its application code imports the
+ * corpus's `wire` types. So the corpus checkout at $CORPUS_DIR is pure data:
+ * the code is the pinned package version, and no `npm install` is needed there.
  *
  * Run with: deno task build:corpus. In dev, run the corpus's own `npm run
  * build` instead; both produce byte-identical output.
  */
 
-import { buildCatalogue } from "../../corpus/src/catalogue.ts";
-import { writeCatalogue } from "../../corpus/src/catalogue-output.ts";
-import { nodeCorpusFs } from "../../corpus/src/fs.ts";
+import {
+  buildCatalogue,
+  nodeCorpusFs,
+  writeCatalogue,
+} from "@earlytexts/corpus/build";
 import { corpusDir } from "../src/config.ts";
 
 const root = corpusDir();
