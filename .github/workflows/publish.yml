@@ -1,0 +1,43 @@
+name: "Publish"
+
+on:
+  workflow_run:
+    workflows: ["Test"]
+    types: ["completed"]
+    branches: ["main"]
+
+jobs:
+  publish:
+    if: "github.event.workflow_run.conclusion == 'success'"
+    runs-on: "ubuntu-latest"
+
+    permissions:
+      contents: "read"
+      id-token: "write" # needed for auth with Deno Deploy
+
+    steps:
+      - name: "Clone repository"
+        uses: "actions/checkout@v6"
+        with:
+          ref: "${{ github.event.workflow_run.head_sha }}"
+
+      - name: "Install Deno"
+        uses: "denoland/setup-deno@v2"
+        with:
+          deno-version: "v2.x"
+
+      - name: "Check if version is new"
+        id: "check"
+        run: |
+          CURRENT=$(deno eval "console.log(JSON.parse(Deno.readTextFileSync('deno.json')).version)")
+          PUBLISHED=$(curl -s "https://jsr.io/@earlytexts/computer/meta.json" | jq -r '.latest // "0.0.0"')
+          echo "Current: $CURRENT, Published: $PUBLISHED"
+          if [ "$CURRENT" != "$PUBLISHED" ]; then
+            echo "publish=true" >> $GITHUB_OUTPUT
+          else
+            echo "publish=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: "Publish package"
+        if: "steps.check.outputs.publish == 'true'"
+        run: "deno publish"

@@ -1,4 +1,11 @@
 {
+  "name": "@earlytexts/computer",
+  "version": "0.1.0",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/client.ts",
+    "./types": "./src/types.ts"
+  },
   "tasks": {
     "start": "deno run --allow-net --allow-read --allow-write --allow-env src/main.ts",
     "stdio": "deno run --allow-net --allow-read --allow-write --allow-env src/stdio.ts",
@@ -20,6 +27,15 @@
     "@earlytexts/markit": "npm:@earlytexts/markit@^3.4.2",
     "@modelcontextprotocol/sdk/": "npm:/@modelcontextprotocol/sdk@1.29.0/",
     "@std/assert": "jsr:@std/assert@^1.0.0"
+  },
+  "publish": {
+    "include": [
+      "src/client.ts",
+      "src/types.ts",
+      "README.md",
+      "LICENSE.md",
+      "deno.json"
+    ]
   },
   "fmt": {
     "exclude": ["tests/fixtures/", "artefacts/", "dev/state/"]
