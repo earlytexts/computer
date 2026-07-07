@@ -30,7 +30,8 @@ jobs:
         id: "check"
         run: |
           CURRENT=$(deno eval "console.log(JSON.parse(Deno.readTextFileSync('deno.json')).version)")
-          PUBLISHED=$(curl -s "https://jsr.io/@earlytexts/computer/meta.json" | jq -r '.latest // "0.0.0"')
+          META=$(curl -sf "https://jsr.io/@earlytexts/computer/meta.json" || echo '{}')
+          PUBLISHED=$(echo "$META" | jq -r '.latest // "0.0.0"')
           echo "Current: $CURRENT, Published: $PUBLISHED"
           if [ "$CURRENT" != "$PUBLISHED" ]; then
             echo "publish=true" >> $GITHUB_OUTPUT
