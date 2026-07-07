@@ -11,6 +11,23 @@ The functions are exposed over a JSON HTTP API and the Model Context Protocol
 
 The code is written in TypeScript and runs on Deno.
 
+## Client library
+
+This package publishes a small, dependency-light TypeScript client for the HTTP
+API to [JSR](https://jsr.io/@earlytexts/computer):
+
+```ts
+import { computerClient } from "@earlytexts/computer";
+import type { CatalogueResponse } from "@earlytexts/computer/types";
+
+const computer = computerClient("http://localhost:8420");
+const catalogue: CatalogueResponse = await computer.catalogue();
+```
+
+Only `src/client.ts` (the client) and `src/types.ts` (the wire contract) are
+published; the server and its build artefacts are not. See `src/client.ts` for
+the full method surface and error-handling contract.
+
 ## Running
 
 ```sh

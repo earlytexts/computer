@@ -3,8 +3,8 @@
   "specifiers": {
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/internal@^1.0.12": "1.0.14",
-    "npm:@earlytexts/corpus@0.5": "0.5.0",
-    "npm:@earlytexts/markit@^3.4.1": "3.4.1",
+    "npm:@earlytexts/corpus@~0.5.1": "0.5.1",
+    "npm:@earlytexts/markit@^3.4.2": "3.4.2",
     "npm:@modelcontextprotocol/sdk@1.29.0": "1.29.0_zod@4.4.3"
   },
   "jsr": {
@@ -19,14 +19,14 @@
     }
   },
   "npm": {
-    "@earlytexts/corpus@0.5.0": {
-      "integrity": "sha512-gxt3k6+J7+ow85XSQ8AVIn7uB4ql81QMac+LdJ90bbyvGv8MSW7OzZ2RHXPQt8dXU6pQZjWIzi1XCUXSNmDweQ==",
+    "@earlytexts/corpus@0.5.1": {
+      "integrity": "sha512-9aGTCHcJdgiKgEOZmw3QQCpY6ArAIDkTzAHGAOG0yh6k9bjkV1Ev4c6eqmRr7TOTLkl1gpZj+0Y8sHtQW4lxfQ==",
       "dependencies": [
         "@earlytexts/markit"
       ]
     },
-    "@earlytexts/markit@3.4.1": {
-      "integrity": "sha512-AqTlQNKtETEQDcxVJ9MrL/KAW1jvu2RSArtk2OokrwoF+t0mEdHUTsJF02beoBxvNxZQo/94N20mgs/58xqbkA=="
+    "@earlytexts/markit@3.4.2": {
+      "integrity": "sha512-biQTxv39HfekbItpCt/I5Z6XinryWEOeYnQBYbbq0V1WojzDX/G3CIjlMIOzXX/7FuVQeRj5NPTZ3KBKnoWIwA=="
     },
     "@hono/node-server@1.19.14_hono@4.12.26": {
       "integrity": "sha512-GwtvgtXxnWsucXvbQXkRgqksiH2Qed37H9xHZocE5sA3N8O8O8/8FA3uclQXxXVzc9XBZuEOMK7+r02FmSpHtw==",
@@ -546,8 +546,8 @@
   "workspace": {
     "dependencies": [
       "jsr:@std/assert@1",
-      "npm:@earlytexts/corpus@0.5",
-      "npm:@earlytexts/markit@^3.4.1",
+      "npm:@earlytexts/corpus@~0.5.1",
+      "npm:@earlytexts/markit@^3.4.2",
       "npm:@modelcontextprotocol/sdk@1.29.0"
     ]
   }

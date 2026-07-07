@@ -7,12 +7,12 @@
  */
 
 import type { Block } from "@earlytexts/markit";
-import {
-  type CatalogueArtefact,
-  type EditionEntry,
-  type ServeArtefacts,
-  type SkeletonSection,
-  type WorkEntry,
+import type {
+  CatalogueArtefact,
+  EditionEntry,
+  ServeArtefacts,
+  SkeletonSection,
+  WorkEntry,
 } from "../artefacts.ts";
 import {
   aggregateMix,
