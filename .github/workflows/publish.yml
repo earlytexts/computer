@@ -26,19 +26,5 @@ jobs:
         with:
           deno-version: "v2.x"
 
-      - name: "Check if version is new"
-        id: "check"
-        run: |
-          CURRENT=$(deno eval "console.log(JSON.parse(Deno.readTextFileSync('deno.json')).version)")
-          META=$(curl -sf "https://jsr.io/@earlytexts/computer/meta.json" || echo '{}')
-          PUBLISHED=$(echo "$META" | jq -r '.latest // "0.0.0"')
-          echo "Current: $CURRENT, Published: $PUBLISHED"
-          if [ "$CURRENT" != "$PUBLISHED" ]; then
-            echo "publish=true" >> $GITHUB_OUTPUT
-          else
-            echo "publish=false" >> $GITHUB_OUTPUT
-          fi
-
       - name: "Publish package"
-        if: "steps.check.outputs.publish == 'true'"
         run: "deno publish"
