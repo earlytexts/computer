@@ -24,6 +24,7 @@
   "imports": {
     "@earlytexts/corpus/wire": "npm:@earlytexts/corpus@^0.5.1/wire",
     "@earlytexts/corpus/build": "npm:@earlytexts/corpus@^0.5.1/build",
+    "@earlytexts/corpus/harness": "npm:@earlytexts/corpus@^0.5.1/harness",
     "@earlytexts/markit": "npm:@earlytexts/markit@^3.4.2",
     "@modelcontextprotocol/sdk/": "npm:/@modelcontextprotocol/sdk@1.29.0/",
     "@std/assert": "jsr:@std/assert@^1.0.0"

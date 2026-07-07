@@ -14,15 +14,15 @@
  * grouping, diffing and version handling stay observable in real output.
  */
 
-import { buildCatalogue } from "../../corpus/src/catalogue.ts";
-import { serializeCatalogue } from "../../corpus/src/serialize.ts";
+import { buildCatalogue } from "@earlytexts/corpus/build";
+import { serializeCatalogue } from "@earlytexts/corpus/wire";
 import {
   corpus,
   CORPUS_ROOT,
   CorpusBuilder,
   memoryCorpus,
   type Meta,
-} from "../../corpus/tests/harness.ts";
+} from "@earlytexts/corpus/harness";
 
 // The generic corpus-authoring harness lives with the corpus (which owns the
 // catalogue build); re-export it so the computer's tests keep importing it here.
