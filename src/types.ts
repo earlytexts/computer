@@ -612,6 +612,11 @@ export type ErrorResponse = { error: string };
  * scope.ts): `editions` chooses the universe (one canonical printing per work,
  * the default, or every printing), `edition` names one specific printing and is
  * only valid together with `work`. They are mutually exclusive.
+ *
+ * A `work` scopes by containment: a composite work's scope includes every
+ * edition borrowed into its in-scope editions, so scoping to a collection
+ * reaches the subworks spliced into its text (whose hits still cite their own
+ * work and edition).
  */
 export type EditionScope = {
   /** One specific printing (a year slug); requires `work`. */

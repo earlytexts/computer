@@ -78,9 +78,9 @@ export const VOCAB_VERSION = 2;
  * change — adding, removing, or reshaping a derived file — so that an artefacts
  * directory built before the change is treated as stale and rebuilt. The DTM
  * (dtm.bin/dtm.json) landing took this to 1; the topic model (topics.bin/
- * topics.json) to 2.
+ * topics.json) to 2; the borrowed-members field on EditionRef to 3.
  */
-export const ARTEFACT_VERSION = 2;
+export const ARTEFACT_VERSION = 3;
 export const PIPELINE_VERSION =
   `x${EXTRACTION_VERSION}.t${TOKENIZER_VERSION}.v${VOCAB_VERSION}.a${ARTEFACT_VERSION}`;
 
@@ -148,6 +148,11 @@ export type EditionRef = {
   edition: string; // a year slug
   /** Whether this is the work's canonical edition (the default search scope). */
   canonical: boolean;
+  /** Indices (into the manifest's edition list) of the editions spliced into
+   * this one as borrowed children, transitively — so scoping to a composite
+   * edition can reach the borrowed works, whose units carry their own
+   * editions. Empty for a non-composite edition. */
+  members: number[];
 };
 
 export type CorpusScan = {

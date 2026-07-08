@@ -40,6 +40,17 @@ Deno.test("groupBy=edition adds the edition dimension", async () => {
   assert(byEdition.results.every((r) => r.edition !== null));
 });
 
+Deno.test("a work filter reaches text borrowed into the collection", async () => {
+  const computer = await testComputer();
+  // "avarice" occurs only in tw/1750, the edition comp's canonical borrows;
+  // the count is attributed to the borrowed work, over its own token total.
+  const scoped = await computer.frequency({ q: "avarice", work: "comp" });
+  assertEquals(scoped.total, 1);
+  assertEquals(scoped.results.length, 1);
+  assertEquals(scoped.results[0].work, "tw");
+  assert(scoped.results[0].tokens > 0);
+});
+
 Deno.test("an empty query has no occurrences", async () => {
   const computer = await testComputer();
   assertEquals((await computer.frequency({ q: "" })).total, 0);

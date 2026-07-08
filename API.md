@@ -54,7 +54,10 @@ A few terms recur across every route:
   year would name different, unrelated printings across different works, so it
   is refused without one. `author` and `work` narrow the scope further. (A year
   is only a stable name _within_ a work, which is why a specific edition needs
-  one.)
+  one.) A `work` scopes by **containment**: a collection's scope includes the
+  works borrowed into its text, so scoping to a composite edition searches
+  everything printed in it — matches in borrowed text still cite their own work
+  and edition.
 - **Version.** Editorial work makes each edition _two_ texts: `edited`, the
   clean reading text (corrections applied), and `original`, the text as actually
   printed (corrections undone). The default is always `edited`. Reading routes

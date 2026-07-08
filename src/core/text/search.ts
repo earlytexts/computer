@@ -22,7 +22,8 @@
  * The index is keyed by SURFACE form (distinct case-folded spellings); a query
  * word is expanded to every surface sharing its bucket at the chosen level (or
  * to its own surface only, for `exact`). Results can be filtered by author,
- * work, and edition.
+ * work, and edition; a work filter scopes by containment, reaching the
+ * editions borrowed into a composite edition (see `scopeEditions`).
  *
  * Hits are ranked by BM25 (the `score` field, deliberately opaque — only the
  * ordering it imposes is part of the contract). The whole query is one phrase,
@@ -43,6 +44,7 @@
 
 import {
   CAP_BIT,
+  type EditionRef,
   POSITION_MASK,
   type Postings,
   type ServeArtefacts,
@@ -250,11 +252,51 @@ export const occurrences = (
  * Result filters. With no `edition`, search is scoped to each work's canonical
  * edition (so a corpus-wide query returns one hit per work, not one per
  * printing); `edition: "all"` searches every edition, and a year slug searches
- * just that one.
+ * just that one. Naming a `work` scopes by containment: a composite edition's
+ * scope includes the editions borrowed into it (see `scopeEditions`).
  */
 export type Filters = { author?: string; work?: string; edition?: string };
 
 export const ALL_EDITIONS = "all";
+
+/**
+ * Resolve the filters to the editions in scope, as a 0/1 mask over the
+ * manifest's edition list — the one scope rule shared by the universe-filter
+ * routes (search, frequency, concordance, keywords, collocations).
+ *
+ * With no work named, an edition qualifies by its own flags: canonical by
+ * default, every printing for `edition: "all"`, or the named year. With a
+ * work, scope is containment: the work's editions passing the edition filter,
+ * plus every edition spliced into them as borrowed children (`members`,
+ * transitive, regardless of those editions' own canonical flags) — so scoping
+ * to a collection reaches the borrowed works whose units carry their own
+ * editions (see builder.ts). The author filter then applies to each edition's
+ * own ref — who wrote that text — borrowed or not.
+ */
+export const scopeEditions = (
+  editions: EditionRef[],
+  filters: Filters,
+): Uint8Array => {
+  const mask = new Uint8Array(editions.length);
+  const editionOk = (ref: EditionRef): boolean =>
+    filters.edition === undefined
+      ? ref.canonical
+      : filters.edition === ALL_EDITIONS || ref.edition === filters.edition;
+  editions.forEach((ref, i) => {
+    if (filters.work !== undefined && ref.work !== filters.work) return;
+    if (!editionOk(ref)) return;
+    mask[i] = 1;
+    if (filters.work !== undefined) {
+      for (const member of ref.members) mask[member] = 1;
+    }
+  });
+  if (filters.author !== undefined) {
+    editions.forEach((ref, i) => {
+      if (!ref.authors.includes(filters.author!)) mask[i] = 0;
+    });
+  }
+  return mask;
+};
 
 /* -------------------------------- BM25 -------------------------------- */
 
@@ -299,22 +341,12 @@ export const search = (
   // and N and the mean unit length come from the manifest stats.
   const idf = bm25Idf(manifest.stats.units, candidates.size);
   const avgLength = manifest.stats.tokens / Math.max(1, manifest.stats.units);
+  const inScope = scopeEditions(manifest.editions, filters);
   const hits: SearchHit[] = [];
   for (const [unitIndex, positions] of candidates) {
     // phraseMatches only records a unit with at least one match, so positions
     // is always non-empty here.
-    const ref = manifest.editions[units.edition[unitIndex]];
-    if (
-      filters.author !== undefined && !ref.authors.includes(filters.author)
-    ) continue;
-    if (filters.work !== undefined && ref.work !== filters.work) continue;
-    if (filters.edition === undefined) {
-      if (!ref.canonical) continue;
-    } else if (
-      filters.edition !== ALL_EDITIONS && ref.edition !== filters.edition
-    ) {
-      continue;
-    }
+    if (inScope[units.edition[unitIndex]] === 0) continue;
     const sorted = [...new Set(positions)].sort((a, b) => a - b);
     // Term frequency is the count of phrase occurrences (each is a run of
     // `words.length` consecutive matched positions; see `occurrences`).

@@ -35,6 +35,7 @@ import {
   parseQuery,
   REFERENCE,
   resolveBlock,
+  scopeEditions,
   search,
   type SearchOptions,
   similar,
@@ -419,8 +420,10 @@ const clamp = (raw: number | undefined, def: number, max?: number): number => {
 /**
  * Whether an edition falls in the chosen universe: its canonical printing by
  * default (`filter` undefined), every printing (`filter === "all"`), or the one
- * named year. The shared universe rule behind the search/keywords/collocations
- * scope (the `edition`/`editions` params, resolved to a `filter` by scope.ts).
+ * named year (the `edition`/`editions` params, resolved to a `filter` by
+ * scope.ts). Keywords' reference universe reads this flag directly; the
+ * author/work-scoped side of every route goes through `scopeEditions`, which
+ * adds borrowed containment on top of the same rule.
  */
 const inUniverse = (
   filter: string | undefined,
@@ -582,15 +585,16 @@ export const frequencyResponse = (
   }
 
   // Second pass: sum in-scope token counts as the relative-frequency denominator.
-  // Uses the same edition filter as search() so the scope is consistent.
+  // Resolved by the same scope rule as search() (borrowed containment included),
+  // so numerators and denominators agree.
+  const inScope = scopeEditions(manifest.editions, {
+    author: params.author,
+    work: params.work,
+    edition: filter,
+  });
   for (let i = 0; i < manifest.editions.length; i++) {
-    const ref = manifest.editions[i];
-    if (params.author !== undefined && !ref.authors.includes(params.author)) {
-      continue;
-    }
-    if (params.work !== undefined && ref.work !== params.work) continue;
-    if (!inUniverse(filter, ref.canonical, ref.edition)) continue;
-    for (const c of contributions(ref)) {
+    if (inScope[i] === 0) continue;
+    for (const c of contributions(manifest.editions[i])) {
       const group = groups.get(c.key);
       if (group !== undefined) group.tokens += editionTokenCounts[i];
     }
@@ -666,14 +670,22 @@ export const keywordsResponse = (
   if (params.author === undefined) return empty;
 
   const { manifest, units } = artefacts;
-  // Classify each edition once (target / reference / out), then label its units.
-  const editionClass = manifest.editions.map((ref) => {
-    if (!inUniverse(editionScope, ref.canonical, ref.edition)) return 0;
-    const isTarget =
-      (params.author === undefined || ref.authors.includes(params.author)) &&
-      (params.work === undefined || ref.work === params.work);
-    return isTarget ? TARGET : REFERENCE;
+  // Classify each edition once (target / reference / out), then label its
+  // units. The target resolves by the shared scope rule (scopeEditions), so
+  // naming a collection targets the editions borrowed into it too; the
+  // reference is the rest of the edition universe.
+  const target = scopeEditions(manifest.editions, {
+    author: params.author,
+    work: params.work,
+    edition: editionScope,
   });
+  const editionClass = manifest.editions.map((ref, i) =>
+    target[i] === 1
+      ? TARGET
+      : inUniverse(editionScope, ref.canonical, ref.edition)
+      ? REFERENCE
+      : 0
+  );
   const scope = labelUnits(units.edition, editionClass);
 
   const result = keyness(artefacts, scope, { mode, version, minCount, limit });
@@ -756,14 +768,16 @@ export const collocationsResponse = async (
 
   const { manifest, units, postings } = artefacts;
   // Classify each edition once (in scope / out), then label its units. The
-  // universe mirrors search/keywords: canonical editions by default, or the
-  // named edition slug ("all" for every printing).
-  const editionLabel = manifest.editions.map((ref) =>
-    inUniverse(editionScope, ref.canonical, ref.edition) &&
-      (params.author === undefined || ref.authors.includes(params.author)) &&
-      (params.work === undefined || ref.work === params.work)
-      ? IN_SCOPE
-      : 0
+  // scope resolves by the same rule as search/keywords (scopeEditions):
+  // canonical editions by default, or the named edition slug ("all" for every
+  // printing), with a work filter reaching its borrowed editions.
+  const editionMask = scopeEditions(manifest.editions, {
+    author: params.author,
+    work: params.work,
+    edition: editionScope,
+  });
+  const editionLabel = manifest.editions.map((_, i) =>
+    editionMask[i] === 1 ? IN_SCOPE : 0
   );
   const scope = labelUnits(units.edition, editionLabel);
 
