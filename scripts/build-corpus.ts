@@ -1,16 +1,16 @@
 /**
- * Build the corpus's compiled `catalogue/` under Deno, in prod, where the corpus is
- * a Node-only package with no build entrypoint the Deno deploy can run. The
- * corpus's build functions are runtime-neutral (all I/O goes through an
- * injected `CorpusFs`), and `nodeCorpusFs` is `node:fs`-backed (which Deno
- * provides natively), so this wrapper simply drives them against the configured
- * corpus directory. They come from the corpus's published `build` subpath —
- * the one build-time seam that touches the compiler — resolved via this
- * project's import map (deno.json), exactly as its application code imports the
- * corpus's `wire` types. So the corpus checkout at $CORPUS_DIR is pure data:
- * the code is the pinned package version, and no `npm install` is needed there.
+ * Build the corpus's compiled `catalogue/` under Deno, in prod, from the pinned
+ * corpus package rather than the checkout's own tooling. The corpus's build
+ * functions are runtime-neutral (all I/O goes through an injected `CorpusFs`),
+ * and `nodeCorpusFs` is `node:fs`-backed (which Deno provides natively), so
+ * this wrapper simply drives them against the configured corpus directory.
+ * They come from the corpus's published `build` subpath — the one build-time
+ * seam that touches the compiler — resolved via this project's import map
+ * (deno.json), exactly as its application code imports the corpus's `wire`
+ * types. So the corpus checkout at $CORPUS_DIR is pure data: the code is the
+ * pinned package version, and nothing needs installing there.
  *
- * Run with: deno task build:corpus. In dev, run the corpus's own `npm run
+ * Run with: deno task build:corpus. In dev, run the corpus's own `deno task
  * build` instead; both produce byte-identical output.
  */
 
