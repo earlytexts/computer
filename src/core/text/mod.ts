@@ -37,6 +37,7 @@ export {
   matchRanges,
   occurrences,
   parseQuery,
+  scopeEditions,
   search,
   surfaceIds,
 } from "./search.ts";

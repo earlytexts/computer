@@ -126,6 +126,35 @@ Deno.test("borrowed text is indexed under its own work only", async () => {
   assert(inline.results.every((r) => r.work === "comp"));
 });
 
+Deno.test("a work filter scopes by containment: a collection reaches its borrowed text", async () => {
+  const computer = await testComputer();
+  // "avarice" lives only in tw/1750, the edition comp/1755 (comp's canonical)
+  // borrows — and tw's own canonical is 1760, so the hit comes from
+  // containment in the collection, not from the borrowed work's own flags.
+  const scoped = await computer.search({ q: "avarice", work: "comp" });
+  assertEquals(scoped.total, 1);
+  assertEquals(scoped.results[0].work, "tw");
+  assertEquals(scoped.results[0].edition, "1750");
+  // pinning the collection's printing scopes the same way
+  assertEquals(
+    await count(computer, "avarice", { work: "comp", edition: "1755" }),
+    1,
+  );
+  // text only in tw/1760, which comp does not borrow, stays out of scope
+  assertEquals(
+    await count(computer, "liberty of the press", { work: "comp" }),
+    0,
+  );
+  // containment is one-way: the borrowed work's scope has no collection text
+  assertEquals(
+    await count(computer, "composite collection alone", {
+      work: "tw",
+      editions: "all",
+    }),
+    0,
+  );
+});
+
 Deno.test("scope is canonical by default and widens with editions=all", async () => {
   const computer = await testComputer();
   // tolerant "encrease" matches "increase" in the canonical 1760

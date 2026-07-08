@@ -44,6 +44,21 @@ Deno.test("surfaces the words that cluster around a node word", async () => {
   }
 });
 
+Deno.test("a work scope reaches text borrowed into the collection", async () => {
+  const computer = await testComputer();
+  // "avarice" is printed in comp only via the borrowed tw/1750 ("Avarice was
+  // withdrawn from later editions…"), so its collocates prove the collection's
+  // scope includes its borrowed text.
+  const response = await computer.collocations({
+    q: "avarice",
+    work: "comp",
+    min: 1,
+  });
+  assert(response.nodeCount >= 1, "expected avarice inside the collection");
+  const from = response.results.find((r) => r.term === "from");
+  assert(from !== undefined, "expected 'from' among the collocates");
+});
+
 Deno.test("a node word absent from the scope yields nothing", async () => {
   const computer = await testComputer();
   // "liberty" lives only in tw; the Solitary Treatise never uses it.

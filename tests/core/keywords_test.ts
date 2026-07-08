@@ -55,6 +55,21 @@ Deno.test("the reference excludes the target (a term in both is not unique)", as
   }
 });
 
+Deno.test("a collection target includes its borrowed text", async () => {
+  const computer = await testComputer();
+  // "avarice" reaches comp only through the borrowed tw/1750; no canonical
+  // edition outside the collection uses it, so it must surface as a keyword of
+  // comp with zero reference occurrences.
+  const response = await computer.keywords({
+    author: "test",
+    work: "comp",
+    min: 1,
+  });
+  const avarice = response.results.find((r) => r.term === "avarice");
+  assert(avarice !== undefined, "expected 'avarice' among comp's keywords");
+  assertEquals(avarice.reference, 0);
+});
+
 Deno.test("the min threshold filters out rare terms", async () => {
   const computer = await testComputer();
   const low = await computer.keywords({ author: "test", work: "tw", min: 1 });

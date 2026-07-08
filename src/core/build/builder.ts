@@ -522,6 +522,7 @@ export const buildArtefacts = (
   const surnameOf = new Map(catalogue.authors.map((a) => [a.slug, a.surname]));
   const editionRefs: EditionRef[] = [];
   const editionIndex = new Map<string, number>();
+  const editionDocs: MarkitDocument[] = [];
   const seenWorks = new Set<Work>();
   for (const author of catalogue.authors) {
     for (const work of author.works) {
@@ -532,6 +533,7 @@ export const buildArtefacts = (
           `${work.hostSlug}/${work.slug}/${edition.slug}`,
           editionRefs.length,
         );
+        editionDocs.push(edition.document);
         editionRefs.push({
           authors: work.authorSlugs,
           authorNames: work.authorSlugs.map((s) => surnameOf.get(s)!),
@@ -540,10 +542,30 @@ export const buildArtefacts = (
           workBreadcrumb: work.breadcrumb,
           edition: edition.slug,
           canonical: edition.slug === work.canonicalSlug,
+          members: [],
         });
       }
     }
   }
+
+  // A composite edition splices borrowed editions' documents in as children —
+  // the same objects as the borrowed works' own editions (the identity that
+  // blockUnit rests on) — so walking a composed tree finds every borrowed
+  // edition, transitively: a borrowed collection carries its own borrows
+  // inside its subtree.
+  const docEdition = new Map(editionDocs.map((doc, i) => [doc, i]));
+  const collectMembers = (doc: MarkitDocument, out: Set<number>): void => {
+    for (const child of doc.children) {
+      const member = docEdition.get(child);
+      if (member !== undefined) out.add(member);
+      collectMembers(child, out);
+    }
+  };
+  editionDocs.forEach((doc, i) => {
+    const members = new Set<number>();
+    collectMembers(doc, members);
+    editionRefs[i].members = [...members].sort((a, b) => a - b);
+  });
 
   // Interim, insertion-ordered vocabulary; remapped to sorted ids below. The
   // vocabulary is the union of the edited and original streams; df/cf count

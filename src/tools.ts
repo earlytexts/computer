@@ -95,6 +95,13 @@ const slugProperty = (description: string) => ({
 
 const authorProperty = slugProperty('Author slug, e.g. "hume".');
 const workProperty = slugProperty('Work slug within the author, e.g. "epm".');
+// The work filter of the universe-filter tools scopes by containment: naming a
+// collection also reaches the works borrowed into its text (see scopeEditions
+// in the core), so the description says so.
+const scopeWorkProperty = slugProperty(
+  'Work slug within the author, e.g. "epm". A collection\'s scope includes ' +
+    "the works borrowed into its text; their matches cite their own work.",
+);
 const editionProperty = slugProperty(
   'Edition slug: a year like "1751" or "1742a". Omit to use the work\'s canonical edition (the default).',
 );
@@ -233,7 +240,7 @@ export const createTools = (computer: Computer): ToolSet => {
           caseSensitive: caseSensitiveProperty,
           version: versionProperty,
           author: authorProperty,
-          work: workProperty,
+          work: scopeWorkProperty,
           editions: editionsProperty,
           edition: scopeEditionProperty,
           page: pageProperty,
@@ -261,7 +268,7 @@ export const createTools = (computer: Computer): ToolSet => {
           caseSensitive: caseSensitiveProperty,
           version: versionProperty,
           author: authorProperty,
-          work: workProperty,
+          work: scopeWorkProperty,
           editions: editionsProperty,
           edition: scopeEditionProperty,
         },
@@ -292,7 +299,7 @@ export const createTools = (computer: Computer): ToolSet => {
           caseSensitive: caseSensitiveProperty,
           version: versionProperty,
           author: authorProperty,
-          work: workProperty,
+          work: scopeWorkProperty,
           editions: editionsProperty,
           edition: scopeEditionProperty,
           page: pageProperty,
@@ -317,7 +324,7 @@ export const createTools = (computer: Computer): ToolSet => {
           work: {
             ...workProperty,
             description:
-              "Optional target work slug within the author, to find what is distinctive of one work rather than the whole author.",
+              "Optional target work slug within the author, to find what is distinctive of one work rather than the whole author. A collection targets the works borrowed into its text too.",
           },
           editions: {
             ...editionsProperty,
@@ -369,7 +376,7 @@ export const createTools = (computer: Computer): ToolSet => {
             description: "Maximum collocates to return (default 50, max 500).",
           },
           author: authorProperty,
-          work: workProperty,
+          work: scopeWorkProperty,
           editions: editionsProperty,
           edition: scopeEditionProperty,
         },

@@ -19,14 +19,13 @@ import { serializeCatalogue } from "@earlytexts/corpus/wire";
 import {
   corpus,
   CORPUS_ROOT,
-  CorpusBuilder,
   memoryCorpus,
   type Meta,
 } from "@earlytexts/corpus/harness";
 
 // The generic corpus-authoring harness lives with the corpus (which owns the
 // catalogue build); re-export it so the computer's tests keep importing it here.
-export { corpus, CORPUS_ROOT, CorpusBuilder, memoryCorpus };
+export { corpus, CORPUS_ROOT, memoryCorpus };
 export type { Meta };
 
 export type CatalogueOutput = {
