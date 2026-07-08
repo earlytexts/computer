@@ -1,13 +1,22 @@
 {
   "version": "5",
   "specifiers": {
+    "jsr:@earlytexts/corpus@0.6": "0.6.0",
+    "jsr:@earlytexts/markit@^3.5.0": "3.5.0",
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/internal@^1.0.12": "1.0.14",
-    "npm:@earlytexts/corpus@~0.5.1": "0.5.1",
-    "npm:@earlytexts/markit@^3.4.2": "3.4.2",
     "npm:@modelcontextprotocol/sdk@1.29.0": "1.29.0_zod@4.4.3"
   },
   "jsr": {
+    "@earlytexts/corpus@0.6.0": {
+      "integrity": "0edfacb1f93ee8855849a8415836995ad45eb76b395913a69b21e0774b8d6140",
+      "dependencies": [
+        "jsr:@earlytexts/markit"
+      ]
+    },
+    "@earlytexts/markit@3.5.0": {
+      "integrity": "d882adcf4fd086cf9692e59e90102f044636f3bd7d0337af6331e3df0d05a37e"
+    },
     "@std/assert@1.0.19": {
       "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
       "dependencies": [
@@ -19,15 +28,6 @@
     }
   },
   "npm": {
-    "@earlytexts/corpus@0.5.1": {
-      "integrity": "sha512-9aGTCHcJdgiKgEOZmw3QQCpY6ArAIDkTzAHGAOG0yh6k9bjkV1Ev4c6eqmRr7TOTLkl1gpZj+0Y8sHtQW4lxfQ==",
-      "dependencies": [
-        "@earlytexts/markit"
-      ]
-    },
-    "@earlytexts/markit@3.4.2": {
-      "integrity": "sha512-biQTxv39HfekbItpCt/I5Z6XinryWEOeYnQBYbbq0V1WojzDX/G3CIjlMIOzXX/7FuVQeRj5NPTZ3KBKnoWIwA=="
-    },
     "@hono/node-server@1.19.14_hono@4.12.26": {
       "integrity": "sha512-GwtvgtXxnWsucXvbQXkRgqksiH2Qed37H9xHZocE5sA3N8O8O8/8FA3uclQXxXVzc9XBZuEOMK7+r02FmSpHtw==",
       "dependencies": [
@@ -545,9 +545,9 @@
   },
   "workspace": {
     "dependencies": [
+      "jsr:@earlytexts/corpus@0.6",
+      "jsr:@earlytexts/markit@^3.5.0",
       "jsr:@std/assert@1",
-      "npm:@earlytexts/corpus@~0.5.1",
-      "npm:@earlytexts/markit@^3.4.2",
       "npm:@modelcontextprotocol/sdk@1.29.0"
     ]
   }
