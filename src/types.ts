@@ -285,10 +285,14 @@ export type SearchResponse = {
    * The whole query is matched as one phrase. `match` selects the type level:
    * `form` (default) unites old/modern spellings and inflections, `spelling`
    * only spellings, `exact` the surface as written. `caseSensitive` requires
-   * each word's initial capitalisation to agree.
+   * each word's initial capitalisation to agree. `resolved` narrows the
+   * spelling/form net to occurrences whose reading in context is the query
+   * (honouring `[w:]` markup, edition overrides, and exemptions); the default,
+   * wide, matches any occurrence that could read as the query.
    */
   match: MatchLevel;
   caseSensitive: boolean;
+  resolved: boolean;
   /** Which version was searched (`edited` default, or `original`). */
   version: Version;
   total: number;
@@ -631,6 +635,9 @@ export type SearchParams = EditionScope & {
   match?: MatchLevel;
   /** Require initial capitalisation to agree (default: ignore case). */
   caseSensitive?: boolean;
+  /** Narrow the spelling/form net to occurrences whose reading in context is the
+   * query (default: false, the wide net over every possible reading). */
+  resolved?: boolean;
   /** Which text to search: edited reading text (default) or the original. */
   version?: "edited" | "original";
   author?: string;

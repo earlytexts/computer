@@ -197,6 +197,7 @@ const SEARCH_PARAMS = [
   "q",
   "match",
   "caseSensitive",
+  "resolved",
   "version",
   "author",
   "page",

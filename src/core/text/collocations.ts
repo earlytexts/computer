@@ -39,7 +39,7 @@
  */
 
 import type { ServeArtefacts } from "../artefacts.ts";
-import { grouping, type KeyMode } from "./keywords.ts";
+import { type KeyMode, surfaceGroups } from "./keywords.ts";
 
 export type { KeyMode };
 
@@ -115,7 +115,7 @@ export const collocations = (
     return { scopeTokens, nodeCount: 0, windowTokens: 0, rows: [] };
   }
 
-  const { groupOf, labels } = grouping(artefacts, options.mode);
+  const { groupOf, labels } = surfaceGroups(artefacts, options.mode);
   // The node's own groups are never reported as collocates of themselves.
   const nodeGroups = new Set<number>();
   for (const id of nodeSurfaces) nodeGroups.add(groupOf[id]);

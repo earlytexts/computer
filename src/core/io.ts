@@ -17,6 +17,7 @@ import type {
   CatalogueReader,
   RawDoc,
 } from "./build/catalogue.ts";
+import type { Dictionary } from "@earlytexts/corpus/wire";
 import type { BlockReader } from "./serve/store.ts";
 import {
   ARTEFACT_FILES,
@@ -56,19 +57,27 @@ const hash = (text: string): number => {
 
 /**
  * Fingerprint the compiled catalogue by the *content* of its `catalogue.json`
- * (the corpus build rewrites the whole `catalogue/` each run, so this file changes
- * whenever anything in the corpus does). We hash the content rather than stat
- * its mtime because mtime is not preserved across a deploy snapshot (e.g. Deno
- * Deploy), which would make freshly-built artefacts look stale at boot and
- * trigger a rebuild on a read-only filesystem. Absent when the corpus was never
- * built.
+ * and `dictionary.json` (the corpus build rewrites the whole `catalogue/` each
+ * run, so these change whenever anything in the corpus — text or register —
+ * does). We hash the content rather than stat mtime because mtime is not
+ * preserved across a deploy snapshot (e.g. Deno Deploy), which would make
+ * freshly-built artefacts look stale at boot and trigger a rebuild on a
+ * read-only filesystem. Absent when the corpus was never built. The dictionary
+ * is folded in so a register-only edit (which need not touch catalogue.json)
+ * still invalidates the derived artefacts.
  */
 const scanCorpus = async (corpusDir: string): Promise<CorpusScan> => {
   try {
-    const text = await Deno.readTextFile(
+    const catalogue = await Deno.readTextFile(
       `${corpusDir}/catalogue/catalogue.json`,
     );
-    return { files: text.length, modified: hash(text) };
+    const dictionary = await Deno.readTextFile(
+      `${corpusDir}/catalogue/dictionary.json`,
+    ).catch(() => ""); // absent for a corpus compiled before the dictionary
+    return {
+      files: catalogue.length + dictionary.length,
+      modified: hash(`${catalogue}\0${dictionary}`),
+    };
   } catch {
     return { files: 0, modified: 0 };
   }
@@ -169,6 +178,8 @@ export const denoIo: Io = {
     readJson<CatalogueFile>(`${corpusDir}/catalogue/catalogue.json`),
   readDocument: (corpusDir, docKey) =>
     readJson<RawDoc>(`${corpusDir}/catalogue/documents/${docKey}.json`),
+  readDictionary: (corpusDir) =>
+    readJson<Dictionary>(`${corpusDir}/catalogue/dictionary.json`),
   scanCorpus,
   readManifest,
   readArtefacts,

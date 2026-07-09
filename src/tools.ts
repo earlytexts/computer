@@ -163,6 +163,11 @@ const caseSensitiveProperty = {
   description:
     "Require each word's initial capitalisation to agree with the text. Defaults to false (case is ignored).",
 };
+const resolvedProperty = {
+  type: "boolean" as const,
+  description:
+    "Narrow the spelling/form net to occurrences whose reading in context is the query — honouring [w:] disambiguation, an edition's spelling conventions, and names/citations (which never normalise). Defaults to false (the wide net: any occurrence that could read as the query). No effect on exact.",
+};
 // The term-grouping knob shared by keywords and collocations; `what` names the
 // thing grouped ("terms" / "collocates") — the only wording that differs.
 const byProperty = (what: string) => ({
@@ -238,6 +243,7 @@ export const createTools = (computer: Computer): ToolSet => {
           q: { type: "string", description: "The phrase to search for." },
           match: matchProperty,
           caseSensitive: caseSensitiveProperty,
+          resolved: resolvedProperty,
           version: versionProperty,
           author: authorProperty,
           work: scopeWorkProperty,

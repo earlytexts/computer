@@ -62,20 +62,6 @@ Clients are identified by the first `X-Forwarded-For` hop when present (set by a
 reverse proxy or a trusted upstream site forwarding its visitors' IPs), else the
 connection address.
 
-## Development Scripts
-
-```sh
-deno task dev:variants  # manage the variants.json spelling table
-deno task dev:lemmas    # manage the lemmas.json citation table
-```
-
-The search and frequency/concordance layers are built on top of a spelling table
-(`variants.json`) and a citation table (`lemmas.json`), which are maintained in
-the `src/core/text/` directory. The `dev:variants` and `dev:lemmas` scripts run
-a REPL that lets you inspect, add, and remove entries from these tables, and
-write them back to disk. The tables are used at build time to expand queries and
-compute canonical forms.
-
 ## API
 
 The functions are exposed as GET routes returning JSON (CORS-open, cached 5
@@ -99,15 +85,22 @@ For a guide to every route and what it does, written for researchers, see
   with titles/breadcrumbs/imported flags) whose nodes carry the unit indices of
   their blocks rather than the blocks themselves. This serves the text and
   compare routes; block content is read from `blocks.jsonl` on demand.
-- `vocab.json` — the type table: every distinct case-folded spelling (surface
-  form) with document/collection frequencies, plus its canonical SPELLING and
-  FORM bucket (the spelling- and inflection-tolerant search levels) and a
-  citation-form LEMMA column for statistics.
+- `vocab.json` — the type table: every distinct case-folded printed spelling
+  (surface form) with document/collection frequencies, plus its dictionary
+  **readings** (from the corpus register, or a lone identity reading when
+  unregistered). A reading is a sequence of words (more than one for a
+  contraction, `'tis` → "it is"), each a modern SPELLING and a citation LEMMA;
+  the spelling/form search levels and every lemma-keyed statistic derive from
+  these, so the computer holds no spelling or stemming heuristics of its own.
 - `units.json` — one row per block, columnar: location (edition/section/block),
   token count, and offsets into the per-edition files.
 - `postings.bin` — the inverted index over the edited reading text: per surface
   form, (unit, position) pairs as little-endian Uint32 (the position's high bit
-  flags a capitalised occurrence, for case-sensitive search).
+  flags a capitalised occurrence, for case-sensitive search), followed by a
+  per-posting reading column — the index (into the surface's readings, or the
+  EXEMPT sentinel for a name/citation token) that occurrence resolved to in
+  context, so search can narrow to the resolved reading and statistics count
+  each occurrence under it.
 - `postings-original.bin` + `overlay.json` — an overlay index over the original
   (pre-correction) text, covering only the units that carry editorial markup, so
   an `original` search reads those units from the overlay instead of the
@@ -138,8 +131,11 @@ highlight-injection are the same traversal
 offsets recorded at build time be mapped back into a block's formatted structure
 at serve time with no stored offset map. Anything that changes extraction or
 tokenization must bump the version constant next to it; the pipeline version is
-stamped into the manifest and mismatched artefacts are rebuilt, while type-level
-changes (variants.json, lemmas) only change vocab.json.
+stamped into the manifest and mismatched artefacts are rebuilt. The normalising
+vocabulary is now the corpus's dictionary, read from `catalogue/dictionary.json`
+at build time (its content is folded into the corpus fingerprint, so a
+register-only edit rebuilds the artefacts); the computer contributes only word
+identity (tokenization/folding) and the search-time expansion over the readings.
 
 The index is keyed by surface form and queries are expanded through the
 vocabulary, so the exact/spelling/form layers share one index. Search ranks hits

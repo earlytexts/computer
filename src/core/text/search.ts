@@ -47,11 +47,12 @@ import {
   type EditionRef,
   POSITION_MASK,
   type Postings,
+  readingOf,
   type ServeArtefacts,
 } from "../artefacts.ts";
 import type { HighlightRange } from "./text.ts";
 import type { MatchLevel, Version } from "../../types.ts";
-import { formKey, normalizeSpelling, tokenize } from "./tokenize.ts";
+import { tokenize } from "./tokenize.ts";
 
 export type { MatchLevel };
 
@@ -60,11 +61,21 @@ export type SearchOptions = {
   match: MatchLevel;
   /** Require each query word's initial capitalisation to agree with the text. */
   caseSensitive: boolean;
+  /**
+   * How wide the spelling/form net is cast over ambiguity and exemptions.
+   * `false` (wide, the default) matches every occurrence of any surface that
+   * *could* read as the query — recall-first, ignoring how each occurrence
+   * resolved. `true` (narrow) matches only occurrences whose resolved reading is
+   * the query — honouring `[w:]` markup, edition overrides, and exemptions
+   * (an exempt occurrence matches only its verbatim form). No effect on `exact`.
+   */
+  resolved: boolean;
 };
 
 export const DEFAULT_OPTIONS: SearchOptions = {
   match: "form",
   caseSensitive: false,
+  resolved: false,
 };
 
 /** One word of the phrase: its case-folded surface and whether it was typed
@@ -96,27 +107,43 @@ const lookupId = (sorted: string[], value: string): number | undefined => {
   return undefined;
 };
 
+/** The query word's bucket words — the spelling and lemma of its own default
+ * reading, so a query folds through the register the same way the corpus did.
+ * Identity (the word itself) when the query is not a registered/printed
+ * surface, so a modern spelling still finds its archaic variants. */
+const bucketWords = (
+  artefacts: ServeArtefacts,
+  surface: string,
+): { spelling: string; lemma: string } => {
+  const id = lookupId(artefacts.vocab.surfaces, surface);
+  const word = id === undefined
+    ? undefined
+    : artefacts.vocab.readings[id][0][0];
+  return word ?? { spelling: surface, lemma: surface };
+};
+
 /** Surface ids matching one query word at the chosen level: the word's own
- * surface (`exact`), or every surface sharing its canonical spelling
- * (`spelling`) or its form bucket (`form`). The query word is folded the same
- * way the corresponding vocabulary level was built. */
+ * surface (`exact`), or every surface some reading of which shares the query's
+ * spelling (`spelling`) or lemma (`form`). This is the wide candidate set; the
+ * `resolved` (narrow) option filters its postings per occurrence. */
 export const surfaceIds = (
   artefacts: ServeArtefacts,
   surface: string,
   match: MatchLevel,
 ): number[] => {
-  const { vocab, spellingSurfaces, formSurfaces } = artefacts;
+  const { vocab, spellings, lemmas, spellingSurfaces, lemmaSurfaces } =
+    artefacts;
   if (match === "exact") {
     const id = lookupId(vocab.surfaces, surface);
     return id === undefined ? [] : [id];
   }
-  const spelling = normalizeSpelling(surface);
+  const words = bucketWords(artefacts, surface);
   if (match === "spelling") {
-    const id = lookupId(vocab.spellings, spelling);
+    const id = lookupId(spellings, words.spelling);
     return id === undefined ? [] : spellingSurfaces[id];
   }
-  const formId = lookupId(vocab.forms, formKey(spelling));
-  return formId === undefined ? [] : formSurfaces[formId];
+  const id = lookupId(lemmas, words.lemma);
+  return id === undefined ? [] : lemmaSurfaces[id];
 };
 
 /* ------------------------------ postings ------------------------------ */
@@ -127,34 +154,57 @@ const isCapitalPosting = (packed: number): boolean => packed >= CAP_BIT;
 /** Map of unitIndex -> matched token positions. */
 type Slot = Map<number, number[]>;
 
+/** A per-occurrence filter for the narrow (`resolved`) net: accept a posting
+ * (surface id, its stored reading value) only when its reading is the query. */
+type Accept = (id: number, reading: number) => boolean;
+
 /**
  * Add the (unit, position) pairs for the given surface ids to `out`, skipping
- * any unit in `skip` and, when `requireCapital` is set, any posting whose
- * capitalisation bit disagrees. Positions are stored with CAP_BIT masked off.
+ * any unit in `skip`, any posting whose capitalisation bit disagrees (when
+ * `requireCapital` is set), and — for the narrow net — any posting `accept`
+ * rejects. Positions are stored with CAP_BIT masked off.
  */
 const collectPostings = (
   postings: Postings,
   ids: number[],
   out: Slot,
   requireCapital: boolean | undefined,
+  accept?: Accept,
   skip?: Set<number>,
 ): void => {
-  const { offsets, pairs } = postings;
+  const { offsets, pairs, readings } = postings;
   for (const id of ids) {
-    for (let i = offsets[id] * 2; i < offsets[id + 1] * 2; i += 2) {
-      const unit = pairs[i];
+    for (let p = offsets[id]; p < offsets[id + 1]; p++) {
+      const unit = pairs[p * 2];
       if (skip !== undefined && skip.has(unit)) continue;
-      const packed = pairs[i + 1];
+      const packed = pairs[p * 2 + 1];
       if (
         requireCapital !== undefined &&
         isCapitalPosting(packed) !== requireCapital
       ) continue;
+      if (accept !== undefined && !accept(id, readings[p])) continue;
       const position = positionOf(packed);
       const positions = out.get(unit);
       if (positions === undefined) out.set(unit, [position]);
       else positions.push(position);
     }
   }
+};
+
+/** The narrow-net filter for one query word, or undefined when the net is wide
+ * (or `exact`, which is already verbatim): accept a posting only when its
+ * resolved reading carries the query's spelling (`spelling`) or lemma (`form`). */
+const narrowAccept = (
+  artefacts: ServeArtefacts,
+  surface: string,
+  options: SearchOptions,
+): Accept | undefined => {
+  if (!options.resolved || options.match === "exact") return undefined;
+  const words = bucketWords(artefacts, surface);
+  const target = options.match === "spelling" ? words.spelling : words.lemma;
+  const field = options.match === "spelling" ? "spelling" : "lemma";
+  return (id, reading) =>
+    readingOf(artefacts.vocab, id, reading).some((w) => w[field] === target);
 };
 
 /**
@@ -171,6 +221,7 @@ const slotPostings = (
 ): Slot => {
   const ids = surfaceIds(artefacts, word.surface, options.match);
   const requireCapital = options.caseSensitive ? word.capital : undefined;
+  const accept = narrowAccept(artefacts, word.surface, options);
   const out: Slot = new Map();
   if (version === "original") {
     collectPostings(
@@ -178,11 +229,18 @@ const slotPostings = (
       ids,
       out,
       requireCapital,
+      accept,
       artefacts.affectedUnits,
     );
-    collectPostings(artefacts.overlayPostings, ids, out, requireCapital);
+    collectPostings(
+      artefacts.overlayPostings,
+      ids,
+      out,
+      requireCapital,
+      accept,
+    );
   } else {
-    collectPostings(artefacts.postings, ids, out, requireCapital);
+    collectPostings(artefacts.postings, ids, out, requireCapital, accept);
   }
   return out;
 };

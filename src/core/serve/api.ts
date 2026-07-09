@@ -496,6 +496,7 @@ export const frequencyResponse = (
   const options: SearchOptions = {
     match: parseMatch(params.match),
     caseSensitive: params.caseSensitive ?? false,
+    resolved: false, // frequency counts wide (recall over every reading)
   };
   const version: Version = parseVersion(params.version);
   const hits = q === "" ? [] : search(
@@ -1201,6 +1202,7 @@ export const searchResponse = async (
   const options: SearchOptions = {
     match: parseMatch(params.match),
     caseSensitive: params.caseSensitive ?? false,
+    resolved: params.resolved ?? false,
   };
   const version: Version = parseVersion(params.version);
   const page = clamp(params.page, 1);
@@ -1221,6 +1223,7 @@ export const searchResponse = async (
     q,
     match: options.match,
     caseSensitive: options.caseSensitive,
+    resolved: options.resolved,
     version,
     total: hits.length,
     page,
@@ -1262,6 +1265,7 @@ export const concordanceResponse = async (
   const options: SearchOptions = {
     match: parseMatch(params.match),
     caseSensitive: params.caseSensitive ?? false,
+    resolved: false, // concordance reads wide (every reading of the phrase)
   };
   const version: Version = parseVersion(params.version);
   const sort: Sort = params.sort ?? "position";

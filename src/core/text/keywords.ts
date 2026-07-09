@@ -29,7 +29,7 @@
  * the `version` handling (edited primary, original via the overlay) matches.
  */
 
-import type { Postings, ServeArtefacts } from "../artefacts.ts";
+import { type Postings, readingOf, type ServeArtefacts } from "../artefacts.ts";
 import type { Version } from "../../types.ts";
 
 /** Which type level terms are grouped and reported at. */
@@ -73,65 +73,89 @@ export const OUT = 0;
 export const TARGET = 1;
 export const REFERENCE = 2;
 
+/** The groups an occurrence counts under, keyed by the group's label. */
+type Grouper = {
+  labels: string[];
+  /** The group ids a posting (surface id + its resolved reading) contributes
+   * to — usually one, more for a contraction counted at the lemma level. */
+  groupsFor: (id: number, reading: number) => number[];
+};
+
 /**
- * Map each surface id to the group it counts under, with the labels for those
- * groups. For `exact` the grouping is the identity over the vocabulary (one
- * group per spelling as written); for `form` it is the precomputed form bucket;
- * for `lemma` it is the citation-form string, interned here into dense group ids.
+ * The grouping for a keyness mode. `exact` counts each occurrence under its
+ * printed surface, independent of reading. `form` and `lemma` both count under
+ * the resolved reading's citation lemma(s) — the two collapsed now that the
+ * register supplies curated lemmas (a surface's occurrences can count under
+ * different lemmas as their readings resolve; a contraction counts under each of
+ * its words' lemmas). Labels are the corpus's distinct lemma words.
  */
 export const grouping = (
   artefacts: ServeArtefacts,
   mode: KeyMode,
-): { groupOf: Int32Array; labels: string[] } => {
-  const { vocab } = artefacts;
-  const surfaces = vocab.surfaces.length;
+): Grouper => {
+  const { vocab, lemmas } = artefacts;
   if (mode === "exact") {
-    const groupOf = new Int32Array(surfaces);
-    for (let id = 0; id < surfaces; id++) groupOf[id] = id;
-    return { groupOf, labels: vocab.surfaces };
+    return { labels: vocab.surfaces, groupsFor: (id) => [id] };
   }
-  if (mode === "form") {
-    return { groupOf: Int32Array.from(vocab.surfaceForm), labels: vocab.forms };
-  }
-  const labels: string[] = [];
-  const index = new Map<string, number>();
-  const groupOf = new Int32Array(surfaces);
-  for (let id = 0; id < surfaces; id++) {
-    const lemma = vocab.surfaceLemma[id];
-    let group = index.get(lemma);
-    if (group === undefined) {
-      group = labels.length;
-      labels.push(lemma);
-      index.set(lemma, group);
-    }
-    groupOf[id] = group;
-  }
-  return { groupOf, labels };
+  const index = new Map(lemmas.map((lemma, group) => [lemma, group]));
+  return {
+    labels: lemmas,
+    groupsFor: (id, reading) =>
+      readingOf(vocab, id, reading).map((word) => index.get(word.lemma)!),
+  };
 };
 
 /**
- * Accumulate every (surface, unit) posting into the target/reference tallies for
- * its group, honouring the unit partition and skipping any unit in `skip` (used
- * to omit overlay-covered units from the primary index when counting original).
+ * A static surface -> group map at a mode's level, grouping each surface by its
+ * *default* reading (its first lemma word for `lemma`/`form`, its own spelling
+ * for `exact`). For consumers that count over the surface-keyed token stream
+ * (collocations, whose `tokens.bin` carries no per-occurrence reading), where a
+ * surface's default reading is the right approximation.
+ */
+export const surfaceGroups = (
+  artefacts: ServeArtefacts,
+  mode: KeyMode,
+): { groupOf: Int32Array; labels: string[] } => {
+  const { vocab, lemmas } = artefacts;
+  const surfaces = vocab.surfaces.length;
+  const groupOf = new Int32Array(surfaces);
+  if (mode === "exact") {
+    for (let id = 0; id < surfaces; id++) groupOf[id] = id;
+    return { groupOf, labels: vocab.surfaces };
+  }
+  const index = new Map(lemmas.map((lemma, group) => [lemma, group]));
+  for (let id = 0; id < surfaces; id++) {
+    groupOf[id] = index.get(vocab.readings[id][0][0].lemma)!;
+  }
+  return { groupOf, labels: lemmas };
+};
+
+/**
+ * Accumulate every occurrence into the target/reference tallies for the group(s)
+ * of its resolved reading, honouring the unit partition and skipping any unit in
+ * `skip` (used to omit overlay-covered units from the primary index when
+ * counting original).
  */
 const tally = (
   postings: Postings,
-  groupOf: Int32Array,
+  groupsFor: Grouper["groupsFor"],
   scope: Int8Array,
   target: Float64Array,
   reference: Float64Array,
   skip?: Set<number>,
 ): void => {
-  const { offsets, pairs } = postings;
-  const surfaces = groupOf.length;
+  const { offsets, pairs, readings } = postings;
+  const surfaces = offsets.length - 1;
   for (let id = 0; id < surfaces; id++) {
-    const group = groupOf[id];
-    for (let i = offsets[id] * 2; i < offsets[id + 1] * 2; i += 2) {
-      const unit = pairs[i];
+    for (let p = offsets[id]; p < offsets[id + 1]; p++) {
+      const unit = pairs[p * 2];
       if (skip !== undefined && skip.has(unit)) continue;
       const where = scope[unit];
-      if (where === TARGET) target[group]++;
-      else if (where === REFERENCE) reference[group]++;
+      if (where === OUT) continue;
+      for (const group of groupsFor(id, readings[p])) {
+        if (where === TARGET) target[group]++;
+        else reference[group]++;
+      }
     }
   }
 };
@@ -168,16 +192,16 @@ export const keyness = (
     return { targetTokens, referenceTokens, rows: [] };
   }
 
-  const { groupOf, labels } = grouping(artefacts, options.mode);
+  const { groupsFor, labels } = grouping(artefacts, options.mode);
   const target = new Float64Array(labels.length);
   const reference = new Float64Array(labels.length);
   if (options.version === "original") {
     // The overlay carries original-version postings for the edited units; take
     // those units from it and the rest from the primary index (mirrors search).
-    tally(postings, groupOf, scope, target, reference, affectedUnits);
-    tally(overlayPostings, groupOf, scope, target, reference);
+    tally(postings, groupsFor, scope, target, reference, affectedUnits);
+    tally(overlayPostings, groupsFor, scope, target, reference);
   } else {
-    tally(postings, groupOf, scope, target, reference);
+    tally(postings, groupsFor, scope, target, reference);
   }
 
   const total = targetTokens + referenceTokens;

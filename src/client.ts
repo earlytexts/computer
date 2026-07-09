@@ -141,6 +141,7 @@ export const computerClient = (
           q: params.q,
           match: params.match,
           caseSensitive: params.caseSensitive,
+          resolved: params.resolved,
           version: params.version,
           author: params.author,
           work: params.work,

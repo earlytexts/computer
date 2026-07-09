@@ -19,6 +19,7 @@ Deno.test("loadCatalogue fails clearly when the corpus was not built", async () 
   const reader = {
     readCatalogue: () => Promise.resolve(null),
     readDocument: () => Promise.resolve(null),
+    readDictionary: () => Promise.resolve(null),
   };
   await assertRejects(
     () => loadCatalogue(reader, "/no/such/corpus"),
@@ -67,6 +68,7 @@ Deno.test("loadCatalogue reconstructs the catalogue, incl. metadata-less docs", 
         blocks: [],
         children: [{ id: "A.W.1700.1", blocks: [], children: [] }],
       }),
+    readDictionary: () => Promise.resolve(null),
   };
   const { catalogue, warnings } = await loadCatalogue(reader, "/corpus");
   assertEquals(warnings, []);

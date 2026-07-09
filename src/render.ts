@@ -296,6 +296,7 @@ const searchMode = (response: SearchResponse): string => {
   const flags = [
     matchLabel[response.match],
     ...(response.caseSensitive ? ["case-sensitive"] : []),
+    ...(response.resolved ? ["resolved"] : []),
   ];
   return flags.join(", ");
 };

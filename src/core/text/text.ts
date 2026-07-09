@@ -31,7 +31,9 @@ import type {
   InlineElement,
   List,
   NestableBlockElement,
+  Word as WordElement,
 } from "@earlytexts/markit";
+import { type Exemption, exemptions } from "@earlytexts/corpus/wire";
 import type { Version } from "../../types.ts";
 
 // 2: editorial insertions/deletions are resolved per version (was: both
@@ -41,6 +43,22 @@ export const EXTRACTION_VERSION = 2;
 /** A [start, end) character range in a block's extracted text. */
 export type HighlightRange = { start: number; end: number };
 
+/**
+ * One run of plain extracted text (one plainText node), with the dictionary
+ * context the same walk saw around it: the nearest enclosing exempting markup
+ * (person / place / org / citation / language) and the value of the enclosing
+ * `[w:surface=value]` element, if any. `tokenContexts` collects these so the
+ * build can look up, by character offset, the reading context of every token it
+ * finds in the extracted text — offsets and context therefore come from the one
+ * extraction walk, so they cannot drift.
+ */
+export type ContextSpan = {
+  start: number;
+  end: number;
+  exemption?: Exemption;
+  wordValue?: string;
+};
+
 type WalkState = {
   /** Characters of extracted text contributed so far. */
   pos: number;
@@ -49,7 +67,18 @@ type WalkState = {
   /** Which version's text the walk emits and keeps (see module comment). */
   version: Version;
   emit?: (text: string) => void;
+  /** When set, each plainText run is appended here with its enclosing context. */
+  spans?: ContextSpan[];
+  /** The nearest enclosing exempting markup during the walk. */
+  exemption?: Exemption;
+  /** The value of the nearest enclosing `[w:…]` element during the walk. */
+  wordValue?: string;
 };
+
+const exemptionOf = (type: string): Exemption | undefined =>
+  (exemptions as readonly string[]).includes(type)
+    ? (type as Exemption)
+    : undefined;
 
 const contribute = (state: WalkState, text: string): void => {
   state.pos += text.length;
@@ -117,6 +146,18 @@ const walkInline = (
     if (element.type === "plainText") {
       const start = state.pos;
       contribute(state, element.content);
+      if (state.spans !== undefined && element.content.length > 0) {
+        state.spans.push({
+          start,
+          end: state.pos,
+          ...(state.exemption !== undefined
+            ? { exemption: state.exemption }
+            : {}),
+          ...(state.wordValue !== undefined
+            ? { wordValue: state.wordValue }
+            : {}),
+        });
+      }
       const marked = state.ranges.some((range) =>
         range.start < state.pos && range.end > start
       );
@@ -134,7 +175,20 @@ const walkInline = (
       return walkInline(element.content, state);
     }
     if ("content" in element) {
-      return [{ ...element, content: walkInline(element.content, state) }];
+      // Track the dictionary context (exemption / `[w:]` value) around the
+      // recursion, restoring it after so siblings are unaffected. Only matters
+      // when collecting spans; otherwise these stay undefined and unused.
+      const exemption = exemptionOf(element.type);
+      const previousExemption = state.exemption;
+      const previousWord = state.wordValue;
+      if (exemption !== undefined) state.exemption = exemption;
+      if (element.type === "word") {
+        state.wordValue = (element as WordElement).word;
+      }
+      const content = walkInline(element.content, state);
+      state.exemption = previousExemption;
+      state.wordValue = previousWord;
+      return [{ ...element, content }];
     }
     contribute(state, leafText(element));
     return [element];
@@ -216,6 +270,23 @@ export const blockText = (
   let text = "";
   walkBlock(block, { pos: 0, ranges: [], version, emit: (t) => text += t });
   return text;
+};
+
+/**
+ * The plain-text runs of a block, in order, each tagged with the exemption and
+ * `[w:]` value the extraction walk saw around it. Their `[start, end)` offsets
+ * are into `blockText(block, version)` — the same walk produces both — so the
+ * build can resolve a token's reading context by locating the run its offset
+ * falls in. Runs from other structure (line breaks, table separators) contribute
+ * no span, but they never contain word characters, so no token can fall in one.
+ */
+export const tokenContexts = (
+  block: Block,
+  version: Version = "edited",
+): ContextSpan[] => {
+  const spans: ContextSpan[] = [];
+  walkBlock(block, { pos: 0, ranges: [], version, spans });
+  return spans;
 };
 
 /**
