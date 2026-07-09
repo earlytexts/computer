@@ -31,6 +31,7 @@ type ContextFrame =
   | { type: WrapperType }
   | { type: "language"; lang?: string }
   | { type: "element"; tag: string; attributes: ElementAttribute[] }
+  | { type: "word"; word: string }
   | { type: "highlight" };
 
 export type Token = {
@@ -209,6 +210,8 @@ const buildSpans = (block: Block): { text: string; spans: TextSpan[] } => {
           ...ctx,
           { type: "element", tag: el.tag, attributes: el.attributes },
         ]);
+      } else if (el.type === "word") {
+        inlineCtx(el.content, [...ctx, { type: "word", word: el.word }]);
       } else if ("content" in el) {
         // Wrapper or Highlight: el.type is a WrapperType or "highlight"
         inlineCtx(el.content, [...ctx, { type: el.type }]);
