@@ -31,9 +31,9 @@ the full method surface and error-handling contract.
 ## Running
 
 ```sh
-deno task build   # build the derived artefacts into artefacts/ (gitignored)
-deno task start   # start the HTTP server on port 8420 (PORT to override)
-deno task dev     # as above, restarting on source changes
+deno task install # clone the corpus into $CORPUS_DIR (deployment's data step)
+deno task build   # build the gitignored artefacts (corpus catalogue, then artefacts/)
+deno task start   # start the HTTP server on port 8420 in watch mode (PORT to override)
 deno task stdio   # serve the corpus tools over MCP on stdio
 ```
 
@@ -48,13 +48,14 @@ Environment:
 
 On boot the server checks the artefacts against the corpus (pipeline version +
 file count + latest mtime) and rebuilds them itself if they are stale or
-missing, so `deno task build` is an optimisation, not a requirement. The corpus
-is compiled into memory only to (re)build the artefacts; once they are fresh the
-server runs entirely from them and boots in well under a second. Every route is
-answered from the artefacts: search from the inverted index and units (~50MB
-heap, ms-fast), the text/compare routes from `catalogue.json` (the metadata tree
-and per-edition section skeletons) plus block content read lazily from each
-edition's `blocks.jsonl` under a small LRU, and collocations from the
+missing, so running the artefact build ahead of boot is an optimisation, not a
+requirement (the catalogue under `$CORPUS_DIR` must already exist, though). The
+corpus is compiled into memory only to (re)build the artefacts; once they are
+fresh the server runs entirely from them and boots in well under a second. Every
+route is answered from the artefacts: search from the inverted index and units
+(~50MB heap, ms-fast), the text/compare routes from `catalogue.json` (the
+metadata tree and per-edition section skeletons) plus block content read lazily
+from each edition's `blocks.jsonl` under a small LRU, and collocations from the
 per-edition `tokens.bin` read lazily under its own small LRU.
 
 Clients are identified by the first `X-Forwarded-For` hop when present (set by a

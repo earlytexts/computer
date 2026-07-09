@@ -10,8 +10,8 @@
  * types. So the corpus checkout at $CORPUS_DIR is pure data: the code is the
  * pinned package version, and nothing needs installing there.
  *
- * Run with: deno task build:corpus. In dev, run the corpus's own `deno task
- * build` instead; both produce byte-identical output.
+ * Run as the first half of `deno task build`. In dev, running the corpus's own
+ * `deno task build` produces byte-identical output.
  */
 
 import {
