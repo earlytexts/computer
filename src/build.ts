@@ -22,7 +22,7 @@ console.log(
     `  ${stats.authors} authors, ${stats.works} works, ` +
     `${stats.editions} editions, ${stats.units} blocks, ` +
     `${stats.tokens} tokens, ${stats.surfaces} surface forms, ` +
-    `${stats.spellings} spellings, ${stats.forms} form buckets`,
+    `${stats.spellings} spellings, ${stats.lemmas} lemmas`,
 );
 if (warnings.length > 0) {
   console.warn(`${warnings.length} corpus warnings (recorded in manifest):`);

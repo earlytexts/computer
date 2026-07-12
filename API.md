@@ -165,6 +165,15 @@ formatted**, with the matching words highlighted — you render it like any othe
 passage, not as a bare snippet. Paged with `page` and `perPage` (default 20, up
 to 100 per page).
 
+- **`resolved`** — off by default. A `spelling`/`form` search normally casts a
+  **wide** net: it matches any occurrence whose printed word _could_ read as
+  your query. Turn `resolved` on for a **narrow** net that keeps only
+  occurrences whose reading in context actually is the query — honouring an
+  edition's spelling conventions and `[w:]` disambiguation, and skipping names
+  and citations (which never normalise). So a wide search for _human_ finds
+  every _humane_; a narrow one finds only the _humane_ that an editor marked or
+  an edition declared to mean _human_. (No effect on `exact`.)
+
 > **📐 The maths behind it** _(skip freely)._ Results are ordered by BM25, the
 > standard relevance score: a passage ranks higher the more often the phrase
 > occurs in it, with diminishing returns, and adjusted so that short passages

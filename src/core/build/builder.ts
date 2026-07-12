@@ -11,6 +11,7 @@
  */
 
 import type { Block, MarkitDocument } from "@earlytexts/markit";
+import { type Overrides, overridesOf } from "@earlytexts/corpus/wire";
 import {
   type Author,
   type Catalogue,
@@ -24,10 +25,12 @@ import {
 import type { AuthorMeta, EditionMeta, WorkMeta } from "../../types.ts";
 import {
   blockText,
-  buildSurfaceLemma,
-  formKey,
   hasEditorial,
-  normalizeSpelling,
+  joinTokens,
+  multiWordKeys,
+  resolveTokenReadings,
+  surfaceReadings,
+  tokenContexts,
   tokenize,
 } from "../text/mod.ts";
 import {
@@ -41,6 +44,8 @@ import {
   type EditionRef,
   PIPELINE_VERSION,
   type Postings,
+  READING_EXEMPT,
+  readingOf,
   type SkeletonSection,
   type Topics,
   type TopicTerm,
@@ -54,7 +59,10 @@ import {
 const isCapital = (first: string): boolean =>
   first !== first.toLowerCase() && first === first.toUpperCase();
 
-/** Visit every block of every edition, under the work that owns its text. */
+/** Visit every block of every edition, under the work that owns its text. Each
+ * block carries the `[metadata.dictionary]` overrides of its enclosing text,
+ * cascaded down the section tree (nearest ancestor wins per surface), so a
+ * token's reading can be resolved in its edition's orthographic context. */
 const eachUnit = (
   catalogue: Catalogue,
   visit: (
@@ -63,6 +71,7 @@ const eachUnit = (
     sectionPath: string[],
     sectionTitle: string,
     block: Block,
+    overrides: Overrides,
   ) => void,
 ): void => {
   const owns = (work: Work, doc: MarkitDocument): boolean => {
@@ -83,6 +92,7 @@ const eachUnit = (
         const visitSections = (
           doc: MarkitDocument,
           path: string[],
+          overrides: Overrides,
         ): void => {
           for (const child of doc.children) {
             // Children whose text belongs to another work (composite
@@ -92,16 +102,21 @@ const eachUnit = (
             const title = typeof child.metadata?.title === "string"
               ? child.metadata.title
               : lastSegment(child.id);
+            const childOverrides = {
+              ...overrides,
+              ...overridesOf(child.metadata),
+            };
             for (const block of child.blocks) {
-              visit(work, edition, childPath, title, block);
+              visit(work, edition, childPath, title, block, childOverrides);
             }
-            visitSections(child, childPath);
+            visitSections(child, childPath, childOverrides);
           }
         };
+        const editionOverrides = overridesOf(edition.document.metadata);
         for (const block of edition.document.blocks) {
-          visit(work, edition, [], edition.title, block);
+          visit(work, edition, [], edition.title, block, editionOverrides);
         }
-        visitSections(edition.document, []);
+        visitSections(edition.document, [], editionOverrides);
       }
     }
   }
@@ -208,26 +223,34 @@ export const buildDtm = (
   const nDocs = docs.length;
 
   // Lemma columns, interned lazily so only lemmas present in the edited text get
-  // a column. Sparse per-document counts: doc -> (column -> occurrences).
+  // a column. Sparse per-document counts: doc -> (column -> occurrences). Each
+  // occurrence is counted under the lemma(s) of the reading it actually resolved
+  // to (its stored per-posting reading), so an edition's overrides and `[w:]`
+  // markup steer the statistics; a contraction ('tis) counts under each of its
+  // words' lemmas.
   const lemmaIndex = new Map<string, number>();
   const lemmas: string[] = [];
   const counts: Map<number, number>[] = Array.from(
     { length: nDocs },
     () => new Map(),
   );
-  const { offsets, pairs } = postings;
-  for (let id = 0; id < vocab.surfaces.length; id++) {
-    if (offsets[id] === offsets[id + 1]) continue; // overlay-only surface
-    const lemma = vocab.surfaceLemma[id];
+  const columnOf = (lemma: string): number => {
     let col = lemmaIndex.get(lemma);
     if (col === undefined) {
       col = lemmas.length;
       lemmas.push(lemma);
       lemmaIndex.set(lemma, col);
     }
-    for (let i = offsets[id] * 2; i < offsets[id + 1] * 2; i += 2) {
-      const m = counts[unitDoc[pairs[i]]];
-      m.set(col, (m.get(col) ?? 0) + 1);
+    return col;
+  };
+  const { offsets, pairs, readings } = postings;
+  for (let id = 0; id < vocab.surfaces.length; id++) {
+    if (offsets[id] === offsets[id + 1]) continue; // overlay-only surface
+    for (let p = offsets[id]; p < offsets[id + 1]; p++) {
+      const m = counts[unitDoc[pairs[p * 2]]];
+      for (const word of readingOf(vocab, id, readings[p])) {
+        m.set(columnOf(word.lemma), (m.get(columnOf(word.lemma)) ?? 0) + 1);
+      }
     }
   }
 
@@ -570,9 +593,16 @@ export const buildArtefacts = (
   // Interim, insertion-ordered vocabulary; remapped to sorted ids below. The
   // vocabulary is the union of the edited and original streams; df/cf count
   // occurrences across both (so original-only spellings are still coherent).
+  const dictionary = catalogue.dictionary;
+  // The register's multi-word units, fused from the base tokens exactly as the
+  // corpus fuses them for accounting (same `joinMultiWord`), so `a priori`
+  // indexes as one surface whose reading words still bucket each half.
+  const multiWord = multiWordKeys(Object.keys(dictionary));
   const tempIds = new Map<string, number>();
   const tempPostings: number[][] = []; // edited reading text (every unit)
+  const tempReadings: number[][] = []; // resolved reading per edited posting
   const overlayPostings: number[][] = []; // original text (edited units only)
+  const overlayReadings: number[][] = []; // resolved reading per overlay posting
   const tempCf: number[] = [];
   const tempDf: number[] = [];
   const tempLastUnit: number[] = [];
@@ -587,7 +617,9 @@ export const buildArtefacts = (
       tempId = tempIds.size;
       tempIds.set(surface, tempId);
       tempPostings.push([]);
+      tempReadings.push([]);
       overlayPostings.push([]);
+      overlayReadings.push([]);
       tempCf.push(0);
       tempDf.push(0);
       tempLastUnit.push(-1);
@@ -595,17 +627,21 @@ export const buildArtefacts = (
     return tempId;
   };
 
-  /** Record one occurrence of a surface in a unit: postings, cf, and df. The
-   * stored position carries CAP_BIT when the occurrence began with a capital. */
+  /** Record one occurrence of a surface in a unit: postings, its resolved
+   * reading (EXEMPT stored as READING_EXEMPT), cf, and df. The stored position
+   * carries CAP_BIT when the occurrence began with a capital. */
   const record = (
     postings: number[][],
+    readings: number[][],
     surface: string,
     unitIndex: number,
     position: number,
     capital: boolean,
+    reading: number,
   ): number => {
     const tempId = intern(surface);
     postings[tempId].push(unitIndex, capital ? position + CAP_BIT : position);
+    readings[tempId].push(reading < 0 ? READING_EXEMPT : reading);
     tempCf[tempId]++;
     if (tempLastUnit[tempId] !== unitIndex) {
       tempDf[tempId]++;
@@ -642,82 +678,109 @@ export const buildArtefacts = (
   // section's blocks to the unit under the edition that owns their text.
   const blockUnit = new Map<Block, number>();
 
-  eachUnit(catalogue, (work, edition, sectionPath, sectionTitle, block) => {
-    const editionIdx = editionIndex.get(
-      `${work.hostSlug}/${work.slug}/${edition.slug}`,
-    )!;
-    let acc = accumulators.get(editionIdx);
-    if (acc === undefined) {
-      acc = {
-        ref: editionRefs[editionIdx],
-        text: "",
-        blockLines: [],
-        bytes: 0,
-        tokens: [],
-      };
-      accumulators.set(editionIdx, acc);
-    }
-
-    const unitIndex = units.edition.length;
-    blockUnit.set(block, unitIndex);
-    const text = blockText(block);
-    const line = encoder.encode(JSON.stringify(block) + "\n");
-    const spans = tokenize(text);
-
-    units.edition.push(editionIdx);
-    units.sectionPath.push(sectionPath.join("/"));
-    units.sectionTitle.push(sectionTitle);
-    units.blockId.push(lastSegment(block.id));
-    units.isTitle.push(
-      block.type === "title" || block.type === "subtitle" ? 1 : 0,
-    );
-    units.tokenCount.push(spans.length);
-    units.blobOffset.push(acc.text.length);
-    units.blobLength.push(text.length);
-    units.byteOffset.push(acc.bytes);
-    units.byteLength.push(line.length - 1); // the line minus its "\n"
-
-    for (let position = 0; position < spans.length; position++) {
-      const span = spans[position];
-      const tempId = record(
-        tempPostings,
-        span.surface,
-        unitIndex,
-        position,
-        isCapital(text[span.start]),
-      );
-      acc.tokens.push(tempId, units.blobOffset[unitIndex] + span.start);
-    }
-    totalTokens += spans.length;
-
-    // Where the block carries editorial markup, index its original text into
-    // the overlay too, with original-version token positions, so an original
-    // search reads this unit from the overlay instead of the (edited) primary.
-    if (hasEditorial(block)) {
-      affectedUnits.push(unitIndex);
-      const originalText = blockText(block, "original");
-      const originalSpans = tokenize(originalText);
-      for (let position = 0; position < originalSpans.length; position++) {
-        const span = originalSpans[position];
-        // intern() without record(): the surface enters the vocabulary so
-        // original-text queries can resolve it, but df and cf are NOT
-        // incremented. This is intentional: df/cf reflect the edited reading
-        // text only, so that downstream statistics (word frequency, tf-idf,
-        // topic modelling) are grounded in the text as published, not in the
-        // manuscript layer. Do not replace this with record() without updating
-        // the statistical semantics throughout.
-        const tempId = intern(span.surface);
-        overlayPostings[tempId].push(
-          unitIndex,
-          isCapital(originalText[span.start]) ? position + CAP_BIT : position,
-        );
+  eachUnit(
+    catalogue,
+    (work, edition, sectionPath, sectionTitle, block, overrides) => {
+      const editionIdx = editionIndex.get(
+        `${work.hostSlug}/${work.slug}/${edition.slug}`,
+      )!;
+      let acc = accumulators.get(editionIdx);
+      if (acc === undefined) {
+        acc = {
+          ref: editionRefs[editionIdx],
+          text: "",
+          blockLines: [],
+          bytes: 0,
+          tokens: [],
+        };
+        accumulators.set(editionIdx, acc);
       }
-    }
 
-    acc.text += text + "\n";
-    acc.blockLines.push(line);
-    acc.bytes += line.length;
-  });
+      const unitIndex = units.edition.length;
+      blockUnit.set(block, unitIndex);
+      const text = blockText(block);
+      const line = encoder.encode(JSON.stringify(block) + "\n");
+      const spans = joinTokens(tokenize(text), text, multiWord);
+      // Resolve each token's reading in its edition's orthographic context, from
+      // the same extraction walk that produced the offsets (tokenContexts), so
+      // context and offset cannot drift.
+      const readingOf = resolveTokenReadings(
+        spans,
+        tokenContexts(block),
+        dictionary,
+        overrides,
+      );
+
+      units.edition.push(editionIdx);
+      units.sectionPath.push(sectionPath.join("/"));
+      units.sectionTitle.push(sectionTitle);
+      units.blockId.push(lastSegment(block.id));
+      units.isTitle.push(
+        block.type === "title" || block.type === "subtitle" ? 1 : 0,
+      );
+      units.tokenCount.push(spans.length);
+      units.blobOffset.push(acc.text.length);
+      units.blobLength.push(text.length);
+      units.byteOffset.push(acc.bytes);
+      units.byteLength.push(line.length - 1); // the line minus its "\n"
+
+      for (let position = 0; position < spans.length; position++) {
+        const span = spans[position];
+        const tempId = record(
+          tempPostings,
+          tempReadings,
+          span.surface,
+          unitIndex,
+          position,
+          isCapital(text[span.start]),
+          readingOf[position],
+        );
+        acc.tokens.push(tempId, units.blobOffset[unitIndex] + span.start);
+      }
+      totalTokens += spans.length;
+
+      // Where the block carries editorial markup, index its original text into
+      // the overlay too, with original-version token positions and readings, so an
+      // original search reads this unit from the overlay instead of the (edited)
+      // primary.
+      if (hasEditorial(block)) {
+        affectedUnits.push(unitIndex);
+        const originalText = blockText(block, "original");
+        const originalSpans = joinTokens(
+          tokenize(originalText),
+          originalText,
+          multiWord,
+        );
+        const originalReading = resolveTokenReadings(
+          originalSpans,
+          tokenContexts(block, "original"),
+          dictionary,
+          overrides,
+        );
+        for (let position = 0; position < originalSpans.length; position++) {
+          const span = originalSpans[position];
+          // intern() without record(): the surface enters the vocabulary so
+          // original-text queries can resolve it, but df and cf are NOT
+          // incremented. This is intentional: df/cf reflect the edited reading
+          // text only, so that downstream statistics (word frequency, tf-idf,
+          // topic modelling) are grounded in the text as published, not in the
+          // manuscript layer. Do not replace this with record() without updating
+          // the statistical semantics throughout.
+          const tempId = intern(span.surface);
+          overlayPostings[tempId].push(
+            unitIndex,
+            isCapital(originalText[span.start]) ? position + CAP_BIT : position,
+          );
+          const reading = originalReading[position];
+          overlayReadings[tempId].push(reading < 0 ? READING_EXEMPT : reading);
+        }
+      }
+
+      acc.text += text + "\n";
+      acc.blockLines.push(line);
+      acc.bytes += line.length;
+    },
+  );
 
   // Final, sorted vocabulary; temp ids -> sorted surface ids.
   const surfaces = [...tempIds.keys()].sort();
@@ -726,48 +789,62 @@ export const buildArtefacts = (
   for (const [surface, tempId] of tempIds) {
     tempToFinal[tempId] = surfaceId.get(surface)!;
   }
-  // Per-surface canonical spelling and form bucket, then the distinct sorted
-  // tables they index into. The form bucket is built on the spelling, not the
-  // raw surface, so the levels nest: surface ⊃ spelling ⊃ form.
-  const spellingOf = surfaces.map(normalizeSpelling);
-  const formOf = spellingOf.map(formKey);
-  const spellings = [...new Set(spellingOf)].sort();
-  const forms = [...new Set(formOf)].sort();
-  const spellingId = new Map(spellings.map((s, i) => [s, i]));
-  const formIdMap = new Map(forms.map((f, i) => [f, i]));
+  // Per-surface readings, from the register (identity when unregistered). The
+  // spelling and lemma bucket tables (the search levels) and every lemma-keyed
+  // statistic derive from these — no spelling/stemming heuristics of the
+  // computer's own. Stored per surface so the reading index on each posting can
+  // be resolved back to its words at serve time.
+  const readings = surfaces.map((surface) =>
+    surfaceReadings(surface, dictionary)
+  );
   const vocab: Vocab = {
     surfaces,
-    surfaceSpelling: spellingOf.map((s) => spellingId.get(s)!),
-    surfaceForm: formOf.map((f) => formIdMap.get(f)!),
+    readings,
     df: new Array(surfaces.length),
     cf: new Array(surfaces.length),
-    spellings,
-    forms,
-    surfaceLemma: buildSurfaceLemma(spellingOf),
   };
   for (const [surface, tempId] of tempIds) {
     const id = surfaceId.get(surface)!;
     vocab.df[id] = tempDf[tempId];
     vocab.cf[id] = tempCf[tempId];
   }
+  // Distinct spelling and lemma words across every reading — the sizes of the
+  // two search-level bucket spaces, for the manifest stats.
+  const spellingSet = new Set<string>();
+  const lemmaSet = new Set<string>();
+  for (const perSurface of readings) {
+    for (const reading of perSurface) {
+      for (const word of reading) {
+        spellingSet.add(word.spelling);
+        lemmaSet.add(word.lemma);
+      }
+    }
+  }
 
-  // Pack a (tempId-indexed) postings table grouped by final surface id.
-  const packPostings = (source: number[][]): Postings => {
+  // Pack a (tempId-indexed) postings table grouped by final surface id, with
+  // each posting's resolved reading index parallel to its (unit, position) pair.
+  const packPostings = (
+    sourcePairs: number[][],
+    sourceReadings: number[][],
+  ): Postings => {
     const offsets = new Uint32Array(surfaces.length + 1);
     let total = 0;
     for (let id = 0; id < surfaces.length; id++) {
       offsets[id] = total;
-      total += source[tempIds.get(surfaces[id])!].length / 2;
+      total += sourcePairs[tempIds.get(surfaces[id])!].length / 2;
     }
     offsets[surfaces.length] = total;
     const pairs = new Uint32Array(total * 2);
+    const readingIds = new Uint32Array(total);
     for (let id = 0; id < surfaces.length; id++) {
-      pairs.set(source[tempIds.get(surfaces[id])!], offsets[id] * 2);
+      const tempId = tempIds.get(surfaces[id])!;
+      pairs.set(sourcePairs[tempId], offsets[id] * 2);
+      readingIds.set(sourceReadings[tempId], offsets[id]);
     }
-    return { offsets, pairs };
+    return { offsets, pairs, readings: readingIds };
   };
-  const postings = packPostings(tempPostings);
-  const overlay = packPostings(overlayPostings);
+  const postings = packPostings(tempPostings, tempReadings);
+  const overlay = packPostings(overlayPostings, overlayReadings);
 
   const editions: BuiltEdition[] = [...accumulators.values()].map((acc) => {
     const tokens = new Uint32Array(acc.tokens.length);
@@ -820,8 +897,8 @@ export const buildArtefacts = (
         units: units.edition.length,
         tokens: totalTokens,
         surfaces: surfaces.length,
-        spellings: spellings.length,
-        forms: forms.length,
+        spellings: spellingSet.size,
+        lemmas: lemmaSet.size,
       },
       editionSlugs: catalogueArtefact.editionSlugs,
       editions: editionRefs,

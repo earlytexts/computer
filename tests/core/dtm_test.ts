@@ -54,7 +54,11 @@ Deno.test("CSR rows are well-formed and L2-normalised over lemma columns", async
 Deno.test("columns are citation-form lemmas of the edited text", async () => {
   const { built } = await testData();
   const { dtm, vocab } = built;
-  const lemmaSet = new Set(vocab.surfaceLemma);
+  const lemmaSet = new Set(
+    vocab.readings.flatMap((readings) =>
+      readings.flatMap((reading) => reading.map((word) => word.lemma))
+    ),
+  );
   for (const lemma of dtm.lemmas) assert(lemmaSet.has(lemma));
   // "passions" collapses to its citation form, "connexion" normalises spelling.
   assert(dtm.lemmas.includes("passion"));

@@ -19,18 +19,21 @@ export {
   hasEditorial,
   highlightBlock,
   resolveBlock,
+  tokenContexts,
 } from "./text.ts";
-export type { HighlightRange } from "./text.ts";
+export type { ContextSpan, HighlightRange } from "./text.ts";
 
-/* tokenization & the spelling/form/lemma type layers */
+/* tokenization (word identity) */
 export {
-  buildSurfaceLemma,
-  formKey,
-  normalizeSpelling,
+  joinTokens,
+  multiWordKeys,
   tokenize,
   TOKENIZER_VERSION,
 } from "./tokenize.ts";
 export type { TokenSpan } from "./tokenize.ts";
+
+/* dictionary readings (per-occurrence spelling/lemma resolution) */
+export { EXEMPT, resolveTokenReadings, surfaceReadings } from "./readings.ts";
 
 /* search */
 export {

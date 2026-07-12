@@ -27,6 +27,7 @@ import {
 import { buildArtefactsToDisk, loadForServing } from "../src/core/pipeline.ts";
 import { type Io, openComputer } from "../src/core/mod.ts";
 import type { CatalogueFile, RawDoc } from "../src/core/build/catalogue.ts";
+import type { Dictionary } from "@earlytexts/corpus/wire";
 import type { Computer } from "../src/types.ts";
 import {
   buildCatalogueOutput,
@@ -81,10 +82,15 @@ export const memoryHarness = (
       const json = (await output()).documents.get(docKey);
       return json === undefined ? null : JSON.parse(json) as RawDoc;
     },
-    // Fingerprint the compiled catalogue, as the disk adapter does.
+    readDictionary: async () =>
+      JSON.parse((await output()).dictionary) as Dictionary,
+    // Fingerprint the compiled catalogue and dictionary, as the disk adapter does.
     scanCorpus: async () => {
-      const { catalogue } = await output();
-      return { files: catalogue.length, modified: hash(catalogue) };
+      const { catalogue, dictionary } = await output();
+      return {
+        files: catalogue.length + dictionary.length,
+        modified: hash(`${catalogue}\0${dictionary}`),
+      };
     },
     readManifest: () => {
       const bytes = store.get(ARTEFACT_FILES.manifest);

@@ -31,12 +31,15 @@ export type { Meta };
 export type CatalogueOutput = {
   catalogue: string;
   documents: Map<string, string>;
+  /** The expanded dictionary (catalogue/dictionary.json text). */
+  dictionary: string;
 };
 
 /**
  * Compile a corpus map into the corpus's `catalogue/` output — the same step
  * `corpus/scripts/build.ts` runs — so the computer's tests consume exactly what
- * it reads in production. Returns the catalogue.json text and the document files.
+ * it reads in production. Returns the catalogue.json text, the document files,
+ * and the expanded dictionary.json text.
  */
 export const buildCatalogueOutput = async (
   files: Record<string, string>,
@@ -44,8 +47,12 @@ export const buildCatalogueOutput = async (
   const fs = memoryCorpus(files);
   const root = await fs.realPath(CORPUS_ROOT);
   const { catalogue: built, warnings } = await buildCatalogue(fs, CORPUS_ROOT);
-  const { catalogue, documents } = serializeCatalogue(built, warnings, root);
-  return { catalogue: JSON.stringify(catalogue), documents };
+  const { catalogue, documents, dictionary } = serializeCatalogue(
+    built,
+    warnings,
+    root,
+  );
+  return { catalogue: JSON.stringify(catalogue), documents, dictionary };
 };
 
 /**
@@ -56,9 +63,12 @@ export const materializeCorpus = async (
   files: Record<string, string>,
 ): Promise<string> => {
   const dir = await Deno.makeTempDir({ prefix: "computer-corpus-" });
-  const { catalogue, documents } = await buildCatalogueOutput(files);
+  const { catalogue, documents, dictionary } = await buildCatalogueOutput(
+    files,
+  );
   await Deno.mkdir(`${dir}/catalogue/documents`, { recursive: true });
   await Deno.writeTextFile(`${dir}/catalogue/catalogue.json`, catalogue);
+  await Deno.writeTextFile(`${dir}/catalogue/dictionary.json`, dictionary);
   for (const [docKey, json] of documents) {
     const path = `${dir}/catalogue/documents/${docKey}.json`;
     await Deno.mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true });
@@ -193,89 +203,204 @@ breadcrumb = "Inline Essay"
 {#1}
 An essay belonging to the composite collection alone.`;
 
+/**
+ * The register for the shared corpus, sharded a–z by the key's first letter, as
+ * the corpus build reads it (`data/dictionary/<letter>.json`). Small but real:
+ * archaic spellings cross-reference their modern form ("encrease" → "increase",
+ * "betwixt" → "between", "connexion" → "connection"), and inflected modern words
+ * state their lemma ("causes" → "cause", "passions" → "passion"), so the two
+ * search levels above `exact` behave — spelling unites old/modern, form
+ * additionally unites inflections. Each cross-reference target and stated lemma
+ * has its own entry (closure), so expansion derives every reading in one step.
+ */
+const DICTIONARY: Record<string, string> = {
+  "data/dictionary/b.json": JSON.stringify({
+    "between": null,
+    "betwixt": "between",
+  }),
+  "data/dictionary/c.json": JSON.stringify({
+    "cause": null,
+    "causes": "=cause",
+    "connection": null,
+    "connexion": "connection",
+  }),
+  "data/dictionary/e.json": JSON.stringify({
+    "effect": null,
+    "effects": "=effect",
+    "encrease": "increase",
+  }),
+  "data/dictionary/i.json": JSON.stringify({ "increase": null }),
+  "data/dictionary/p.json": JSON.stringify({
+    "passion": null,
+    "passions": "=passion",
+  }),
+};
+
+/** Add the register shards (keyed under CORPUS_ROOT, as the build reads them). */
+const withDictionary = (
+  files: Record<string, string>,
+): Record<string, string> => {
+  for (const [path, text] of Object.entries(DICTIONARY)) {
+    files[`${CORPUS_ROOT}/${path}`] = text;
+  }
+  return files;
+};
+
 /** The shared behavioural-test corpus, authored in memory. */
 export const testCorpus = (): Record<string, string> =>
-  corpus()
-    .author("test", {
-      forename: "Thomas",
-      surname: "Test",
-      birth: 1700,
-      death: 1780,
-      nationality: "English",
-      sex: "Male",
+  withDictionary(
+    corpus()
+      .author("test", {
+        forename: "Thomas",
+        surname: "Test",
+        birth: 1700,
+        death: 1780,
+        nationality: "English",
+        sex: "Male",
+      })
+      .author("other", {
+        forename: "Olivia",
+        surname: "Other",
+        title: "Lady Other",
+        birth: 1690,
+        death: 1770,
+        nationality: "Scottish",
+        sex: "Female",
+      })
+      .work("test", "solo", {
+        title: "A Solitary Treatise",
+        breadcrumb: "Solo Treatise",
+        canonical: "1740",
+      })
+      .edition("test", "solo", "1740", {
+        imported: true,
+        title: "A Solitary Treatise",
+        breadcrumb: "Solo Treatise",
+        published: [1740],
+      }, SOLO_1740)
+      .work("test", "tw", {
+        title: "A Test Work",
+        breadcrumb: "Test Work",
+        canonical: "1760",
+        // tw is borrowed by the comp collection; it opts out of listing on its
+        // own so it surfaces only within that collection (see catalogue_test).
+        standalone: false,
+      })
+      .edition("test", "tw", "1750", {
+        imported: true,
+        title: "A Test Work",
+        breadcrumb: "Test Work",
+        published: [1750],
+      }, TW_1750)
+      .edition("test", "tw", "1760", {
+        imported: true,
+        title: "A Test Work",
+        breadcrumb: "Test Work",
+        published: [1760],
+      }, TW_1760)
+      .edition("test", "tw", "main", {
+        imported: true,
+        title: "A Test Work",
+        breadcrumb: "Test Work",
+        published: [1750, 1760],
+        sourceDesc: "A fixture text for the computer's tests.",
+      }, TW_1760)
+      .work("test", "comp", {
+        title: "A Composite Collection",
+        breadcrumb: "Composite",
+        canonical: "1755",
+      })
+      .edition("test", "comp", "1755", {
+        imported: true,
+        title: "A Composite Collection",
+        breadcrumb: "Composite",
+        // a scalar published year (not an array): the loader coerces it to a
+        // one-element list, exercising the metadata-array helper's scalar arm.
+        published: 1755,
+      }, COMP_1755)
+      .work("other", "stub", {
+        title: "A Stub Treatise, Not Yet Transcribed",
+        breadcrumb: "Stub Treatise",
+        canonical: "1730",
+      })
+      .edition("other", "stub", "1730", {
+        imported: false,
+        title: "A Stub Treatise, Not Yet Transcribed",
+        breadcrumb: "Stub Treatise",
+        published: [1730],
+      })
+      .build(),
+  );
+
+/* ------------------------ the dictionary corpus ---------------------- */
+
+// A tiny two-edition work whose register exercises every reading shape: a
+// respelling with a shared lemma is absent, but ambiguity of spelling
+// ("humane" → humane/human), ambiguity of lemma ("lay" → lay/lie), a
+// contraction ("'tis" → it is), a `[w:]` disambiguation, and an exemption
+// ([p:…]) all appear — plus the two editions differ in the `[w:]` block, so a
+// section compare diffs it. The two editions differ only by a trailing adverb.
+const HUMANE = (tail: string): string =>
+  `{#title}
+^1 THE HUMANE ESSAY.
+
+## 1
+
+[metadata]
+title = "Chapter One"
+breadcrumb = "Chapter One"
+
+{#1}
+A [w:humane=human] understanding; 'tis the old lay of reason ${tail}. A [p:Humane] soul.
+
+{#2}
+Every humane gesture matters.`;
+
+const HUMANE_DICTIONARY: Record<string, string> = {
+  "data/dictionary/h.json": JSON.stringify({
+    "human": null,
+    "humane": [null, "human"],
+  }),
+  "data/dictionary/i.json": JSON.stringify({ "is": null, "it": null }),
+  "data/dictionary/l.json": JSON.stringify({
+    "lay": [null, "=lie"],
+    "lie": null,
+  }),
+  "data/dictionary/t.json": JSON.stringify({ "'tis": "it is" }),
+};
+
+/**
+ * A bespoke corpus for the dictionary/reading behaviour: `humane` reads as
+ * humane by default and human when marked or overridden; `lay` carries two
+ * lemmas; `'tis` expands to two words; `[p:Humane]` is exempt. Two editions
+ * (1700 canonical, 1710) so a section compare diffs the `[w:]`-bearing block.
+ */
+export const dictionaryCorpus = (): Record<string, string> => {
+  const files = corpus()
+    .author("amb", { forename: "Amb", surname: "Iguity" })
+    .work("amb", "amb", {
+      title: "The Humane Essay",
+      breadcrumb: "Humane Essay",
+      canonical: "1700",
     })
-    .author("other", {
-      forename: "Olivia",
-      surname: "Other",
-      title: "Lady Other",
-      birth: 1690,
-      death: 1770,
-      nationality: "Scottish",
-      sex: "Female",
-    })
-    .work("test", "solo", {
-      title: "A Solitary Treatise",
-      breadcrumb: "Solo Treatise",
-      canonical: "1740",
-    })
-    .edition("test", "solo", "1740", {
+    .edition("amb", "amb", "1700", {
       imported: true,
-      title: "A Solitary Treatise",
-      breadcrumb: "Solo Treatise",
-      published: [1740],
-    }, SOLO_1740)
-    .work("test", "tw", {
-      title: "A Test Work",
-      breadcrumb: "Test Work",
-      canonical: "1760",
-      // tw is borrowed by the comp collection; it opts out of listing on its
-      // own so it surfaces only within that collection (see catalogue_test).
-      standalone: false,
-    })
-    .edition("test", "tw", "1750", {
+      title: "The Humane Essay",
+      breadcrumb: "Humane Essay",
+      published: [1700],
+    }, HUMANE("plainly"))
+    .edition("amb", "amb", "1710", {
       imported: true,
-      title: "A Test Work",
-      breadcrumb: "Test Work",
-      published: [1750],
-    }, TW_1750)
-    .edition("test", "tw", "1760", {
-      imported: true,
-      title: "A Test Work",
-      breadcrumb: "Test Work",
-      published: [1760],
-    }, TW_1760)
-    .edition("test", "tw", "main", {
-      imported: true,
-      title: "A Test Work",
-      breadcrumb: "Test Work",
-      published: [1750, 1760],
-      sourceDesc: "A fixture text for the computer's tests.",
-    }, TW_1760)
-    .work("test", "comp", {
-      title: "A Composite Collection",
-      breadcrumb: "Composite",
-      canonical: "1755",
-    })
-    .edition("test", "comp", "1755", {
-      imported: true,
-      title: "A Composite Collection",
-      breadcrumb: "Composite",
-      // a scalar published year (not an array): the loader coerces it to a
-      // one-element list, exercising the metadata-array helper's scalar arm.
-      published: 1755,
-    }, COMP_1755)
-    .work("other", "stub", {
-      title: "A Stub Treatise, Not Yet Transcribed",
-      breadcrumb: "Stub Treatise",
-      canonical: "1730",
-    })
-    .edition("other", "stub", "1730", {
-      imported: false,
-      title: "A Stub Treatise, Not Yet Transcribed",
-      breadcrumb: "Stub Treatise",
-      published: [1730],
-    })
+      title: "The Humane Essay",
+      breadcrumb: "Humane Essay",
+      published: [1710],
+    }, HUMANE("indeed"))
     .build();
+  for (const [path, text] of Object.entries(HUMANE_DICTIONARY)) {
+    files[`${CORPUS_ROOT}/${path}`] = text;
+  }
+  return files;
+};
 
 /* ------------------------ the co-author corpus ----------------------- */
 
@@ -424,10 +549,11 @@ const richBlock3 = (lastCell: string): string =>
 | Plum | ${lastCell} |
 |  | gap |`;
 
-// Word pairs that drive the lemmatiser's suffix rules: each inflected form
-// sits beside the base it should resolve to (and a few -er/-es/-st cases where
-// only the silent-e base is present, exercising the "+e" arms — e.g. lov'st →
-// love).
+// A large bag of inflected word pairs (originally built for the retired
+// suffix-stripping lemmatiser; the register now owns lemmatisation). It stays
+// as a stable, wide vocabulary block — a long equal run for the diff tests and
+// bulk for the frequency/keyness/vector routes — none of these words being
+// registered, so they index as themselves.
 const lemmaWords = [
   "running run causing cause trying try tried tries greatest great",
   "doeth do causeth pleased please called call speaker speak larger large",
@@ -535,7 +661,7 @@ ${ownSection}`;
  * neighbour in both) and each carry one section of their own (so a work
  * comparison aligns added/removed sections). Section 1 holds the rich block
  * that diffs as a single changed paragraph plus blocks present in only one
- * edition; section 2 holds the lemmatiser word bag and a few small paragraphs
+ * edition; section 2 holds the inflected-word bag and a few small paragraphs
  * tuned to drive the word diff and the search highlighter.
  */
 export const richCorpus = (): Record<string, string> =>

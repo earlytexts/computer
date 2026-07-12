@@ -82,6 +82,7 @@ export const searchParams = (get: RawSource): SearchParams => ({
   q: string(get("q")) ?? "",
   match: enumParam("match", get("match"), MATCH_LEVELS),
   caseSensitive: boolParam("caseSensitive", get("caseSensitive")),
+  resolved: boolParam("resolved", get("resolved")),
   version: enumParam("version", get("version"), SEARCH_VERSIONS),
   author: string(get("author")),
   ...scope(get),

@@ -1,62 +1,48 @@
 /**
- * The corpus tokenizer and the type-level spelling/form normalisation.
+ * The corpus tokenizer: where words begin and end in extracted text.
  *
- * Layers, kept strictly apart. The token layer is gated by TOKENIZER_VERSION;
- * the type layers are gated by VOCAB_VERSION (see artefacts.ts), because they
- * change only the vocabulary's derived buckets, not the stored offsets.
+ * Word identity — which character runs are words, and how two printed tokens
+ * fold to the same surface — is the corpus's, imported from
+ * `@earlytexts/corpus/wire` (words.ts) rather than reproduced here, so there is
+ * one definition of "a word" across the write and read sides. This layer adds
+ * only what the read side needs on top: the character offsets to highlight a
+ * match back in the block, and the register-driven multi-word join, run over the
+ * base spans with the very `joinMultiWord` the corpus runs for accounting — so
+ * the two tokenizations of a fixed unit (`a priori`) cannot disagree.
  *
- *  - TOKEN level (`tokenize`): where words begin and end in extracted text.
- *    Each occurrence carries its SURFACE form — case-folded but otherwise
- *    spelling-faithful ("Encrease" -> "encrease", "tho'" -> "tho'") — plus
- *    character offsets back into the text, so matches can be highlighted in
- *    the original. Changing this layer changes every stored offset, so any
- *    change must bump TOKENIZER_VERSION (invalidating built artefacts).
+ * Each occurrence carries its SURFACE form — folded through the corpus's `fold`
+ * (so `Encrease` → `encrease`, and the pronoun `I` is preserved apart from the
+ * numeral `i`) — plus character offsets into the text, so matches can be
+ * highlighted in the original. Changing this layer changes every stored offset,
+ * so any change must bump TOKENIZER_VERSION (invalidating built artefacts).
  *
- * The type layers run in SERIES, each consuming the previous, and — until the
- * last — each producing a real, well-formed word. Applied to the ~50k distinct
- * forms in the vocabulary, never to the corpus itself:
- *
- *  - SPELLING (`normalizeSpelling`): orthography only, inflection preserved.
- *    Fold accents/ligatures/apostrophes, map old spellings to modern through
- *    the variant table ("encrease" -> "increase"), then collapse productive
- *    spelling classes by rule ("organise" -> "organize", "honour" -> "honor").
- *    Output is the canonical spelling: "encreasing" -> "increasing", NOT a
- *    stem. This is the spelling-tolerant search bucket and the input to both
- *    lemmatisation and the form bucket.
- *
- *  - FORM (`formKey`): the inflection-collapsing recall bucket, built ON the
- *    canonical spelling. For now just a Porter stem of the spelling
- *    ("increasing" -> "increas") — a quick-and-dirty stand-in for a lemmatiser;
- *    as the lemmatiser (artefacts.ts) gains coverage it can prefer the real
- *    lemma. Only ever a bucket key, never displayed, so it may read oddly.
- *
- * Lemmatisation (a real citation-form headword, for statistics) is the third
- * type layer (`buildSurfaceLemma`, below): it checks candidate bases against
- * the corpus spelling vocabulary, and it too runs on the canonical spelling, so
- * it never has to know about archaic orthography.
+ * This is identity only. Everything editorial about a word — its normalised
+ * spelling, its lemma, whether it is ambiguous, and which adjacent words are one
+ * unit — is the corpus dictionary's, consumed from the compiled catalogue (see
+ * readings.ts) rather than computed here by heuristic.
  */
 
-import variantsJson from "./variants.json" with { type: "json" };
-import lemmaOverrides from "./lemmas.json" with { type: "json" };
+import {
+  fold,
+  joinMultiWord,
+  type JoinOps,
+  wordPattern,
+} from "@earlytexts/corpus/wire";
 
-// 2: query is matched as a phrase; postings carry a capitalisation bit;
-// normalisation now Porter-stems after the variant table (plurals/inflections).
-// 3: productive spelling-class folds (-ize/-ise, -our/-or) around the stemmer.
-// The series split (spelling/form/lemma) is a VOCAB_VERSION change, not a
-// tokenizer change: surfaces and offsets are untouched, so this stays at 3.
-export const TOKENIZER_VERSION = 3;
-
-const VARIANTS = new Map<string, string>(
-  Object.entries(variantsJson).filter(
-    (entry): entry is [string, string] =>
-      typeof entry[1] === "string" && !entry[0].startsWith("__"),
-  ),
-);
-
-const WORD_RE = /[\p{L}\p{N}'’æœ-]+/giu;
+// 2: query is matched as a phrase; postings carry a capitalisation bit.
+// 3: (was) productive spelling-class folds around a stemmer, since retired.
+// 4: two internal joiners of the computer's own regex — a period before a
+// letter and the `~` a non-breaking space extracted to.
+// 5: word identity now imported from the corpus (`wordPattern`/`fold`), a
+// single shared definition. The `~` marker is gone (a non-breaking space
+// extracts to a plain space); a multi-word unit is fused by `joinTokens` from
+// the register instead. Consequences vs. 4: hyphens split (`school-men` is two
+// tokens) and the pronoun `I` no longer folds onto the numeral `i`.
+export const TOKENIZER_VERSION = 5;
 
 export type TokenSpan = {
-  /** Case-folded, spelling-faithful form of the occurrence. */
+  /** Folded, spelling-faithful form of the occurrence (a fused unit keeps its
+   * internal spaces, `a priori`). */
   surface: string;
   /** [start, end) character offsets into the tokenized text. */
   start: number;
@@ -64,289 +50,60 @@ export type TokenSpan = {
 };
 
 /**
- * Tokenize extracted plain text into surface forms with offsets. Hyphens at
- * a token's edges are trimmed (and the offsets tightened); internal hyphens
- * and apostrophes are kept, so "school-men" and "tho'" are single tokens.
+ * Tokenize extracted plain text into surface forms with offsets, using the
+ * corpus word alphabet. A token is a run of letters/digits and internal
+ * apostrophes, with a period that falls before a letter kept (`i.e`); hyphens
+ * and every kind of space separate. The surface is the corpus fold of the run.
  */
 export const tokenize = (text: string): TokenSpan[] => {
   const spans: TokenSpan[] = [];
-  for (const match of text.matchAll(WORD_RE)) {
-    let start = match.index;
-    let end = start + match[0].length;
-    while (start < end && text[start] === "-") start++;
-    while (end > start && text[end - 1] === "-") end--;
-    if (start === end) continue;
-    spans.push({ surface: text.slice(start, end).toLowerCase(), start, end });
+  for (const match of text.matchAll(wordPattern)) {
+    const start = match.index;
+    spans.push({
+      surface: fold(match[0]),
+      start,
+      end: start + match[0].length,
+    });
   }
   return spans;
 };
 
-/* -------------------------- Porter stemming -------------------------- */
-
-// The classic Porter (1980) algorithm, used to collapse inflections and
-// plurals so that "cause"/"causes", "effect"/"effects" and
-// "connect"/"connection" share a normalised form. Applied after the variant
-// table (so old spellings reach their modern stem first) and only to the
-// vocabulary, never to corpus text. A faithful port of Porter's reference
-// implementation, in the repo's arrow-function style.
-
-const CONS = "[^aeiou]";
-const VOWEL = "[aeiouy]";
-const CONS_SEQ = CONS + "[^aeiouy]*";
-const VOWEL_SEQ = VOWEL + "[aeiou]*";
-// measure tests: mgr0 = m>0, mgr1 = m>1, meq1 = m==1.
-const MGR0 = new RegExp(`^(${CONS_SEQ})?${VOWEL_SEQ}${CONS_SEQ}`);
-const MGR1 = new RegExp(
-  `^(${CONS_SEQ})?${VOWEL_SEQ}${CONS_SEQ}${VOWEL_SEQ}${CONS_SEQ}`,
-);
-const MEQ1 = new RegExp(
-  `^(${CONS_SEQ})?${VOWEL_SEQ}${CONS_SEQ}(${VOWEL_SEQ})?$`,
-);
-const HAS_VOWEL = new RegExp(`^(${CONS_SEQ})?${VOWEL}`);
-const CVC = new RegExp(`^${CONS_SEQ}${VOWEL}[^aeiouwxy]$`);
-
-const STEP2 = new Map<string, string>(Object.entries({
-  ational: "ate",
-  tional: "tion",
-  enci: "ence",
-  anci: "ance",
-  izer: "ize",
-  bli: "ble",
-  alli: "al",
-  entli: "ent",
-  eli: "e",
-  ousli: "ous",
-  ization: "ize",
-  ation: "ate",
-  ator: "ate",
-  alism: "al",
-  iveness: "ive",
-  fulness: "ful",
-  ousness: "ous",
-  aliti: "al",
-  iviti: "ive",
-  biliti: "ble",
-  logi: "log",
-}));
-const STEP3 = new Map<string, string>(Object.entries({
-  icate: "ic",
-  ative: "",
-  alize: "al",
-  iciti: "ic",
-  ical: "ic",
-  ful: "",
-  ness: "",
-}));
-const STEP2_RE =
-  /^(.+?)(ational|tional|enci|anci|izer|bli|alli|entli|eli|ousli|ization|ation|ator|alism|iveness|fulness|ousness|aliti|iviti|biliti|logi)$/;
-const STEP3_RE = /^(.+?)(icate|ative|alize|iciti|ical|ful|ness)$/;
-const STEP4_RE =
-  /^(.+?)(al|ance|ence|er|ic|able|ible|ant|ement|ment|ent|ou|ism|ate|iti|ous|ive|ize)$/;
-
-export const stem = (word: string): string => {
-  if (word.length < 3) return word;
-  let w = word;
-  const leadingY = w[0] === "y";
-  if (leadingY) w = "Y" + w.slice(1); // a leading y is a consonant
-
-  // Step 1a (plurals)
-  if (/^(.+?)(ss|i)es$/.test(w)) w = w.replace(/^(.+?)(ss|i)es$/, "$1$2");
-  else if (/^(.+?)([^s])s$/.test(w)) w = w.replace(/^(.+?)([^s])s$/, "$1$2");
-
-  // Step 1b (-eed/-ed/-ing)
-  const eed = /^(.+?)eed$/.exec(w);
-  if (eed !== null) {
-    if (MGR0.test(eed[1])) w = w.slice(0, -1);
-  } else {
-    const edIng = /^(.+?)(ed|ing)$/.exec(w);
-    if (edIng !== null && HAS_VOWEL.test(edIng[1])) {
-      w = edIng[1];
-      if (/(at|bl|iz)$/.test(w)) w = w + "e";
-      else if (/([^aeiouylsz])\1$/.test(w)) w = w.slice(0, -1);
-      else if (CVC.test(w)) w = w + "e";
-    }
-  }
-
-  // Step 1c (y -> i)
-  const y = /^(.+?)y$/.exec(w);
-  if (y !== null && HAS_VOWEL.test(y[1])) w = y[1] + "i";
-
-  // Step 2
-  const m2 = STEP2_RE.exec(w);
-  if (m2 !== null && MGR0.test(m2[1])) w = m2[1] + STEP2.get(m2[2]);
-
-  // Step 3
-  const m3 = STEP3_RE.exec(w);
-  if (m3 !== null && MGR0.test(m3[1])) w = m3[1] + STEP3.get(m3[2]);
-
-  // Step 4 (strip remaining suffixes when m>1)
-  const m4 = STEP4_RE.exec(w);
-  const ion = /^(.+?)(s|t)(ion)$/.exec(w);
-  if (m4 !== null) {
-    if (MGR1.test(m4[1])) w = m4[1];
-  } else if (ion !== null && MGR1.test(ion[1] + ion[2])) {
-    w = ion[1] + ion[2];
-  }
-
-  // Step 5a (trailing e)
-  const e = /^(.+?)e$/.exec(w);
-  if (e !== null) {
-    const s = e[1];
-    if (MGR1.test(s) || (MEQ1.test(s) && !CVC.test(s))) w = s;
-  }
-  // Step 5b (double l)
-  if (/ll$/.test(w) && MGR1.test(w)) w = w.slice(0, -1);
-
-  return leadingY ? "y" + w.slice(1) : w;
-};
+/** The multi-word surfaces among `surfaces` — the register keys a join can fuse
+ * a run into (those with an internal space). */
+export const multiWordKeys = (surfaces: Iterable<string>): Set<string> =>
+  new Set([...surfaces].filter((surface) => surface.includes(" ")));
 
 /**
- * Fold a surface to the base form the variant table is keyed on: strip
- * apostrophes and accents, expand ligatures. This is the first step of
- * `normalizeSpelling`, before the variant table and the productive folds; the
- * variants curation tool (dev/variants.ts) keys new overrides on exactly
- * this form, so it must stay the single source of truth.
+ * Fuse each run of adjacent base spans that a registered multi-word surface
+ * names into one span — the same greedy, longest-first join the corpus runs
+ * over the block tree (`joinMultiWord`). Adjacency is read straight from the
+ * text: two spans join only when nothing but inter-word space (never a newline
+ * or punctuation) separates them. The fused span covers the whole printed unit,
+ * so a highlight marks all of it and its position lines up with the build's.
  */
-export const foldBase = (surface: string): string =>
-  surface
-    .replace(/['’]/g, "")
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/æ/g, "ae")
-    .replace(/œ/g, "oe");
-
-/**
- * Productive spelling-class folds: orthographic classes where the two
- * spellings are always the *same word*, so collapsing them by rule (rather
- * than one variant-table row per word) keeps the whole family in one canonical
- * spelling consistently. Deliberately narrow; en-/in- is excluded because it
- * distinguishes real words (ensure/insure, endure/indure). Both run on the
- * variant-mapped base, preserving any inflectional ending.
- *
- *  - `-ise/-ize`: canonicalise to `-ize` (commoner than `-ise` in early modern
- *    British print). The 3-char stem guard leaves rise/wise/advise alone.
- *  - `-our/-or`: canonicalise to `-or` ("honour" -> "honor"). The 3-char guard
- *    leaves our/four/hour/flour alone.
- *
- * These shape the canonical spelling, so a misfire (e.g. "exercise" ->
- * "exercize") yields a slightly odd canonical form; harmless as a search
- * bucket, and curable per-word via the variant table if it ever surfaces in
- * displayed lemma statistics.
- */
-const ISE_RE = /([a-z]{3,})is(e|es|ed|ing|ation|ations|er|ers)$/;
-const OUR_RE = /([a-z]{3,})our$/;
-
-/**
- * SPELLING layer: surface -> canonical modern spelling, inflection preserved.
- * Fold to the variant-table base, map old spelling to modern, then apply the
- * productive folds. Output is a real word ("encreasing" -> "increasing"); it
- * is the spelling-tolerant search bucket and the input to `formKey` and to
- * lemmatisation.
- */
-export const normalizeSpelling = (surface: string): string => {
-  const base = foldBase(surface);
-  const mapped = VARIANTS.get(base) ?? base;
-  return mapped.replace(ISE_RE, "$1iz$2").replace(OUR_RE, "$1or");
-};
-
-/**
- * FORM layer: canonical spelling -> inflection-collapsing recall bucket. For
- * now a plain Porter stem of the spelling ("increasing" -> "increas"); a
- * quick-and-dirty stand-in until the lemmatiser (artefacts.ts) is trusted
- * enough to take over this slot. Never displayed, so a non-word stem is fine.
- */
-export const formKey = (spelling: string): string => stem(spelling);
-
-/* ------------------------------- lemmas ------------------------------- */
-
-/**
- * Infer a citation-form lemma for a single canonical SPELLING by trying to
- * strip common inflectional suffixes and checking whether the result exists in
- * the corpus spelling vocabulary. Candidates are tested against the actual
- * spelling set so the heuristic can never invent a form that doesn't appear in
- * the texts. Running on the canonical spelling means archaic orthography is
- * already gone, so a single path handles "encreases" and "increases" alike.
- * Overrides from lemmas.json win unconditionally (suppletive forms, -ied/-ies
- * where the base ends in -y, and any other case the rules get wrong).
- */
-const inferLemma = (surface: string, surfaceSet: Set<string>): string => {
-  const has = (s: string) => s.length > 0 && surfaceSet.has(s);
-
-  // -ing: strip and check; also try restoring silent -e (causing → cause)
-  if (surface.endsWith("ing") && surface.length > 4) {
-    const b = surface.slice(0, -3);
-    if (has(b)) return b;
-    if (has(b + "e")) return b + "e";
-  }
-  // -ied: -y → -ied inflection (tried → try, denied → deny)
-  if (surface.endsWith("ied") && surface.length > 4) {
-    const b = surface.slice(0, -3) + "y";
-    if (has(b)) return b;
-  }
-  // -ies: -y → -ies inflection (tries → try, qualities → quality)
-  if (surface.endsWith("ies") && surface.length > 4) {
-    const b = surface.slice(0, -3) + "y";
-    if (has(b)) return b;
-  }
-  // -est: superlative (greatest → great)
-  if (surface.endsWith("est") && surface.length > 4) {
-    const b = surface.slice(0, -3);
-    if (has(b)) return b;
-  }
-  // -eth: archaic 3rd-person singular (causeth → cause, hath handled in overrides)
-  if (surface.endsWith("eth") && surface.length > 4) {
-    const b = surface.slice(0, -3);
-    if (has(b)) return b;
-    if (has(b + "e")) return b + "e";
-  }
-  // -ed: try strip -d first (pleased → please), then strip -ed (called → call)
-  if (surface.endsWith("ed") && surface.length > 3) {
-    const d = surface.slice(0, -1);
-    if (has(d)) return d;
-    const ed = surface.slice(0, -2);
-    if (has(ed)) return ed;
-  }
-  // -er: comparative or agentive; also try restoring silent -e (larger → large)
-  if (surface.endsWith("er") && surface.length > 3) {
-    const b = surface.slice(0, -2);
-    if (has(b)) return b;
-    if (has(b + "e")) return b + "e";
-  }
-  // -es: plural/3rd-person; also try restoring silent -e (goes → go, dies → die)
-  if (surface.endsWith("es") && surface.length > 3) {
-    const b = surface.slice(0, -2);
-    if (has(b)) return b;
-    if (has(b + "e")) return b + "e";
-  }
-  // -ly: adverb (naturally → natural)
-  if (surface.endsWith("ly") && surface.length > 3) {
-    const b = surface.slice(0, -2);
-    if (has(b)) return b;
-  }
-  // -st: archaic 2nd-person singular (causest → cause, wouldst → would)
-  if (surface.endsWith("st") && surface.length > 3) {
-    const b = surface.slice(0, -2);
-    if (has(b)) return b;
-    if (has(b + "e")) return b + "e";
-  }
-  // -s: plural / 3rd-person (only for longer words to avoid stripping "was", "has")
-  if (surface.endsWith("s") && surface.length > 3) {
-    const b = surface.slice(0, -1);
-    if (has(b)) return b;
-  }
-  return surface;
-};
-
-/**
- * Citation-form lemma for each surface, keyed off its canonical spelling.
- * `spellingOf[i]` is surface i's normalized spelling; lemmas are inferred over
- * the distinct spelling set, so two surfaces sharing a spelling share a lemma.
- * Overrides in lemmas.json are keyed on the canonical spelling too. The result
- * is always a real word (the spelling itself when nothing applies), never a
- * stem, so it is safe to display in lemma statistics.
- */
-export const buildSurfaceLemma = (spellingOf: string[]): string[] => {
-  const spellingSet = new Set(spellingOf);
-  const overrides = lemmaOverrides as Record<string, string>;
-  return spellingOf.map((s) => overrides[s] ?? inferLemma(s, spellingSet));
+export const joinTokens = (
+  spans: TokenSpan[],
+  text: string,
+  keys: ReadonlySet<string>,
+): TokenSpan[] => {
+  if (keys.size === 0) return spans;
+  type Adjacent = { span: TokenSpan; joinsLeft: boolean };
+  const items: Adjacent[] = spans.map((span, index) => ({
+    span,
+    joinsLeft: index > 0 &&
+      /^ *$/.test(text.slice(spans[index - 1].end, span.start)),
+  }));
+  const ops: JoinOps<Adjacent> = {
+    folded: (item) => item.span.surface,
+    joinsLeft: (item) => item.joinsLeft,
+    merge: (run) => ({
+      span: {
+        surface: run.map((item) => item.span.surface).join(" "),
+        start: run[0].span.start,
+        end: run[run.length - 1].span.end,
+      },
+      joinsLeft: run[0].joinsLeft,
+    }),
+  };
+  return joinMultiWord(items, keys, ops).map((item) => item.span);
 };
