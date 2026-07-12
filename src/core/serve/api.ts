@@ -26,11 +26,13 @@ import {
   findSectionByKey,
   highlightBlock,
   IN_SCOPE,
+  joinTokens,
   type KeyMode,
   keyness,
   lineParts,
   type MatchLevel,
   matchRanges,
+  multiWordKeys,
   occurrences,
   parseQuery,
   REFERENCE,
@@ -1219,6 +1221,10 @@ export const searchResponse = async (
     version,
   );
   const { items: pageHits, pages } = paginate(hits, page, perPage);
+  // The multi-word units to fuse when re-tokenizing for highlight offsets — the
+  // vocabulary surfaces with a space, exactly the units the build fused, so the
+  // positions line up.
+  const keys = multiWordKeys(artefacts.vocab.surfaces);
   return {
     q,
     match: options.match,
@@ -1232,7 +1238,11 @@ export const searchResponse = async (
       // Positions index into the version's tokenization; highlightBlock
       // resolves the block to that version and injects the marks in one walk.
       const block: Block = await store.unitBlock(hit.unitIndex);
-      const ranges = matchRanges(blockText(block, version), hit.positions);
+      const ranges = matchRanges(
+        blockText(block, version),
+        hit.positions,
+        keys,
+      );
       return {
         ...citation(artefacts, hit.unitIndex),
         score: hit.score,
@@ -1294,10 +1304,13 @@ export const concordanceResponse = async (
     rightWords: string[];
   };
   const built: Built[] = [];
+  // Fuse the register's multi-word units so a concordance line's tokens line up
+  // with the build's positions (same units, from the vocabulary surfaces).
+  const keys = multiWordKeys(artefacts.vocab.surfaces);
   for (const hit of hits) {
     const block = await store.unitBlock(hit.unitIndex);
     const text = blockText(block, version);
-    const spans = tokenize(text);
+    const spans = joinTokens(tokenize(text), text, keys);
     const cite = citation(artefacts, hit.unitIndex);
     for (const start of occurrences(hit.positions, phraseLen)) {
       const parts = lineParts(text, spans, start, phraseLen, window);

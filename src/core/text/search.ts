@@ -52,7 +52,7 @@ import {
 } from "../artefacts.ts";
 import type { HighlightRange } from "./text.ts";
 import type { MatchLevel, Version } from "../../types.ts";
-import { tokenize } from "./tokenize.ts";
+import { joinTokens, tokenize } from "./tokenize.ts";
 
 export type { MatchLevel };
 
@@ -428,8 +428,9 @@ export const search = (
 export const matchRanges = (
   text: string,
   positions: number[],
+  keys: ReadonlySet<string>,
 ): HighlightRange[] => {
-  const spans = tokenize(text);
+  const spans = joinTokens(tokenize(text), text, keys);
   const ranges: HighlightRange[] = [];
   for (const position of positions) {
     // The positions index into this same tokenization (the version's), so the

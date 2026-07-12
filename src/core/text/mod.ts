@@ -24,7 +24,12 @@ export {
 export type { ContextSpan, HighlightRange } from "./text.ts";
 
 /* tokenization (word identity) */
-export { tokenize, TOKENIZER_VERSION } from "./tokenize.ts";
+export {
+  joinTokens,
+  multiWordKeys,
+  tokenize,
+  TOKENIZER_VERSION,
+} from "./tokenize.ts";
 export type { TokenSpan } from "./tokenize.ts";
 
 /* dictionary readings (per-occurrence spelling/lemma resolution) */

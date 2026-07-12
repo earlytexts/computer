@@ -38,7 +38,13 @@ import type { Version } from "../../types.ts";
 
 // 2: editorial insertions/deletions are resolved per version (was: both
 // sides of every correction were extracted, matching neither version).
-export const EXTRACTION_VERSION = 2;
+// 3: (was) a non-breaking space extracted to a `~` marker, so the tokenizer
+// could rejoin the fixed multi-word unit it marked.
+// 4: a non-breaking space extracts to a plain space, like an em-space — it no
+// longer carries a join. A fixed multi-word unit (`a priori`) is fused from the
+// register by tokenize.ts's `joinTokens`, over the adjacency the space leaves,
+// so the marker (and its escaping wrinkle) is gone.
+export const EXTRACTION_VERSION = 4;
 
 /** A [start, end) character range in a block's extracted text. */
 export type HighlightRange = { start: number; end: number };
@@ -90,8 +96,10 @@ const leafText = (element: InlineElement): string => {
   switch (element.type) {
     case "lineBreak":
       return "\n";
-    case "emSpace":
     case "nbSpace":
+    case "emSpace":
+      // Ordinary space: a non-breaking space no longer carries a join — a fixed
+      // multi-word unit is fused from the register (tokenize.ts's joinTokens).
       return " ";
     case "illegible":
       return "[...]";

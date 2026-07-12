@@ -188,13 +188,15 @@ Deno.test("topic-term weights match their golden values", async () => {
   assertAlmostEquals(solitary, 0.5, WEIGHT);
   assertAlmostEquals(treatise, 0.5, WEIGHT);
 
-  const [part, i] = weightOf("part", "i");
+  // The pronoun "I" folds to "I", not the numeral "i" (word identity is now the
+  // corpus's `fold`), so this topic pairs "part" with the pronoun.
+  const [part, pronoun] = weightOf("part", "I");
   assertAlmostEquals(part, 0.5687, WEIGHT);
-  assertAlmostEquals(i, 0.4312, WEIGHT);
+  assertAlmostEquals(pronoun, 0.4313, WEIGHT);
 
   const [test, work] = weightOf("test", "work");
-  assertAlmostEquals(test, 0.52, WEIGHT);
-  assertAlmostEquals(work, 0.4799, WEIGHT);
+  assertAlmostEquals(test, 0.5819, WEIGHT);
+  assertAlmostEquals(work, 0.4181, WEIGHT);
 });
 
 Deno.test("topic-mix weights match their golden values", async () => {
@@ -212,10 +214,10 @@ Deno.test("topic-mix weights match their golden values", async () => {
     assert(topic !== undefined, `expected mix topic "${label}"`);
     return topic.weight;
   };
-  assertAlmostEquals(mixWeight("liberty, of, the"), 0.3328, WEIGHT);
-  assertAlmostEquals(mixWeight("of, agreeable, some"), 0.3083, WEIGHT);
-  assertAlmostEquals(mixWeight("test, work, editions"), 0.2787, WEIGHT);
-  assertAlmostEquals(mixWeight("test, work"), 0.0537, WEIGHT);
+  assertAlmostEquals(mixWeight("liberty, of, the"), 0.3332, WEIGHT);
+  assertAlmostEquals(mixWeight("test, work"), 0.3320, WEIGHT);
+  assertAlmostEquals(mixWeight("of, between, objects"), 0.2172, WEIGHT);
+  assertAlmostEquals(mixWeight("agreeable, an, increase"), 0.1122, WEIGHT);
 
   // The mix is a distribution: the shares sum to 1.
   const sum = mix.topics.reduce((n, t) => n + t.weight, 0);

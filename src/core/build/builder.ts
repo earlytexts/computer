@@ -26,6 +26,8 @@ import type { AuthorMeta, EditionMeta, WorkMeta } from "../../types.ts";
 import {
   blockText,
   hasEditorial,
+  joinTokens,
+  multiWordKeys,
   resolveTokenReadings,
   surfaceReadings,
   tokenContexts,
@@ -592,6 +594,10 @@ export const buildArtefacts = (
   // vocabulary is the union of the edited and original streams; df/cf count
   // occurrences across both (so original-only spellings are still coherent).
   const dictionary = catalogue.dictionary;
+  // The register's multi-word units, fused from the base tokens exactly as the
+  // corpus fuses them for accounting (same `joinMultiWord`), so `a priori`
+  // indexes as one surface whose reading words still bucket each half.
+  const multiWord = multiWordKeys(Object.keys(dictionary));
   const tempIds = new Map<string, number>();
   const tempPostings: number[][] = []; // edited reading text (every unit)
   const tempReadings: number[][] = []; // resolved reading per edited posting
@@ -694,7 +700,7 @@ export const buildArtefacts = (
       blockUnit.set(block, unitIndex);
       const text = blockText(block);
       const line = encoder.encode(JSON.stringify(block) + "\n");
-      const spans = tokenize(text);
+      const spans = joinTokens(tokenize(text), text, multiWord);
       // Resolve each token's reading in its edition's orthographic context, from
       // the same extraction walk that produced the offsets (tokenContexts), so
       // context and offset cannot drift.
@@ -740,7 +746,11 @@ export const buildArtefacts = (
       if (hasEditorial(block)) {
         affectedUnits.push(unitIndex);
         const originalText = blockText(block, "original");
-        const originalSpans = tokenize(originalText);
+        const originalSpans = joinTokens(
+          tokenize(originalText),
+          originalText,
+          multiWord,
+        );
         const originalReading = resolveTokenReadings(
           originalSpans,
           tokenContexts(block, "original"),
