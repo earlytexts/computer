@@ -21,7 +21,7 @@ import {
   CORPUS_ROOT,
   memoryCorpus,
   type Meta,
-} from "@earlytexts/corpus/harness";
+} from "@earlytexts/corpus/test";
 
 // The generic corpus-authoring harness lives with the corpus (which owns the
 // catalogue build); re-export it so the computer's tests keep importing it here.
