@@ -19,10 +19,10 @@
   },
   "nodeModulesDir": "auto",
   "imports": {
-    "@earlytexts/corpus/wire": "jsr:@earlytexts/corpus@^0.10.0/wire",
-    "@earlytexts/corpus/build": "jsr:@earlytexts/corpus@^0.10.0/build",
-    "@earlytexts/corpus/test": "jsr:@earlytexts/corpus@^0.10.0/test",
-    "@earlytexts/markit": "jsr:@earlytexts/markit@^3.6.1",
+    "@earlytexts/corpus/wire": "jsr:@earlytexts/corpus@^0.12.0/wire",
+    "@earlytexts/corpus/build": "jsr:@earlytexts/corpus@^0.12.0/build",
+    "@earlytexts/corpus/test": "jsr:@earlytexts/corpus@^0.12.0/test",
+    "@earlytexts/markit": "jsr:@earlytexts/markit@4.1.0",
     "@modelcontextprotocol/sdk/": "npm:/@modelcontextprotocol/sdk@1.29.0/",
     "@std/assert": "jsr:@std/assert@^1.0.0"
   },

@@ -4,14 +4,14 @@
  * is the codec in artefacts.ts (serializeArtefacts / parseArtefacts); the io
  * adapter does the disk writes.
  *
- * The invariant everything rests on: text.txt is exactly the output of
- * blockText over blocks.jsonl, and every offset in tokens.bin/units.json points
+ * The invariant everything rests on: text.txt is exactly markit's extracted
+ * text over blocks.jsonl, and every offset in tokens.bin/units.json points
  * into it. The pipeline version (extraction + tokenizer) is stamped into the
  * manifest; artefacts from another version are never served.
  */
 
 import type { Block, MarkitDocument } from "@earlytexts/markit";
-import { type Overrides, overridesOf } from "@earlytexts/corpus/wire";
+import { fold, type Overrides, overridesOf } from "@earlytexts/corpus/wire";
 import {
   type Author,
   type Catalogue,
@@ -24,13 +24,10 @@ import {
 } from "./catalogue.ts";
 import type { AuthorMeta, EditionMeta, WorkMeta } from "../../types.ts";
 import {
-  blockText,
+  extractText,
   hasEditorial,
-  joinTokens,
-  multiWordKeys,
   resolveTokenReadings,
   surfaceReadings,
-  tokenContexts,
   tokenize,
 } from "../text/mod.ts";
 import {
@@ -594,10 +591,6 @@ export const buildArtefacts = (
   // vocabulary is the union of the edited and original streams; df/cf count
   // occurrences across both (so original-only spellings are still coherent).
   const dictionary = catalogue.dictionary;
-  // The register's multi-word units, fused from the base tokens exactly as the
-  // corpus fuses them for accounting (same `joinMultiWord`), so `a priori`
-  // indexes as one surface whose reading words still bucket each half.
-  const multiWord = multiWordKeys(Object.keys(dictionary));
   const tempIds = new Map<string, number>();
   const tempPostings: number[][] = []; // edited reading text (every unit)
   const tempReadings: number[][] = []; // resolved reading per edited posting
@@ -698,18 +691,13 @@ export const buildArtefacts = (
 
       const unitIndex = units.edition.length;
       blockUnit.set(block, unitIndex);
-      const text = blockText(block);
+      const text = extractText(block).text;
       const line = encoder.encode(JSON.stringify(block) + "\n");
-      const spans = joinTokens(tokenize(text), text, multiWord);
-      // Resolve each token's reading in its edition's orthographic context, from
-      // the same extraction walk that produced the offsets (tokenContexts), so
-      // context and offset cannot drift.
-      const readingOf = resolveTokenReadings(
-        spans,
-        tokenContexts(block),
-        dictionary,
-        overrides,
-      );
+      // Markit's one walk produces the text, the tokens (offsets into it), and
+      // each token's context (exemption, `[w:]` value), so context and offset
+      // cannot drift. A `~`-fused unit is one token; its surface is the fold.
+      const tokens = tokenize(block);
+      const readingOf = resolveTokenReadings(tokens, dictionary, overrides);
 
       units.edition.push(editionIdx);
       units.sectionPath.push(sectionPath.join("/"));
@@ -718,26 +706,26 @@ export const buildArtefacts = (
       units.isTitle.push(
         block.type === "title" || block.type === "subtitle" ? 1 : 0,
       );
-      units.tokenCount.push(spans.length);
+      units.tokenCount.push(tokens.length);
       units.blobOffset.push(acc.text.length);
       units.blobLength.push(text.length);
       units.byteOffset.push(acc.bytes);
       units.byteLength.push(line.length - 1); // the line minus its "\n"
 
-      for (let position = 0; position < spans.length; position++) {
-        const span = spans[position];
+      for (let position = 0; position < tokens.length; position++) {
+        const token = tokens[position];
         const tempId = record(
           tempPostings,
           tempReadings,
-          span.surface,
+          fold(token.text),
           unitIndex,
           position,
-          isCapital(text[span.start]),
+          isCapital(text[token.start]),
           readingOf[position],
         );
-        acc.tokens.push(tempId, units.blobOffset[unitIndex] + span.start);
+        acc.tokens.push(tempId, units.blobOffset[unitIndex] + token.start);
       }
-      totalTokens += spans.length;
+      totalTokens += tokens.length;
 
       // Where the block carries editorial markup, index its original text into
       // the overlay too, with original-version token positions and readings, so an
@@ -745,20 +733,15 @@ export const buildArtefacts = (
       // primary.
       if (hasEditorial(block)) {
         affectedUnits.push(unitIndex);
-        const originalText = blockText(block, "original");
-        const originalSpans = joinTokens(
-          tokenize(originalText),
-          originalText,
-          multiWord,
-        );
+        const originalText = extractText(block, { version: "original" }).text;
+        const originalTokens = tokenize(block, { version: "original" });
         const originalReading = resolveTokenReadings(
-          originalSpans,
-          tokenContexts(block, "original"),
+          originalTokens,
           dictionary,
           overrides,
         );
-        for (let position = 0; position < originalSpans.length; position++) {
-          const span = originalSpans[position];
+        for (let position = 0; position < originalTokens.length; position++) {
+          const token = originalTokens[position];
           // intern() without record(): the surface enters the vocabulary so
           // original-text queries can resolve it, but df and cf are NOT
           // incremented. This is intentional: df/cf reflect the edited reading
@@ -766,10 +749,12 @@ export const buildArtefacts = (
           // topic modelling) are grounded in the text as published, not in the
           // manuscript layer. Do not replace this with record() without updating
           // the statistical semantics throughout.
-          const tempId = intern(span.surface);
+          const tempId = intern(fold(token.text));
           overlayPostings[tempId].push(
             unitIndex,
-            isCapital(originalText[span.start]) ? position + CAP_BIT : position,
+            isCapital(originalText[token.start])
+              ? position + CAP_BIT
+              : position,
           );
           const reading = originalReading[position];
           overlayReadings[tempId].push(reading < 0 ? READING_EXEMPT : reading);

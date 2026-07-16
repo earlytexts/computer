@@ -6,7 +6,7 @@ import {
 } from "../src/core/artefacts.ts";
 import { createBlockStore } from "../src/core/serve/store.ts";
 import { denoIo } from "../src/core/io.ts";
-import { blockText } from "../src/core/text/mod.ts";
+import { extractText } from "../src/core/text/mod.ts";
 import { testData, unitText } from "./helpers.ts";
 
 const encoder = new TextEncoder();
@@ -32,7 +32,10 @@ Deno.test("io round-trips artefacts through a directory", async () => {
     // Block content reads back from the per-edition files by byte range.
     const store = createBlockStore(artefacts, denoIo.blockReader(dir));
     for (let i = 0; i < artefacts.units.edition.length; i++) {
-      assertEquals(blockText(await store.unitBlock(i)), unitText(data, i));
+      assertEquals(
+        extractText(await store.unitBlock(i)).text,
+        unitText(data, i),
+      );
     }
   } finally {
     await Deno.remove(dir, { recursive: true });

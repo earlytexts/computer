@@ -14,7 +14,7 @@ import {
   createTokenStore,
   createTopicsStore,
 } from "../../src/core/serve/store.ts";
-import { blockText } from "../../src/core/text/mod.ts";
+import { extractText } from "../../src/core/text/mod.ts";
 import { testData, unitText } from "../helpers.ts";
 
 /** Two unit indices that belong to different editions. */
@@ -32,9 +32,9 @@ Deno.test("the block store evicts the least-recently-used edition past its cap",
   // first, and re-reading it reloads — still the right text either way. (block,
   // unlike unitBlock, loads a whole edition through the LRU.)
   const store = createBlockStore(data.artefacts, data.blocks, 1);
-  assertEquals(blockText(await store.block(a)), unitText(data, a));
-  assertEquals(blockText(await store.block(b)), unitText(data, b));
-  assertEquals(blockText(await store.block(a)), unitText(data, a));
+  assertEquals(extractText(await store.block(a)).text, unitText(data, a));
+  assertEquals(extractText(await store.block(b)).text, unitText(data, b));
+  assertEquals(extractText(await store.block(a)).text, unitText(data, a));
 });
 
 Deno.test("the token store evicts the least-recently-used edition past its cap", async () => {

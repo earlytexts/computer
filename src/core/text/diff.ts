@@ -15,32 +15,22 @@
  * insertion side; see api.ts.)
  */
 
-import type {
-  Block,
-  ElementAttribute,
-  InlineElement,
-  List,
-  NestableBlockElement,
-  WrapperType,
+import {
+  type Block,
+  extractText,
+  type Frame,
+  type InlineElement,
 } from "@earlytexts/markit";
-import { blockText, markBlock } from "./text.ts";
+import { markBlock } from "./text.ts";
 import { lastSegment } from "../build/catalogue.ts";
-
-/** A wrapper inline element enclosing a token, minus its content. */
-type ContextFrame =
-  | { type: WrapperType }
-  | { type: "language"; lang?: string }
-  | { type: "element"; tag: string; attributes: ElementAttribute[] }
-  | { type: "word"; word: string }
-  | { type: "highlight" };
 
 export type Token = {
   text: string;
   /** Whether the token was preceded by whitespace in the source. */
   spaced: boolean;
   /** Wrapper context of this token (outermost first). Set by tokenizeBlock;
-   *  absent for tokens from tokenize(). */
-  context?: ContextFrame[];
+   *  absent for tokens built from bare strings (block-id alignment). */
+  context?: Frame[];
 };
 
 export type DiffOp = {
@@ -171,125 +161,29 @@ const myers = (a: Token[], b: Token[]): DiffOp[] => {
   }, []);
 };
 
-/** A contiguous run of characters sharing one inline wrapper context. */
-type TextSpan = { start: number; end: number; context: ContextFrame[] };
-
 /**
- * Parallel to blockText but records the inline context of each character span.
- * The concatenated span texts equal blockText(block) for a pre-resolved block.
- */
-const buildSpans = (block: Block): { text: string; spans: TextSpan[] } => {
-  let text = "";
-  const spans: TextSpan[] = [];
-
-  // Every caller passes a non-empty string (Markit never emits empty plainText,
-  // and the joiners/leaves are constants), so each call records a real span.
-  const add = (s: string, ctx: ContextFrame[]): void => {
-    spans.push({
-      start: text.length,
-      end: text.length + s.length,
-      context: ctx,
-    });
-    text += s;
-  };
-
-  const inlineCtx = (elements: InlineElement[], ctx: ContextFrame[]): void => {
-    for (const el of elements) {
-      if (el.type === "plainText") {
-        add(el.content, ctx);
-      } else if (el.type === "lineBreak") {
-        add("\n", ctx);
-      } else if (el.type === "emSpace" || el.type === "nbSpace") {
-        add(" ", ctx);
-      } else if (el.type === "illegible") {
-        add("[...]", ctx);
-      } else if (el.type === "language") {
-        inlineCtx(el.content, [...ctx, { type: "language", lang: el.lang }]);
-      } else if (el.type === "element") {
-        inlineCtx(el.content, [
-          ...ctx,
-          { type: "element", tag: el.tag, attributes: el.attributes },
-        ]);
-      } else if (el.type === "word") {
-        inlineCtx(el.content, [...ctx, { type: "word", word: el.word }]);
-      } else if ("content" in el) {
-        // Wrapper or Highlight: el.type is a WrapperType or "highlight"
-        inlineCtx(el.content, [...ctx, { type: el.type }]);
-      }
-      // pageBreak, footnoteReference: contribute nothing
-    }
-  };
-
-  const listBlock = (list: List): void => {
-    list.items.forEach((item, i) => {
-      if (i > 0) add("\n", []);
-      inlineCtx(item.content, []);
-      if (item.nestedList !== undefined) {
-        add("\n", []);
-        listBlock(item.nestedList);
-      }
-    });
-  };
-
-  const nestableBlock = (el: NestableBlockElement): void => {
-    switch (el.type) {
-      case "paragraph":
-        inlineCtx(el.content, []);
-        break;
-      case "blockquote":
-      case "stageDirection":
-        el.content.forEach((child, j) => {
-          if (j > 0) add("\n", []);
-          nestableBlock(child);
-        });
-        break;
-      case "list":
-        listBlock(el);
-        break;
-      case "table":
-        el.rows.forEach((row, j) => {
-          if (j > 0) add("\n", []);
-          row.cells.forEach((cell, k) => {
-            if (k > 0) add(" | ", []);
-            inlineCtx(cell.content, []);
-          });
-        });
-        break;
-    }
-  };
-
-  block.content.forEach((el, i) => {
-    if (i > 0) add("\n", []);
-    if (el.type === "heading") {
-      el.content.forEach((line, j) => {
-        if (j > 0) add("\n", []);
-        inlineCtx(line.content, []);
-      });
-    } else nestableBlock(el);
-  });
-
-  return { text, spans };
-};
-
-/**
- * Like tokenize but applied to a pre-resolved Block, annotating each token
- * with its inline wrapper context so opsToInline can reconstruct formatting.
+ * The diff's own tokenization of a pre-resolved block: TOKEN_RE (words AND
+ * punctuation — a changed comma marks only the comma) over markit's
+ * extraction, each token annotated with the extraction span's wrapper context
+ * so opsToInline can reconstruct formatting. Segmenting punctuation too is
+ * diff policy, layered on markit's analysis projection.
  */
 const tokenizeBlock = (block: Block): Token[] => {
-  const { text, spans } = buildSpans(block);
+  const { text, spans } = extractText(block);
   const tokens: Token[] = [];
   let lastEnd = 0;
   let si = 0;
   for (const match of text.matchAll(TOKEN_RE)) {
-    const idx = match.index!;
-    // Advance to the span that covers idx (spans are in order, non-overlapping).
-    while (si < spans.length - 1 && spans[si + 1].start <= idx) si++;
+    const idx = match.index;
+    // Advance to the span covering idx (spans are in order, non-overlapping).
+    // Characters between spans are synthetic joiners (`\n`, `" | "`); a
+    // punctuation token drawn from one (a table cell's `|`) has no wrappers.
+    while (si < spans.length && spans[si].end <= idx) si++;
+    const span = spans[si];
     tokens.push({
       text: match[0],
       spaced: idx > lastEnd,
-      // Every character of `text` was recorded as a span, so the covering span
-      // for this match always exists.
-      context: spans[si]!.context,
+      context: span !== undefined && span.start <= idx ? span.context : [],
     });
     lastEnd = idx + match[0].length;
   }
@@ -315,8 +209,8 @@ export const diffBlocks = (a: Block[], b: Block[]): BlockDiff[] => {
       if (op.type === "equal") {
         const blockA = a[ai++];
         const blockB = b[bi++];
-        const textA = blockText(blockA);
-        const textB = blockText(blockB);
+        const textA = extractText(blockA).text;
+        const textB = extractText(blockB).text;
         const id = lastSegment(blockB.id);
         if (textA === textB) {
           result.push({ type: "equal", id, a: blockA, b: blockB });
@@ -351,9 +245,10 @@ const opText = (tokens: Token[]): string =>
 
 /** Two context stacks are equal when the same wrappers appear in the same
  * order, with the same details (a language frame's lang, an element frame's
- * tag and attributes). Frames are built by one code path (inlineCtx), so their
- * key order is deterministic and JSON comparison is structural comparison. */
-const contextsEqual = (a: ContextFrame[], b: ContextFrame[]): boolean =>
+ * tag and attributes). Frames are built by one code path (markit's extraction
+ * walk), so their key order is deterministic and JSON comparison is structural
+ * comparison. */
+const contextsEqual = (a: Frame[], b: Frame[]): boolean =>
   a.length === b.length &&
   a.every((frame, i) => JSON.stringify(frame) === JSON.stringify(b[i]));
 

@@ -7,7 +7,7 @@
  * text processing logic lives in the companion.
  */
 
-import { endLine, renderText, startLine } from "@earlytexts/markit";
+import { renderText } from "@earlytexts/markit";
 import type {
   Block,
   BlockElement,
@@ -129,8 +129,6 @@ export const renderBlocks = (blocks: Block[]): string =>
     id: "",
     blocks: blocks.map(markHighlights),
     children: [],
-    [startLine]: 0,
-    [endLine]: 0,
   }).trim();
 
 /* ------------------------------ catalogue ------------------------------ */

@@ -4,6 +4,7 @@
  */
 
 import { assert, assertEquals } from "@std/assert";
+import { fold } from "@earlytexts/corpus/wire";
 import { testComputer } from "../helpers.ts";
 
 Deno.test("surfaces a target work's distinctive vocabulary", async () => {
@@ -87,10 +88,11 @@ Deno.test("by=exact keeps spellings apart that lemma unites", async () => {
     min: 1,
   });
   assertEquals(byExact.by, "exact");
-  // Exact terms are the spellings as written, so every term is lower-case and
-  // single-token (no citation-form rewriting).
+  // Exact terms are folded surfaces as printed (case-folded, except the
+  // pronoun "I") with no citation-form rewriting; a `~`-fused unit would keep
+  // its internal space, but none is distinctive of this work.
   for (const r of byExact.results) {
-    assertEquals(r.term, r.term.toLowerCase());
+    assertEquals(r.term, fold(r.term));
     assert(!r.term.includes(" "));
   }
 });
