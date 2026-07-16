@@ -8,7 +8,7 @@
  * for later). Two independent options control matching:
  *
  *   - match: which type level each query word is expanded over (see the
- *     pipeline in tokenize.ts). `exact` matches the surface as written
+ *     reading buckets in readings.ts). `exact` matches the surface as written
  *     ("enquiry" vs "inquiry", "causes" vs "cause" stay distinct); `spelling`
  *     unites old and modern spellings of the same form ("encrease"/"increase",
  *     but "increase" still distinct from "increases"); `form` (the default)
@@ -38,10 +38,16 @@
  * blocks keep a fixed weight multiplier, as before.
  *
  * Matched token positions are converted back to character ranges in a block's
- * extracted text by `matchRanges`, for highlighting via highlightBlock
- * (text.ts).
+ * extracted text by `matchRanges`, for highlighting via markit's `highlight`.
  */
 
+import {
+  type Block,
+  tokenize,
+  type Version as TextVersion,
+  wordPattern,
+} from "@earlytexts/markit";
+import { fold, readingLemma, readingSpelling } from "@earlytexts/corpus/wire";
 import {
   CAP_BIT,
   type EditionRef,
@@ -52,7 +58,6 @@ import {
 } from "../artefacts.ts";
 import type { HighlightRange } from "./text.ts";
 import type { MatchLevel, Version } from "../../types.ts";
-import { joinTokens, tokenize } from "./tokenize.ts";
 
 export type { MatchLevel };
 
@@ -82,12 +87,66 @@ export const DEFAULT_OPTIONS: SearchOptions = {
  * with a leading capital (consulted only when caseSensitive). */
 export type QueryWord = { surface: string; capital: boolean };
 
-/** Split a query into its words, in order; the whole sequence is the phrase. */
-export const parseQuery = (q: string): QueryWord[] =>
-  tokenize(q).map((span) => ({
-    surface: span.surface,
-    capital: isCapital(q[span.start]),
+/**
+ * Split a query into its words, in order; the whole sequence is the phrase.
+ * The query segments the way the corpus text tokenizes: markit's word alphabet
+ * splits it, and then any run of whitespace-separated words whose space-joined
+ * fold is a printed multi-word surface (a `~`-fused unit like "a priori",
+ * greedily longest-first) is one word — so the phrase form of a fused unit
+ * matches its single token. A run that is no printed unit stays word-by-word.
+ */
+export const parseQuery = (
+  artefacts: ServeArtefacts,
+  q: string,
+): QueryWord[] => {
+  const words = [...q.matchAll(wordPattern)].map((match) => ({
+    // A pasted U+00A0 (extracted text's non-breaking space) joins like `~` in
+    // a source text; the surface normalises it to the plain-space form.
+    surface: fold(match[0].replaceAll("\u00A0", " ")),
+    capital: isCapital(q[match.index]),
+    start: match.index,
+    end: match.index + match[0].length,
   }));
+  const units = multiWordSurfaces(artefacts);
+  const out: QueryWord[] = [];
+  let i = 0;
+  while (i < words.length) {
+    let taken = 1;
+    for (let len = Math.min(units.longest, words.length - i); len >= 2; len--) {
+      const run = words.slice(i, i + len);
+      const adjacent = run.slice(1).every((word, j) =>
+        /^\s+$/.test(q.slice(run[j].end, word.start))
+      );
+      if (!adjacent) continue;
+      const joined = run.map((word) => word.surface).join(" ");
+      if (units.surfaces.has(joined)) {
+        out.push({ surface: joined, capital: run[0].capital });
+        taken = len;
+        break;
+      }
+    }
+    if (taken === 1) {
+      out.push({ surface: words[i].surface, capital: words[i].capital });
+    }
+    i += taken;
+  }
+  return out;
+};
+
+/** The vocabulary's multi-word surfaces (the fused units the corpus actually
+ * prints), with the longest unit's word count for the fuse scan. */
+const multiWordSurfaces = (
+  artefacts: ServeArtefacts,
+): { surfaces: Set<string>; longest: number } => {
+  const surfaces = new Set<string>();
+  let longest = 1;
+  for (const surface of artefacts.vocab.surfaces) {
+    if (!surface.includes(" ")) continue;
+    surfaces.add(surface);
+    longest = Math.max(longest, surface.split(" ").length);
+  }
+  return { surfaces, longest };
+};
 
 const isCapital = (first: string): boolean =>
   first !== first.toLowerCase() && first === first.toUpperCase();
@@ -110,22 +169,30 @@ const lookupId = (sorted: string[], value: string): number | undefined => {
 /** The query word's bucket words — the spelling and lemma of its own default
  * reading, so a query folds through the register the same way the corpus did.
  * Identity (the word itself) when the query is not a registered/printed
- * surface, so a modern spelling still finds its archaic variants. */
+ * surface, so a modern spelling still finds its archaic variants. A fused
+ * multi-word query ("a priori") carries its full reading strings, matched
+ * whole (see `surfaceIds`). */
 const bucketWords = (
   artefacts: ServeArtefacts,
   surface: string,
 ): { spelling: string; lemma: string } => {
   const id = lookupId(artefacts.vocab.surfaces, surface);
-  const word = id === undefined
-    ? undefined
-    : artefacts.vocab.readings[id][0][0];
-  return word ?? { spelling: surface, lemma: surface };
+  if (id === undefined) return { spelling: surface, lemma: surface };
+  const reading = artefacts.vocab.readings[id][0];
+  if (surface.includes(" ")) {
+    return { spelling: readingSpelling(reading), lemma: readingLemma(reading) };
+  }
+  return reading[0];
 };
 
 /** Surface ids matching one query word at the chosen level: the word's own
  * surface (`exact`), or every surface some reading of which shares the query's
- * spelling (`spelling`) or lemma (`form`). This is the wide candidate set; the
- * `resolved` (narrow) option filters its postings per occurrence. */
+ * spelling (`spelling`) or lemma (`form`) — a single word by the per-word
+ * buckets (so either half of a fused unit finds it), a fused multi-word query
+ * by its full reading string (bucket candidates from its first word, filtered
+ * whole, so "a priori" finds fused units and not every surface containing
+ * "a"). This is the wide candidate set; the `resolved` (narrow) option filters
+ * its postings per occurrence. */
 export const surfaceIds = (
   artefacts: ServeArtefacts,
   surface: string,
@@ -138,12 +205,17 @@ export const surfaceIds = (
     return id === undefined ? [] : [id];
   }
   const words = bucketWords(artefacts, surface);
-  if (match === "spelling") {
-    const id = lookupId(spellings, words.spelling);
-    return id === undefined ? [] : spellingSurfaces[id];
-  }
-  const id = lookupId(lemmas, words.lemma);
-  return id === undefined ? [] : lemmaSurfaces[id];
+  const target = match === "spelling" ? words.spelling : words.lemma;
+  const [keys, buckets] = match === "spelling"
+    ? [spellings, spellingSurfaces]
+    : [lemmas, lemmaSurfaces];
+  const id = lookupId(keys, target.split(" ")[0]);
+  const candidates = id === undefined ? [] : buckets[id];
+  if (!target.includes(" ")) return candidates;
+  const whole = match === "spelling" ? readingSpelling : readingLemma;
+  return candidates.filter((candidate) =>
+    vocab.readings[candidate].some((reading) => whole(reading) === target)
+  );
 };
 
 /* ------------------------------ postings ------------------------------ */
@@ -203,6 +275,13 @@ const narrowAccept = (
   const words = bucketWords(artefacts, surface);
   const target = options.match === "spelling" ? words.spelling : words.lemma;
   const field = options.match === "spelling" ? "spelling" : "lemma";
+  // A fused multi-word query compares whole reading strings; a single word
+  // matches any word of the resolved reading (so a half still matches a unit).
+  if (target.includes(" ")) {
+    const whole = options.match === "spelling" ? readingSpelling : readingLemma;
+    return (id, reading) =>
+      whole(readingOf(artefacts.vocab, id, reading)) === target;
+  }
   return (id, reading) =>
     readingOf(artefacts.vocab, id, reading).some((w) => w[field] === target);
 };
@@ -384,7 +463,7 @@ export const search = (
   options: SearchOptions = DEFAULT_OPTIONS,
   version: Version = "edited",
 ): SearchHit[] => {
-  const words = parseQuery(q);
+  const words = parseQuery(artefacts, q);
   if (words.length === 0) return [];
   const slots = words.map((word) =>
     slotPostings(artefacts, word, options, version)
@@ -422,24 +501,26 @@ export const search = (
 
 /**
  * Character ranges of the matched tokens in a block's extracted text, for
- * highlightBlock. Runs of consecutive matched tokens (the phrase) become one
- * range, so the words between them are marked too.
+ * markit's `highlight`. The block is re-tokenized in the requested version —
+ * offsets line up with the build's by construction (one tokenizer). Runs of
+ * consecutive matched tokens (the phrase) become one range, so the words
+ * between them are marked too.
  */
 export const matchRanges = (
-  text: string,
+  block: Block,
   positions: number[],
-  keys: ReadonlySet<string>,
+  version: TextVersion,
 ): HighlightRange[] => {
-  const spans = joinTokens(tokenize(text), text, keys);
+  const tokens = tokenize(block, { version });
   const ranges: HighlightRange[] = [];
   for (const position of positions) {
     // The positions index into this same tokenization (the version's), so the
-    // span always exists.
-    const span = spans[position]!;
+    // token always exists.
+    const token = tokens[position]!;
     const last = ranges[ranges.length - 1];
-    if (last !== undefined && spans[position - 1]?.end === last.end) {
-      last.end = span.end;
-    } else ranges.push({ start: span.start, end: span.end });
+    if (last !== undefined && tokens[position - 1]?.end === last.end) {
+      last.end = token.end;
+    } else ranges.push({ start: token.start, end: token.end });
   }
   return ranges;
 };

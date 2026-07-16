@@ -13,7 +13,8 @@
  * (reading blocks, paginating) lives in api.ts.
  */
 
-import type { TokenSpan } from "./tokenize.ts";
+import type { Token } from "@earlytexts/markit";
+import { fold } from "@earlytexts/corpus/wire";
 
 /** How lines are ordered: corpus order, or by the words left/right of the
  * keyword (nearest first). */
@@ -37,31 +38,36 @@ export type LineParts = {
 
 /**
  * Build the KWIC parts for the occurrence whose first token is `start`, given
- * the block's text and token spans, the phrase length, and how many context
- * words to keep on each side.
+ * the block's extracted text and its tokens (markit's, whose offsets index
+ * that text), the phrase length, and how many context words to keep on each
+ * side.
  */
 export const lineParts = (
   text: string,
-  spans: TokenSpan[],
+  tokens: Token[],
   start: number,
   phraseLen: number,
   context: number,
 ): LineParts => {
-  const last = spans.length - 1;
+  const last = tokens.length - 1;
   const end = start + phraseLen - 1; // last token of the keyword
   const leftFrom = Math.max(0, start - context);
   const rightTo = Math.min(last, end + context);
   const leftWords: string[] = [];
-  for (let i = start - 1; i >= leftFrom; i--) leftWords.push(spans[i].surface);
+  for (let i = start - 1; i >= leftFrom; i--) {
+    leftWords.push(fold(tokens[i].text));
+  }
   const rightWords: string[] = [];
-  for (let i = end + 1; i <= rightTo; i++) rightWords.push(spans[i].surface);
+  for (let i = end + 1; i <= rightTo; i++) {
+    rightWords.push(fold(tokens[i].text));
+  }
   return {
     left: start > 0
-      ? text.slice(spans[leftFrom].start, spans[start - 1].end)
+      ? text.slice(tokens[leftFrom].start, tokens[start - 1].end)
       : "",
-    keyword: text.slice(spans[start].start, spans[end].end),
+    keyword: text.slice(tokens[start].start, tokens[end].end),
     right: end < last
-      ? text.slice(spans[end + 1].start, spans[rightTo].end)
+      ? text.slice(tokens[end + 1].start, tokens[rightTo].end)
       : "",
     leftTruncated: leftFrom > 0,
     rightTruncated: rightTo < last,

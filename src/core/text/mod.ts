@@ -12,25 +12,17 @@
  * the contract for production code, not a wall against the engine's own tests.
  */
 
-/* extraction & block shaping */
+/* extraction & tokenization (markit's, re-exported as the engine's seam) */
+export { extractText, highlight, tokenize } from "@earlytexts/markit";
+
+/* the pipeline version stamp & block shaping */
 export {
-  blockText,
   EXTRACTION_VERSION,
   hasEditorial,
-  highlightBlock,
   resolveBlock,
-  tokenContexts,
-} from "./text.ts";
-export type { ContextSpan, HighlightRange } from "./text.ts";
-
-/* tokenization (word identity) */
-export {
-  joinTokens,
-  multiWordKeys,
-  tokenize,
   TOKENIZER_VERSION,
-} from "./tokenize.ts";
-export type { TokenSpan } from "./tokenize.ts";
+} from "./text.ts";
+export type { HighlightRange } from "./text.ts";
 
 /* dictionary readings (per-occurrence spelling/lemma resolution) */
 export { EXEMPT, resolveTokenReadings, surfaceReadings } from "./readings.ts";

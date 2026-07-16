@@ -18,21 +18,19 @@ import {
   aggregateMix,
   type AlignedSection,
   alignSections,
-  blockText,
   collocations,
   compareLines,
   diffBlocks,
   diffToBlocks,
+  extractText,
   findSectionByKey,
-  highlightBlock,
+  highlight,
   IN_SCOPE,
-  joinTokens,
   type KeyMode,
   keyness,
   lineParts,
   type MatchLevel,
   matchRanges,
-  multiWordKeys,
   occurrences,
   parseQuery,
   REFERENCE,
@@ -511,7 +509,7 @@ export const frequencyResponse = (
 
   // Each phrase match contributes phraseLength positions; dividing recovers
   // the occurrence count without re-running phrase matching.
-  const phraseLength = Math.max(1, parseQuery(q).length);
+  const phraseLength = Math.max(1, parseQuery(artefacts, q).length);
   const { units, manifest, editionUnits } = artefacts;
 
   // Total token count per edition index (summed once, reused across groups).
@@ -762,7 +760,7 @@ export const collocationsResponse = async (
 
   // The node word's surfaces, united across the query's words at the match level.
   const nodeSurfaces = new Set<number>();
-  for (const word of parseQuery(q)) {
+  for (const word of parseQuery(artefacts, q)) {
     for (const id of surfaceIds(artefacts, word.surface, match)) {
       nodeSurfaces.add(id);
     }
@@ -1221,10 +1219,6 @@ export const searchResponse = async (
     version,
   );
   const { items: pageHits, pages } = paginate(hits, page, perPage);
-  // The multi-word units to fuse when re-tokenizing for highlight offsets — the
-  // vocabulary surfaces with a space, exactly the units the build fused, so the
-  // positions line up.
-  const keys = multiWordKeys(artefacts.vocab.surfaces);
   return {
     q,
     match: options.match,
@@ -1235,18 +1229,14 @@ export const searchResponse = async (
     page,
     pages,
     results: await Promise.all(pageHits.map(async (hit) => {
-      // Positions index into the version's tokenization; highlightBlock
+      // Positions index into the version's tokenization; markit's highlight
       // resolves the block to that version and injects the marks in one walk.
       const block: Block = await store.unitBlock(hit.unitIndex);
-      const ranges = matchRanges(
-        blockText(block, version),
-        hit.positions,
-        keys,
-      );
+      const ranges = matchRanges(block, hit.positions, version);
       return {
         ...citation(artefacts, hit.unitIndex),
         score: hit.score,
-        block: highlightBlock(block, ranges, version),
+        block: highlight(block, ranges, version),
       };
     })),
   };
@@ -1282,7 +1272,7 @@ export const concordanceResponse = async (
   const window = clamp(params.window, DEFAULT_CONCORDANCE_WINDOW, MAX_WINDOW);
   const page = clamp(params.page, 1);
   const perPage = clamp(params.perPage, 20, MAX_PER_PAGE);
-  const phraseLen = Math.max(1, parseQuery(q).length);
+  const phraseLen = Math.max(1, parseQuery(artefacts, q).length);
   const hits = q === "" ? [] : search(
     artefacts,
     q,
@@ -1304,16 +1294,15 @@ export const concordanceResponse = async (
     rightWords: string[];
   };
   const built: Built[] = [];
-  // Fuse the register's multi-word units so a concordance line's tokens line up
-  // with the build's positions (same units, from the vocabulary surfaces).
-  const keys = multiWordKeys(artefacts.vocab.surfaces);
   for (const hit of hits) {
     const block = await store.unitBlock(hit.unitIndex);
-    const text = blockText(block, version);
-    const spans = joinTokens(tokenize(text), text, keys);
+    // One tokenizer end to end: markit's tokens index the same extracted text
+    // the build recorded positions against.
+    const text = extractText(block, { version }).text;
+    const tokens = tokenize(block, { version });
     const cite = citation(artefacts, hit.unitIndex);
     for (const start of occurrences(hit.positions, phraseLen)) {
-      const parts = lineParts(text, spans, start, phraseLen, window);
+      const parts = lineParts(text, tokens, start, phraseLen, window);
       built.push({
         ...cite,
         left: parts.left,

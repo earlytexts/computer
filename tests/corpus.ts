@@ -141,7 +141,7 @@ Some objects produce immediately an agreeable sensation betwixt friends, and enc
 A second paragraph, identical in every edition of this work.
 
 {#3}
-A paragraph found only in the seventeen-fifty edition.
+A paragraph found only in the seventeen-fifty edition, reasoning a~priori and judging ipso~facto.
 
 ## 3
 
@@ -214,6 +214,10 @@ An essay belonging to the composite collection alone.`;
  * has its own entry (closure), so expansion derives every reading in one step.
  */
 const DICTIONARY: Record<string, string> = {
+  // A registered multi-word unit (its occurrences are `~`-fused in the texts);
+  // "ipso facto" is deliberately left unregistered, so identity readings and
+  // vocabulary-driven query fusing are exercised too.
+  "data/dictionary/a.json": JSON.stringify({ "a priori": null }),
   "data/dictionary/b.json": JSON.stringify({
     "between": null,
     "betwixt": "between",
