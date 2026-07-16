@@ -14,9 +14,9 @@
  * grouping, diffing and version handling stay observable in real output.
  */
 
-import { buildCatalogue } from "@earlytexts/corpus/build";
 import { serializeCatalogue } from "@earlytexts/corpus/wire";
 import {
+  buildCatalogue,
   corpus,
   CORPUS_ROOT,
   memoryCorpus,
