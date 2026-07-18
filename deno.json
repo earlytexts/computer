@@ -18,7 +18,6 @@
     "fmt:check": "deno fmt --check"
   },
   "nodeModulesDir": "auto",
-  "links": ["../corpus"],
   "imports": {
     "@earlytexts/corpus/wire": "jsr:@earlytexts/corpus@^0.14.0/wire",
     "@earlytexts/corpus/test": "jsr:@earlytexts/corpus@^0.14.0/test",
