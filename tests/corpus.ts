@@ -406,6 +406,48 @@ export const dictionaryCorpus = (): Record<string, string> => {
   return files;
 };
 
+/* ------------------------ the possessive corpus ---------------------- */
+
+// One block exercising the possessive rule end to end: "bishop's" (registered
+// base, so it reads as lemma "bishop"), "wombat's" (unregistered base, so it
+// stays itself), a bare "bishop" (the base) and a bare "mitre" (an unregistered
+// word queried as a possessive that never occurs).
+const SERMON = `{#title}
+^1 A SERMON.
+
+## 1
+
+{#1}
+The bishop's mitre and a wombat's whim; every bishop kneels.`;
+
+/**
+ * A bespoke corpus for the possessive rule. Only "bishop" is registered, so
+ * "bishop's" resolves to lemma "bishop" while "wombat's" (no registered base)
+ * indexes as itself; a form search for "bishop" reaches the possessive, and a
+ * form query for a possessive that never occurs ("mitre's") still reaches its
+ * base.
+ */
+export const possessiveCorpus = (): Record<string, string> => {
+  const files = corpus()
+    .author("pos", { forename: "Pos", surname: "Sessive" })
+    .work("pos", "pos", {
+      title: "A Sermon",
+      breadcrumb: "Sermon",
+      canonical: "1700",
+    })
+    .edition("pos", "pos", "1700", {
+      imported: true,
+      title: "A Sermon",
+      breadcrumb: "Sermon",
+      published: [1700],
+    }, SERMON)
+    .build();
+  files[`${CORPUS_ROOT}/data/dictionary/b.json`] = JSON.stringify({
+    "bishop": null,
+  });
+  return files;
+};
+
 /* ------------------------ the co-author corpus ----------------------- */
 
 // A two-letter correspondence: each letter (section) overrides the work's

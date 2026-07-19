@@ -25,8 +25,20 @@
  */
 
 import type { Token } from "@earlytexts/markit";
-import type { Dictionary, Overrides, Reading } from "@earlytexts/corpus/wire";
-import { exemptionOf, fold, resolveReading } from "@earlytexts/corpus/wire";
+import type {
+  Dictionary,
+  Entry,
+  Overrides,
+  Reading,
+} from "@earlytexts/corpus/wire";
+import {
+  exemptionOf,
+  fold,
+  possessiveBase,
+  readingLemma,
+  readingSpelling,
+  resolveReading,
+} from "@earlytexts/corpus/wire";
 
 /** Sentinel reading index: the occurrence indexes verbatim (identity), because
  * it sits inside exempting markup. The builder maps it to `[{surface, surface}]`;
@@ -34,17 +46,17 @@ import { exemptionOf, fold, resolveReading } from "@earlytexts/corpus/wire";
 export const EXEMPT = -1;
 
 /** The readings a surface can have, in default-first order: its register entry's
- * expanded readings, or identity readings when the surface is unregistered
- * (best-effort until backfill completes). Identity of an n-word surface is n
- * identity words — the same rule as the corpus's own expansion of a `null`
- * entry — so a search for either half finds an unregistered fused unit too.
- * The one definition the build and serve sides share, so a stored reading
- * index means the same on both. */
+ * expanded readings, the possessive rule's derived readings (see `entryFor`),
+ * or identity readings when neither applies (best-effort until backfill
+ * completes). Identity of an n-word surface is n identity words — the same rule
+ * as the corpus's own expansion of a `null` entry — so a search for either half
+ * finds an unregistered fused unit too. The one definition the build and serve
+ * sides share, so a stored reading index means the same on both. */
 export const surfaceReadings = (
   surface: string,
   dictionary: Dictionary,
 ): Reading[] =>
-  dictionary[surface]?.readings ??
+  entryFor(surface, dictionary)?.readings ??
     [surface.split(" ").map((word) => ({ spelling: word, lemma: word }))];
 
 /**
@@ -62,8 +74,40 @@ export const resolveTokenReadings = (
   tokens.map((token) => {
     if (exemptionOf(token) !== undefined) return EXEMPT;
     const surface = fold(token.text);
-    const entry = dictionary[surface];
+    const entry = entryFor(surface, dictionary);
     if (entry === undefined) return 0; // identity: the lone reading is index 0
     const reading = resolveReading(entry, overrides[surface], token.word);
     return entry.readings.indexOf(reading);
   });
+
+/** The entry governing a surface: its own register entry, or — the possessive
+ * rule — a derived entry when the surface is `base + 's` and only the base is
+ * registered (`bishop's` takes `bishop`'s readings, the clitic appended to each
+ * printed spelling, every lemma kept). Explicit entries win, so a registered
+ * `'s` surface (a contraction like `it's`, a possessive with its own lemma)
+ * keeps its authored readings; `undefined` when neither the surface nor, for a
+ * possessive, its base is registered, and the caller falls back to identity. */
+const entryFor = (
+  surface: string,
+  dictionary: Dictionary,
+): Entry | undefined => {
+  const entry = dictionary[surface];
+  if (entry !== undefined) return entry;
+  const base = possessiveBase(surface);
+  if (base === undefined) return undefined;
+  const baseEntry = dictionary[base];
+  if (baseEntry === undefined) return undefined;
+  return {
+    readings: possessiveReadings(baseEntry, surface.slice(base.length)),
+  };
+};
+
+/** The base entry's readings turned possessive: each reading collapses to one
+ * word carrying the base's lemma, with the clitic (`'s` / `’s`) on its printed
+ * spelling — so `bishop's` reads as lemma `bishop`, and a respelt base
+ * normalises too (`humane's` → spelling `human's`, lemma `human`). */
+const possessiveReadings = (baseEntry: Entry, clitic: string): Reading[] =>
+  baseEntry.readings.map((reading) => [{
+    spelling: readingSpelling(reading) + clitic,
+    lemma: readingLemma(reading),
+  }]);

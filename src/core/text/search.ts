@@ -47,7 +47,12 @@ import {
   type Version as TextVersion,
   wordPattern,
 } from "@earlytexts/markit";
-import { fold, readingLemma, readingSpelling } from "@earlytexts/corpus/wire";
+import {
+  fold,
+  possessiveBase,
+  readingLemma,
+  readingSpelling,
+} from "@earlytexts/corpus/wire";
 import {
   CAP_BIT,
   type EditionRef,
@@ -177,12 +182,37 @@ const bucketWords = (
   surface: string,
 ): { spelling: string; lemma: string } => {
   const id = lookupId(artefacts.vocab.surfaces, surface);
-  if (id === undefined) return { spelling: surface, lemma: surface };
+  if (id === undefined) return possessiveBucket(artefacts, surface);
   const reading = artefacts.vocab.readings[id][0];
   if (surface.includes(" ")) {
     return { spelling: readingSpelling(reading), lemma: readingLemma(reading) };
   }
   return reading[0];
+};
+
+/** Bucket words for a query that is no printed surface: the possessive rule
+ * when it is `base + 's` and the base *is* a printed surface — the base's
+ * default lemma, the clitic kept on the spelling — so a form query for
+ * `bishop's` reaches `bishop` even where the possessive itself never occurs;
+ * else identity, so a modern spelling still finds its archaic variants. (A
+ * possessive that occurs is already a surface, resolved by `bucketWords`.) */
+const possessiveBucket = (
+  artefacts: ServeArtefacts,
+  surface: string,
+): { spelling: string; lemma: string } => {
+  const base = possessiveBase(surface);
+  if (base !== undefined) {
+    const id = lookupId(artefacts.vocab.surfaces, base);
+    if (id !== undefined) {
+      const reading = artefacts.vocab.readings[id][0];
+      const clitic = surface.slice(base.length);
+      return {
+        spelling: readingSpelling(reading) + clitic,
+        lemma: readingLemma(reading),
+      };
+    }
+  }
+  return { spelling: surface, lemma: surface };
 };
 
 /** Surface ids matching one query word at the chosen level: the word's own
