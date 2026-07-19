@@ -1,6 +1,7 @@
 {
   "version": "5",
   "specifiers": {
+    "jsr:@earlytexts/corpus@0.14": "0.14.0",
     "jsr:@earlytexts/markit@4.1.0": "4.1.0",
     "jsr:@earlytexts/markit@^4.1.0": "4.1.0",
     "jsr:@std/assert@1": "1.0.19",
@@ -8,6 +9,12 @@
     "npm:@modelcontextprotocol/sdk@1.29.0": "1.29.0_zod@4.4.3"
   },
   "jsr": {
+    "@earlytexts/corpus@0.14.0": {
+      "integrity": "ade77a3549c21245c39a9a268345200de5d2b205a0bc2cd8a150721a6124a7dd",
+      "dependencies": [
+        "jsr:@earlytexts/markit@^4.1.0"
+      ]
+    },
     "@earlytexts/markit@3.6.1": {
       "integrity": "c4dab1930015c8c74a4041eaa06b60e26d99eb0c665e398718d5452535c11209"
     },
@@ -546,15 +553,6 @@
       "jsr:@earlytexts/markit@4.1.0",
       "jsr:@std/assert@1",
       "npm:@modelcontextprotocol/sdk@1.29.0"
-    ],
-    "links": {
-      "jsr:@earlytexts/corpus@0.14.0": {
-        "dependencies": [
-          "jsr:@earlytexts/markit@^4.1.0",
-          "jsr:@std/expect@1",
-          "jsr:@std/testing@1"
-        ]
-      }
-    }
+    ]
   }
 }
