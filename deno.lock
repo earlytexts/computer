@@ -1,18 +1,18 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@earlytexts/corpus@0.14": "0.14.0",
+    "jsr:@earlytexts/corpus@0.15": "0.15.2",
     "jsr:@earlytexts/markit@4.1.0": "4.1.0",
-    "jsr:@earlytexts/markit@^4.1.0": "4.1.0",
+    "jsr:@earlytexts/markit@^4.3.0": "4.3.0",
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "npm:@modelcontextprotocol/sdk@1.29.0": "1.29.0_zod@4.4.3"
   },
   "jsr": {
-    "@earlytexts/corpus@0.14.0": {
-      "integrity": "ade77a3549c21245c39a9a268345200de5d2b205a0bc2cd8a150721a6124a7dd",
+    "@earlytexts/corpus@0.15.2": {
+      "integrity": "f52f82bf1d056952c3ef43a9864d4256c5f80bf60c5545527b1ca89d4640d5f6",
       "dependencies": [
-        "jsr:@earlytexts/markit@^4.1.0"
+        "jsr:@earlytexts/markit@^4.3.0"
       ]
     },
     "@earlytexts/markit@3.6.1": {
@@ -20,6 +20,9 @@
     },
     "@earlytexts/markit@4.1.0": {
       "integrity": "5796dd43e575f9a4bfef3527159bec2a31ec694f4f4a1eda55451d94fbccb832"
+    },
+    "@earlytexts/markit@4.3.0": {
+      "integrity": "ef30df7272e5e182c4ec450cc53d5ae10d3b7118c4dfe966423f41945c56812f"
     },
     "@std/assert@1.0.19": {
       "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
@@ -549,7 +552,7 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@earlytexts/corpus@0.14",
+      "jsr:@earlytexts/corpus@0.15",
       "jsr:@earlytexts/markit@4.1.0",
       "jsr:@std/assert@1",
       "npm:@modelcontextprotocol/sdk@1.29.0"
