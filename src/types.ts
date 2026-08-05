@@ -33,6 +33,10 @@ export type AuthorMeta = {
   firstPublished?: number;
   nationality?: string;
   sex?: string;
+  /** VIAF cluster ID (digits), where the corpus records one. */
+  viaf?: string;
+  /** Wikidata item ID ("Q" + digits), where the corpus records one. */
+  wikidata?: string;
 };
 
 export type EditionMeta = {
@@ -47,6 +51,11 @@ export type EditionMeta = {
   published: number[];
   sourceUrl?: string;
   sourceDesc?: string;
+  /** ESTC citation number of the printed item this edition transcribes, where
+   * it was printed as an item of its own. */
+  estc?: string;
+  /** TCP text ID, where TCP transcribes this same edition. */
+  tcp?: string;
 };
 
 export type WorkMeta = {
