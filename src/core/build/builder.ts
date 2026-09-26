@@ -129,6 +129,8 @@ const authorMeta = (author: Author): AuthorMeta => ({
   firstPublished: author.firstPublished,
   nationality: author.nationality,
   sex: author.sex,
+  viaf: author.viaf,
+  wikidata: author.wikidata,
 });
 
 const editionMeta = (edition: Edition): EditionMeta => ({
@@ -141,6 +143,8 @@ const editionMeta = (edition: Edition): EditionMeta => ({
   published: edition.published,
   sourceUrl: edition.sourceUrl,
   sourceDesc: edition.sourceDesc,
+  estc: edition.estc,
+  tcp: edition.tcp,
 });
 
 const workMeta = (work: Work): WorkMeta => ({
