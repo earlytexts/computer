@@ -30,6 +30,9 @@
       "src/client.ts",
       "src/types.ts",
       "README.md",
+      "API.md",
+      "MCP.md",
+      "ARCHITECTURE.md",
       "LICENSE.md",
       "deno.json"
     ]

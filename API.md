@@ -18,9 +18,10 @@ You can ignore every one of those boxes and still use everything here.
 Every route is a web address you fetch with an ordinary GET request; the answer
 comes back as JSON by default. Add `?format=text` (or `&format=text`) to any
 route to get the same result as compact plain text instead — the same rendering
-the **MCP tools** (for language-model clients, at `/mcp`) return, so a quick
-`curl` reads exactly as the model sees it. Responses are open to any website
-(CORS) and cached for five minutes. A typical call looks like:
+the **MCP tools** (for language-model clients, at `/mcp`; see
+[§5](#5-asking-through-a-language-model)) return, so a quick `curl` reads
+exactly as the model sees it. Responses are open to any website (CORS) and
+cached for five minutes. A typical call looks like:
 
 ```
 /search?q=natural+religion&author=hume
@@ -285,12 +286,37 @@ automatically rather than defined in advance.
 > function-word glue, present in over half the documents) are set aside before
 > training, so the themes carry meaning rather than grammar.
 
+## 5. Asking through a language model
+
+Everything above is also available to a language model, as **MCP tools** — so
+you can put the corpus behind a conversation instead of behind a URL, and ask in
+prose. There are sixteen of them, one per question this guide describes, and
+they are served two ways:
+
+- **Streamable HTTP at `/mcp`**, on the same host as the routes above (locally,
+  `http://localhost:8420/mcp`) — for anything remote or shared, with nothing to
+  install.
+- **stdio**, for clients that only spawn local processes (Claude Desktop, most
+  editors): `deno task stdio`.
+
+The tools answer in plain text rather than JSON, and each result is cited with
+its author, work, edition, section path and block id — so an answer can quote a
+passage and say where it came from. Search highlights appear as `«…»`, and
+editorial or between-edition differences as `[-deleted-]` / `{+inserted+}`.
+
+That is exactly what `?format=text` returns on the routes above, from the same
+code, so a `curl` shows you precisely what the model is reading.
+
+Setup, the full tool list, worked examples and the error behaviour are in
+**[the MCP guide](./MCP.md)**.
+
 ## Health and tooling
 
 - **`/`** — a quick health check: confirms the service is up and reports how
   many authors and works it holds.
-- **`/mcp`** — the same corpus functions exposed as MCP tools, for
-  language-model clients (over Streamable HTTP).
+- **`/mcp`** — the corpus functions as MCP tools, described just above.
 
 The precise shapes of every response are typed in [src/types.ts](src/types.ts),
-and a ready-made typed client lives in [src/client.ts](src/client.ts).
+and a ready-made typed client lives in [src/client.ts](src/client.ts) — both
+published to [JSR](https://jsr.io/@earlytexts/computer) as
+`@earlytexts/computer`.
